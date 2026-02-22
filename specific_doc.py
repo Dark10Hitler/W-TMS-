@@ -556,88 +556,93 @@ def create_defect_modal():
 
     st.subheader("🚨 Акт о выявлении дефектов")
 
-    # --- 1. СБОР ДАННЫХ ИЗ ЕДИНОЙ БАЗЫ (32 ТОВАРА) ---
+    # --- 1. ВНУТРЕННЯЯ ФУНКЦИЯ СБОРА ДАННЫХ ---
     def get_internal_inventory():
-    all_items = []
-    import ast
+        all_items = []
+        # Список таблиц для проверки
+        sources = [
+            {"key": "arrivals", "label": "Приход"},
+            {"key": "orders", "label": "Заявка"}
+        ]
 
-    # Список таблиц, из которых тянем товары
-    sources = [
-        {"key": "arrivals", "label": "Приход"},
-        {"key": "orders", "label": "Заявка"}
-    ]
+        for source in sources:
+            table_key = source["key"]
+            if table_key in st.session_state and not st.session_state[table_key].empty:
+                df_table = st.session_state[table_key].copy()
+                
+                for _, row in df_table.iterrows():
+                    raw_data = row.get('items_data', [])
+                    
+                    # Парсим строку в список, если нужно
+                    if isinstance(raw_data, str):
+                        try:
+                            raw_data = ast.literal_eval(raw_data)
+                        except:
+                            continue
+                    
+                    if isinstance(raw_data, list):
+                        for item in raw_data:
+                            # Ищем имя товара в разных ключах
+                            name = (item.get('Товар') or 
+                                    item.get('Наименование') or 
+                                    item.get('item') or 
+                                    item.get('Название') or 
+                                    "Без названия")
+                            
+                            all_items.append({
+                                'Название товара': name,
+                                'ID Документа': str(row.get('id', '---')),
+                                'Тип': source["label"],
+                                'Адрес': row.get('Адрес хранения', row.get('location', 'Склад'))
+                            })
+        return pd.DataFrame(all_items)
 
-    for source in sources:
-        table_key = source["key"]
-        if table_key in st.session_state and not st.session_state[table_key].empty:
-            df_table = st.session_state[table_key].copy()
-            
-            for _, row in df_table.iterrows():
-                raw_data = row.get('items_data', [])
-                
-                # Обработка "застрокованных" данных (если загрузчик превратил их в текст)
-                if isinstance(raw_data, str):
-                    try:
-                        raw_data = ast.literal_eval(raw_data)
-                    except:
-                        continue
-                
-                if isinstance(raw_data, list):
-                    for item in raw_data:
-                        # УМНЫЙ ПОИСК ИМЕНИ: проверяем все возможные ключи
-                        name = (item.get('Товар') or 
-                                item.get('Наименование') or 
-                                item.get('item') or 
-                                item.get('Название') or 
-                                "Без названия")
-                        
-                        # Собираем данные в общий список
-                        all_items.append({
-                            'Название товара': name,
-                            'ID Документа': str(row.get('id', '---')),
-                            'Тип': source["label"],
-                            'Адрес': row.get('Адрес хранения', row.get('location', 'Склад'))
-                        })
+    # Вызываем сбор данных
+    inventory_df = get_internal_inventory()
     
-    return pd.DataFrame(all_items)
-    
-    # ПРОВЕРКА: Если пусто - пишем причину для дебага
+    # ПРОВЕРКА НА ПУСТОТУ
     if inventory_df.empty:
-        st.warning("В базе данных нет товаров. Проверьте таблицу Приходов (arrivals).")
-        # Вывод дебага для тебя:
-        st.write("Debug: Session state arrivals empty?", st.session_state.get('arrivals', pd.DataFrame()).empty)
+        st.warning("В базе данных нет товаров для оформления брака.")
+        st.info("Проверьте, загружены ли данные в таблицы 'Приходы' и 'Заявки'.")
         return
 
-    # Создаем список для выбора: "Товар [ID Документа] - Адрес"
-    inventory_df['display_name'] = inventory_df['Название товара'] + " (Док: " + inventory_df['ID Документа'] + ") [" + inventory_df['Адрес'] + "]"
+    # Подготовка названий для выпадающего списка
+    inventory_df['display_name'] = (
+        inventory_df['Тип'] + ": " + 
+        inventory_df['Название товара'] + 
+        " (Док: " + inventory_df['ID Документа'] + ")"
+    )
     
     with st.form("defect_form"):
         st.markdown("### 1️⃣ Выбор поврежденного товара")
         
-        selected_item_name = st.selectbox("🔍 Выберите товар из базы данных", inventory_df['display_name'].unique())
+        selected_item_name = st.selectbox(
+            "🔍 Выберите товар из базы данных", 
+            inventory_df['display_name'].unique()
+        )
         
-        # Получаем данные выбранного товара
+        # Получаем инфо по выбранному товару
         item_info = inventory_df[inventory_df['display_name'] == selected_item_name].iloc[0]
-        st.info(f"📍 Текущее местоположение: **{item_info['Адрес']}** | Оригинальный документ: **{item_info['ID Документа']}**")
+        st.info(f"📍 Локация: **{item_info['Адрес']}** | Источник: **{item_info['Тип']}**")
 
         st.divider()
         
         st.markdown("### 2️⃣ Детали повреждения")
         col1, col2, col3 = st.columns(3)
         
-        defect_qty = col1.number_input("Количество брака (шт/ед)", min_value=1, value=1)
-        defect_type = col2.selectbox("Тип брака", ["Механическое", "Залитие", "Заводской брак", "Испорчена упаковка", "Срок годности"])
-        responsibility = col3.selectbox("Виновная сторона", ["Поставщик", "Транспортная компания", "Склад", "Клиент (возврат)"])
+        defect_qty = col1.number_input("Количество брака", min_value=1, value=1)
+        defect_type = col2.selectbox("Тип брака", ["Механическое", "Заводской брак", "Испорчена упаковка", "Срок годности"])
+        responsibility = col3.selectbox("Виновник", ["Поставщик", "Перевозчик", "Склад"])
 
         st.divider()
         
         st.markdown("### 3️⃣ Обоснование и Решение")
         r3_c1, r3_c2 = st.columns([2, 1])
-        defect_desc = r3_c1.text_area("Описание дефекта (детально)", placeholder="Напр: Треснул корпус при разгрузке...")
-        action_taken = r3_c2.selectbox("Решение", ["Списание", "Возврат поставщику", "Уценка/Ремонт", "Карантин"])
+        defect_desc = r3_c1.text_area("Описание дефекта")
+        action_taken = r3_c2.selectbox("Решение", ["Списание", "Возврат", "Ремонт", "Карантин"])
 
         st.divider()
-        approved_by = st.text_input("👤 Кто зафиксировал брак (ФИО)", value=st.session_state.get('user_name', 'Старший смены'))
+        approved_by = st.text_input("👤 Кто зафиксировал", value="Старший смены")
 
         submitted = st.form_submit_button("🚨 ОФОРМИТЬ АКТ БРАКА", use_container_width=True)
 
@@ -646,7 +651,6 @@ def create_defect_modal():
         defect_id = f"DEF-{str(uuid.uuid4())[:6].upper()}"
         now = datetime.now()
         
-        # ПОДГОТОВКА PAYLOAD (С твоими полями)
         supabase_payload = {
             "id": defect_id,
             "main_item": item_info['Название товара'],
@@ -663,11 +667,11 @@ def create_defect_modal():
 
         try:
             supabase.table("defects").insert(supabase_payload).execute()
-            st.success(f"✅ Акт брака {defect_id} сохранен!")
+            st.success(f"✅ Акт {defect_id} успешно создан!")
             time.sleep(1)
             st.rerun()
         except Exception as e:
-            st.error(f"🚨 Ошибка Supabase: {e}")
+            st.error(f"🚨 Ошибка сохранения: {e}")
 
 @st.dialog("👤 Регистрация водителя", width="medium")
 def create_driver_modal():
@@ -970,6 +974,7 @@ def edit_vehicle_modal():
             st.success("Данные ТС успешно обновлены!")
             time.sleep(1)
             st.rerun()
+
 
 
 
