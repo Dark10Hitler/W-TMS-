@@ -31,6 +31,16 @@ from streamlit_autorefresh import st_autorefresh
 from database import supabase
 from geopy.distance import geodesic
 
+TABLES_CONFIG = {
+    "main": MAIN_COLUMNS,
+    "orders": ORDER_COLUMNS,
+    "arrivals": ARRIVAL_COLUMNS,
+    "defects": DEFECT_COLUMNS,
+    "extras": EXTRA_COLUMNS,
+    "drivers": ["id", "Фамилия", "Имя", "Телефон", "Статус", "Фото", "Категории", "Стаж"],
+    "vehicles": ["id", "Марка", "Госномер", "Тип", "Объем", "Грузоподъемность", "Паллеты", "Статус", "Фото", "ТО", "Страховка"]
+}
+
 # Добавь это в начало после импортов
 def sync_all_from_supabase():
     """Функция первичной синхронизации всех таблиц"""
@@ -404,15 +414,6 @@ if "db_synced" not in st.session_state:
 
 # 1. КОНСТАНТЫ И КОНФИГ
 MIN_LOAD_FACTOR = 0.3 
-TABLES_CONFIG = {
-    "main": MAIN_COLUMNS,
-    "orders": ORDER_COLUMNS,
-    "arrivals": ARRIVAL_COLUMNS,
-    "defects": DEFECT_COLUMNS,
-    "extras": EXTRA_COLUMNS,
-    "drivers": ["id", "Фамилия", "Имя", "Телефон", "Статус", "Фото", "Категории", "Стаж"],
-    "vehicles": ["id", "Марка", "Госномер", "Тип", "Объем", "Грузоподъемность", "Паллеты", "Статус", "Фото", "ТО", "Страховка"]
-}
 
 # 2. ИНИЦИАЛИЗАЦИЯ (Один цикл вместо трех)
 if "db_initialized" not in st.session_state:
@@ -1662,4 +1663,5 @@ elif st.session_state.get("active_modal"):
     else:
         # Резервный вызов общей функции
         create_modal(m_type)
+
 
