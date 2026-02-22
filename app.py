@@ -32,6 +32,19 @@ from database import supabase
 from geopy.distance import geodesic
 import json
 
+# В самом начале вашего файла app.py
+try:
+    from config import (
+        create_order_modal, 
+        create_arrival_modal, 
+        create_extras_modal, 
+        create_defect_modal,
+        create_driver_modal,
+        create_vehicle_modal,
+    )
+except ImportError as e:
+    st.error(f"Не удалось импортировать функции из config.py: {e}")
+
 TABLES_CONFIG = {
     "main": MAIN_COLUMNS,
     "orders": ORDER_COLUMNS,
@@ -1803,6 +1816,7 @@ elif st.session_state.get("active_modal"):
     elif m_type == "defects": create_defect_modal()
     elif m_type == "drivers_new": create_driver_modal()
     elif m_type == "vehicle_new": create_vehicle_modal()
+
 
 
 
