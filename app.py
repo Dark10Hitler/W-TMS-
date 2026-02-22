@@ -314,7 +314,7 @@ def get_full_inventory_df():
                         "Дата": row.get('created_at')
                     })
 
-    return pd.DataFrame(all_items)
+    st.write("DEBUG: Найдено товаров в Arrivals:", len(all_items))
  
 def get_saved_location(product_name):
     """Ищет рекомендованный адрес товара в БД Supabase"""
@@ -1680,6 +1680,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
