@@ -199,7 +199,7 @@ def create_modal(table_key):
         try:
             # Предполагается, что объект supabase уже инициализирован в главном файле
             # и доступен здесь (или импортирован).
-            from utils import supabase # <-- Убедись, что путь импорта верный
+            from database import supabase # <-- Убедись, что путь импорта верный
             
             response = supabase.table("orders").insert(supabase_data).execute()
             
@@ -849,5 +849,6 @@ def edit_vehicle_modal():
             time.sleep(1)
 
             st.rerun()
+
 
 
