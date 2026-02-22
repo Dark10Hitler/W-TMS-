@@ -116,8 +116,3 @@ TABLE_STRUCT = {
     "defects": DEFECT_COLUMNS, "drivers": ["id", "Фамилия", "Телефон", "Статус"],
     "vehicles": ["id", "Марка", "Госномер", "Объем (м3)", "Грузоподъемность (кг)"]
 }
-
-
-#[connections.gsheets]
-#spreadsheet = "https://docs.google.com/spreadsheets/d/1RKI-57khtR9Ij0LnmVxYfZWXPjPgjK9FItOO_Sifa7I/edit?usp=sharing"
-https://docs.google.com/spreadsheets/d/1RKI-57khtR9Ij0LnmVxYfZWXPjPgjK9FItOO_Sifa7I/edit?usp=sharing
