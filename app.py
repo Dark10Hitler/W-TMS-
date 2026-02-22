@@ -369,7 +369,165 @@ def get_full_inventory_df():
         return pd.DataFrame()
 
     return pd.DataFrame(all_items) if all_items else pd.DataFrame()
+
+def show_item_details_modal():
+    """Модальное окно с подробностями товара"""
     
+    if "viewing_item" not in st.session_state:
+        st.session_state.viewing_item = None
+    
+    # Проверяем, есть ли выбранный товар для просмотра
+    if st.session_state.viewing_item is not None:
+        item = st.session_state.viewing_item
+        
+        # Создаем модальное окно
+        with st.container(border=True):
+            col_header, col_close = st.columns([0.9, 0.1])
+            
+            with col_header:
+                st.markdown(f"### 📦 {item.get('Название товара', 'Неизвестный товар')}")
+            
+            with col_close:
+                if st.button("❌", key="close_modal", help="Закрыть"):
+                    st.session_state.viewing_item = None
+                    st.rerun()
+            
+            st.divider()
+            
+            # Основная информация
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Количество", f"{item.get('Количество', 0)} шт")
+            
+            with col2:
+                st.metric("Тип документа", item.get('Тип', 'Н/Д'))
+            
+            with col3:
+                st.metric("Статус", item.get('Адрес', 'Не назначено'))
+            
+            st.divider()
+            
+            # Детальная информация
+            tab1, tab2, tab3 = st.tabs(["📋 Общая информация", "🏪 Расположение", "📝 История"])
+            
+            with tab1:
+                st.markdown(f"""
+                <div style="background: #1d222b; padding: 20px; border-radius: 12px; border: 1px solid #3d444d;">
+                    <b>📌 Основные данные:</b><br>
+                    • <b>ID товара:</b> <code>{item.get('id', 'Н/Д')}</code><br>
+                    • <b>Название:</b> {item.get('Название товара', 'Н/Д')}<br>
+                    • <b>Количество:</b> {item.get('Количество', 0)} шт<br>
+                    <br>
+                    <b>📄 Документ:</b><br>
+                    • <b>Номер:</b> {item.get('ID Документа', 'Н/Д')}<br>
+                    • <b>Тип:</b> {item.get('Тип', 'Н/Д')}<br>
+                    • <b>Контрагент:</b> {item.get('Контрагент', 'Н/Д')}<br>
+                    • <b>Дата:</b> {item.get('Дата', 'Н/Д')}<br>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with tab2:
+                addr = str(item.get('Адрес', ''))
+                
+                if addr == "НЕ НАЗНАЧЕНО":
+                    st.warning("⚠️ Товар ещё не размещен на складе")
+                elif addr == "🚚 В ЗАКАЗЕ":
+                    st.info("🚚 Товар находится в активном заказе")
+                else:
+                    st.success(f"✅ Размещен в: **{addr}**")
+                    
+                    # Показываем карту если возможно
+                    if "-" in addr:
+                        try:
+                            from your_module import get_warehouse_figure  # Замените на ваш импорт
+                            wh_id = addr.split('-')[0].replace("WH", "")
+                            fig = get_warehouse_figure(wh_id, highlighted_cell=addr)
+                            st.plotly_chart(fig, use_container_width=True)
+                        except:
+                            st.info("Карта склада недоступна")
+                
+                # Кнопка переместить товар
+                if st.button("🔄 ПЕРЕМЕСТИТЬ ТОВАР", type="primary", use_container_width=True):
+                    st.session_state.editing_id = item.get('id')
+                    st.session_state.active_modal = "inventory_edit"
+                    st.rerun()
+            
+            with tab3:
+                st.markdown("""
+                <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #58a6ff;">
+                    <b>📅 История операций:</b><br>
+                    <small>Функция истории будет добавлена в следующей версии</small>
+                </div>
+                """, unsafe_allow_html=True)
+
+
+# Модификация основной функции таблицы
+def show_inventory_database():
+    """Обновленная функция вкладки База Данных с двойным кликом"""
+    
+    st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
+    
+    with st.spinner("Синхронизация товарных позиций..."):
+        inventory_df = get_full_inventory_df() 
+    
+    if inventory_df is None or (isinstance(inventory_df, pd.DataFrame) and inventory_df.empty):
+        st.info("📦 В документах (Приходы/Заказы) пока нет товаров. Сначала создайте приход в разделе 'Приемка'.")
+    else:
+        # Панель аналитики
+        c1, c2, c3 = st.columns(3)
+        
+        total_in = inventory_df[inventory_df['Тип'] == "📦 ПРИХОД"]['Количество'].sum() if 'Количество' in inventory_df.columns else 0
+        unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО']) if 'Адрес' in inventory_df.columns else 0
+        
+        c1.metric("Всего поступило (ед.)", f"{int(total_in)} шт")
+        c2.metric("Требуют размещения", unassigned, delta=f"{unassigned} поз.", delta_color="inverse")
+        c3.metric("Уникальных строк", len(inventory_df))
+
+        # Настройка таблицы Ag-Grid
+        from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+        
+        gb = GridOptionsBuilder.from_dataframe(inventory_df)
+        gb.configure_default_column(resizable=True, filterable=True, sortable=True, floatingFilter=True)
+        gb.configure_selection(selection_mode="single", use_checkbox=True)
+        
+        # Стилизация ячеек
+        cellsytle_jscode = JsCode("""
+        function(params) {
+            if (params.value === 'НЕ НАЗНАЧЕНО') {
+                return {'color': 'white', 'backgroundColor': '#E74C3C', 'fontWeight': 'bold'};
+            } else if (params.value === '🚚 В ЗАКАЗЕ') {
+                return {'color': 'white', 'backgroundColor': '#3498DB'};
+            } else {
+                return {'color': '#2ECC71', 'fontWeight': 'bold', 'backgroundColor': '#1e2329'};
+            }
+        };
+        """)
+        gb.configure_column("Адрес", cellStyle=cellsytle_jscode, pinned='left', width=180)
+        
+        # Отображение таблицы
+        grid_res = AgGrid(
+            inventory_df,
+            gridOptions=gb.build(),
+            height=500,
+            theme='alpine',
+            allow_unsafe_jscode=True,
+            update_on=['selectionChanged', 'cellClicked'],  # Добавляем cellClicked
+            key="global_inventory_grid"
+        )
+
+        # Обработка выбора строки (одинарный клик)
+        sel_row = grid_res.get('selected_rows')
+        
+        if sel_row is not None and len(sel_row) > 0:
+            item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
+            # Сохраняем выбранный товар в сессию
+            st.session_state.viewing_item = item.to_dict() if isinstance(item, pd.Series) else item
+        
+        # Отображаем модальное окно с подробностями
+        st.divider()
+        show_item_details_modal()
+        
 def get_saved_location(product_name):
     """Ищет рекомендованный адрес товара в БД Supabase"""
     try:
@@ -1699,6 +1857,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
