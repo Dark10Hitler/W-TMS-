@@ -44,12 +44,13 @@ TABLES_CONFIG = {
 # Добавь это в начало после импортов
 def sync_all_from_supabase():
     """Функция первичной синхронизации всех таблиц"""
-    tables_to_sync = ["main", "orders", "arrivals", "defects", "extras", "drivers", "vehicles"]
+    # ЗАМЕНЯЕМ "main" на "main_registry"
+    tables_to_sync = ["main_registry", "orders", "arrivals", "defects", "extras", "drivers", "vehicles"]
     for table in tables_to_sync:
-        # Загружаем данные из БД
         data = load_data_from_supabase(table)
-        # Сохраняем в память Streamlit
-        st.session_state[table] = data
+        # Если мы загрузили main_registry, в память сохраняем как 'main' для совместимости с кодом
+        state_key = "main" if table == "main_registry" else table
+        st.session_state[state_key] = data
 
 def load_data_from_supabase(table_name):
     try:
@@ -115,14 +116,13 @@ def load_data_from_supabase(table_name):
 def refresh_all_data():
     """Полное обновление данных из облака в Session State"""
     with st.spinner("🔄 Синхронизация с базой данных..."):
-        # Обновляем основные таблицы
-        st.session_state.main = load_data_from_supabase("main")
+        # ОШИБКА БЫЛА ЗДЕСЬ: заменяем "main" на "main_registry"
+        st.session_state.main = load_data_from_supabase("main_registry") 
+        
         st.session_state.orders = load_data_from_supabase("orders")
         st.session_state.arrivals = load_data_from_supabase("arrivals")
         st.session_state.extras = load_data_from_supabase("extras")
         st.session_state.defects = load_data_from_supabase("defects")
-        
-        # Справочники (если они есть в БД)
         st.session_state.drivers = load_data_from_supabase("drivers")
         st.session_state.vehicles = load_data_from_supabase("vehicles")
 
@@ -1663,5 +1663,6 @@ elif st.session_state.get("active_modal"):
     else:
         # Резервный вызов общей функции
         create_modal(m_type)
+
 
 
