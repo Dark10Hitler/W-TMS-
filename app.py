@@ -258,12 +258,10 @@ def get_vehicle_status_color(status):
     }
     return colors.get(status, "blue")
 
-import pandas as pd
-import json
-
 def get_full_inventory_df():
     all_items = []
     try:
+        # Загружаем сырые данные из Supabase
         arrivals = load_data_from_supabase("arrivals")
         orders = load_data_from_supabase("orders")
 
@@ -273,25 +271,27 @@ def get_full_inventory_df():
                 raw_data = row.get('items_data')
                 if not raw_data: continue
                 
-                # Парсим JSON, если это строка
+                # Если это строка (JSON), парсим её в список
                 if isinstance(raw_data, str):
-                    try: raw_data = json.loads(raw_data)
+                    try:
+                        import json
+                        raw_data = json.loads(raw_data)
                     except: continue
                 
                 if isinstance(raw_data, list):
                     for item in raw_data:
-                        # Получаем название товара
+                        # Твой ключ из базы: 'Название товара'
                         name = item.get('Название товара') or item.get('Наименование') or "Без имени"
                         
-                        # Пропускаем строку итогов
-                        if name == "TOTAL":
+                        # Пропускаем строку итогов (TOTAL)
+                        if str(name).upper() == "TOTAL":
                             continue
                             
-                        # Получаем количество (учитываем опечатку 'Количесво')
+                        # Твой ключ из базы с опечаткой: 'Количесво товаров'
                         qty = item.get('Количесво товаров') or item.get('Количество') or 0
                         
                         all_items.append({
-                            "id": row.get('id'),
+                            "id": row.get('id'), # ID для редактирования
                             "Название товара": name,
                             "Количество": float(qty) if qty else 0,
                             "Адрес": item.get('Адрес') or "НЕ НАЗНАЧЕНО",
@@ -301,19 +301,24 @@ def get_full_inventory_df():
                             "Дата": row.get('created_at')
                         })
 
-        # --- ОБРАБОТКА ЗАКАЗОВ (аналогично) ---
+        # --- ОБРАБОТКА ЗАКАЗОВ ---
         if orders is not None and not orders.empty:
             for _, row in orders.iterrows():
                 raw_data = row.get('items_data')
                 if not raw_data: continue
                 if isinstance(raw_data, str):
-                    try: raw_data = json.loads(raw_data)
+                    try: 
+                        import json
+                        raw_data = json.loads(raw_data)
                     except: continue
+                
                 if isinstance(raw_data, list):
                     for item in raw_data:
                         name = item.get('Название товара') or item.get('Наименование') or "Без имени"
-                        if name == "TOTAL": continue
+                        if str(name).upper() == "TOTAL": continue
+                        
                         qty = item.get('Количесво товаров') or item.get('Количество') or 0
+                        
                         all_items.append({
                             "id": row.get('id'),
                             "Название товара": name,
@@ -326,7 +331,8 @@ def get_full_inventory_df():
                         })
 
     except Exception as e:
-        st.error(f"Ошибка парсинга: {e}")
+        # Если что-то пошло не так, выводим ошибку для отладки
+        st.sidebar.error(f"Ошибка парсинга базы: {e}")
         return pd.DataFrame()
 
     return pd.DataFrame(all_items)
@@ -1660,6 +1666,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
