@@ -71,24 +71,33 @@ def render_warehouse_logic(entry_id, items_df):
             key=f"cs_{entry_id}"
         )
         
+        # --- КНОПКА ПРИВЯЗКИ ---
         if st.button("🔗 ПРИВЯЗАТЬ К ЯЧЕЙКЕ", use_container_width=True, type="primary"):
-            # Данные для базы
+            # 1. Создаем переменную ВНУТРИ блока кнопки
             inv_data = {
-        "doc_id": entry_id,
-        "item_name": target_item,
-        "warehouse_id": wh_id,
-        "cell_address": selected_cell,
-        "quantity": items_df.loc[items_df['Название товара'] == target_item, 'Количесво товаров'].values[0] or 0
-        }
-    
-    # Сохраняем (UPSERT обновит адрес, если товар уже был привязан)
-        supabase.table("inventory").upsert(inv_data, on_conflict="doc_id, item_name, cell_address").execute()
-        st.toast("Данные синхронизированы с топологией склада!")
-
-    with col_viz:
-        # Визуализация
-        fig = get_warehouse_figure(wh_id, highlighted_cell=selected_cell)
-        st.plotly_chart(fig, use_container_width=True, key=f"map_v_{entry_id}")
+                "doc_id": entry_id,
+                "item_name": target_item,
+                "warehouse_id": wh_id,
+                "cell_address": selected_cell,
+                "quantity": float(items_df.loc[items_df['Название товара'] == target_item, 'Кол-во'].values[0] or 0)
+            }
+            
+            # 2. Используем её ТУТ ЖЕ (с тем же отступом!)
+            try:
+                supabase.table("inventory").upsert(
+                    inv_data, 
+                    on_conflict="doc_id, item_name"
+                ).execute()
+                
+                # Обновляем адрес в локальной таблице, чтобы изменения сразу отразились в редакторе
+                mask = st.session_state[f"temp_items_{entry_id}"]['Название товара'] == target_item
+                st.session_state[f"temp_items_{entry_id}"].loc[mask, 'Адрес'] = selected_cell
+                
+                st.toast(f"✅ {target_item} привязан к {selected_cell}")
+                time.sleep(0.5)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Ошибка при сохранении: {e}")
         
 @st.dialog("⚙️ Редактирование данных", width="large")
 def edit_order_modal(entry_id, table_key="orders"):
@@ -1469,6 +1478,7 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
+
 
 
 
