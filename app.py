@@ -30,6 +30,22 @@ import requests
 from streamlit_autorefresh import st_autorefresh
 from supabase import create_client, Client
 
+@st.cache_resource
+def init_connection():
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["key"]
+    return create_client(url, key)
+
+supabase = init_connection()
+
+def save_to_supabase(table_name, data_dict):
+    try:
+        # .insert() принимает обычный словарь Python
+        response = supabase.table(table_name).insert(data_dict).execute()
+        return True, response
+    except Exception as e:
+        st.error(f"🚨 Ошибка Supabase: {e}")
+        return False, None
 
 # --- НАСТРОЙКИ TRACCAR ---
 TRACCAR_URL = "http://localhost:8082" 
@@ -1308,4 +1324,5 @@ elif st.session_state.get("active_modal"):
     elif m_type == "arrivals":
         create_arrival_modal()
     elif m_type: # Если есть какой-то другой тип для общей функции
+
         create_modal(m_type)
