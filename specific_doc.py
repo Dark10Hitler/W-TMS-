@@ -548,15 +548,44 @@ def create_extras_modal():
         
 @st.dialog("⚠️ Регистрация Брака / Повреждений", width="large")
 def create_defect_modal():
-    from database import supabase  # Наше подключение
+    from database import supabase
+    import pandas as pd
+    from datetime import datetime
+    import ast
+    import time
+
     st.subheader("🚨 Акт о выявлении дефектов")
+
+    # --- 1. СБОР ДАННЫХ ИЗ ЕДИНОЙ БАЗЫ (32 ТОВАРА) ---
+    def get_internal_inventory():
+        all_items = []
+        # Проверяем, есть ли приходы в памяти
+        if "arrivals" in st.session_state and not st.session_state.arrivals.empty:
+            df_arr = st.session_state.arrivals.copy()
+            for _, row in df_arr.iterrows():
+                # Берем items_data. Если там строка (из-за загрузчика), парсим её
+                raw_data = row.get('items_data', [])
+                if isinstance(raw_data, str):
+                    try: raw_data = ast.literal_eval(raw_data)
+                    except: raw_data = []
+                
+                if isinstance(raw_data, list):
+                    for item in raw_data:
+                        # Собираем плоский список для выбора
+                        all_items.append({
+                            'Название товара': item.get('Товар', 'Без названия'),
+                            'ID Документа': str(row.get('id', '---')),
+                            'Адрес': row.get('Адрес хранения', row.get('location', 'Склад'))
+                        })
+        return pd.DataFrame(all_items)
+
+    inventory_df = get_internal_inventory()
     
-    # 1. Получаем все товары из всех активных заказов/приходов для выбора
-    # Убедитесь, что функция get_full_inventory_df() подтягивает данные из Supabase
-    inventory_df = get_full_inventory_df()
-    
+    # ПРОВЕРКА: Если пусто - пишем причину для дебага
     if inventory_df.empty:
-        st.warning("В базе данных нет товаров для оформления брака.")
+        st.warning("В базе данных нет товаров. Проверьте таблицу Приходов (arrivals).")
+        # Вывод дебага для тебя:
+        st.write("Debug: Session state arrivals empty?", st.session_state.get('arrivals', pd.DataFrame()).empty)
         return
 
     # Создаем список для выбора: "Товар [ID Документа] - Адрес"
@@ -593,62 +622,32 @@ def create_defect_modal():
         submitted = st.form_submit_button("🚨 ОФОРМИТЬ АКТ БРАКА", use_container_width=True)
 
     if submitted:
-        # 1. Генерация уникального ID
         import uuid
-        defect_id = f"BRK-{str(uuid.uuid4())[:6].upper()}"
+        defect_id = f"DEF-{str(uuid.uuid4())[:6].upper()}"
         now = datetime.now()
         
-        # 2. ПОДГОТОВКА ДАННЫХ ДЛЯ SUPABASE (английские ключи)
+        # ПОДГОТОВКА PAYLOAD (С твоими полями)
         supabase_payload = {
             "id": defect_id,
-            "item_name": item_info['Название товара'],
-            "quantity": int(defect_qty),
-            "storage_address": item_info['Адрес'],
+            "main_item": item_info['Название товара'],
+            "total_defective": int(defect_qty),
+            "quarantine_address": item_info['Адрес'],
             "defect_type": defect_type,
-            "responsible_party": responsibility,
+            "culprit": responsibility,
             "decision": action_taken,
-            "description": defect_desc,
-            "linked_doc_id": item_info['ID Документа'],
-            "reported_by": approved_by,
-            "status": "АКТИВЕН",
-            "created_at": now.isoformat()
+            "items_data": [{"Товар": item_info['Название товара'], "Кол-во": int(defect_qty), "Описание": defect_desc}],
+            "related_doc_id": item_info['ID Документа'],
+            "status": "ОБНАРУЖЕНО",
+            "updated_at": now.isoformat()
         }
 
-        # 3. СОХРАНЕНИЕ В ОБЛАКО
         try:
             supabase.table("defects").insert(supabase_payload).execute()
+            st.success(f"✅ Акт брака {defect_id} сохранен!")
+            time.sleep(1)
+            st.rerun()
         except Exception as e:
-            st.error(f"🚨 Ошибка сохранения акта брака в Supabase: {e}")
-            return
-
-        # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО ИНТЕРФЕЙСА (для AgGrid)
-        ui_defect_data = {
-            "📝 Ред.": "⚙️",
-            "id": defect_id,
-            "Товар": item_info['Название товара'],
-            "Кол-во брака": defect_qty,
-            "Адрес хранения": item_info['Адрес'],
-            "Тип дефекта": defect_type,
-            "Виновник": responsibility,
-            "Решение": action_taken,
-            "Связь с документом": item_info['ID Документа'],
-            "Дата создания": now.strftime("%Y-%m-%d"),
-            "Время": now.strftime("%H:%M"),
-            "Статус": "АКТИВЕН",
-            "🔍 Просмотр": "👀",
-            "🖨️ Печать": False
-        }
-
-        # Обновляем session_state["defects"]
-        new_row_df = pd.DataFrame([ui_defect_data])
-        if "defects" not in st.session_state:
-            st.session_state["defects"] = pd.DataFrame()
-        st.session_state["defects"] = pd.concat([st.session_state["defects"], new_row_df], ignore_index=True)
-
-        # 5. Завершение
-        st.success(f"✅ Акт брака {defect_id} успешно сохранен в облачной базе!")
-        time.sleep(1)
-        st.rerun()
+            st.error(f"🚨 Ошибка Supabase: {e}")
 
 @st.dialog("👤 Регистрация водителя", width="medium")
 def create_driver_modal():
@@ -951,6 +950,7 @@ def edit_vehicle_modal():
             st.success("Данные ТС успешно обновлены!")
             time.sleep(1)
             st.rerun()
+
 
 
 
