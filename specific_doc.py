@@ -550,129 +550,140 @@ def create_extras_modal():
 def create_defect_modal():
     from database import supabase
     import pandas as pd
+    import json
     from datetime import datetime
-    import ast
     import time
 
     st.subheader("🚨 Акт о выявлении дефектов")
 
-    # --- 1. ВНУТРЕННЯЯ ФУНКЦИЯ СБОРА ДАННЫХ ---
-    def get_internal_inventory():
+    # --- 1. ТВОЯ ЛОГИКА СБОРА ДАННЫХ (БЕРЕМ ВСЁ ИЗ БД) ---
+    def get_full_inventory_df():
         all_items = []
-        # Список таблиц для проверки
-        sources = [
-            {"key": "arrivals", "label": "Приход"},
-            {"key": "orders", "label": "Заявка"}
-        ]
+        try:
+            # ===== ПРИХОДЫ (ARRIVALS) =====
+            res_arr = supabase.table("arrivals").select("*").execute()
+            arrivals_data = pd.DataFrame(res_arr.data) if res_arr.data else pd.DataFrame()
 
-        for source in sources:
-            table_key = source["key"]
-            if table_key in st.session_state and not st.session_state[table_key].empty:
-                df_table = st.session_state[table_key].copy()
-                
-                for _, row in df_table.iterrows():
-                    raw_data = row.get('items_data', [])
+            if not arrivals_data.empty:
+                for _, row in arrivals_data.iterrows():
+                    data = row.get('items_data')
+                    if isinstance(data, str):
+                        try: data = json.loads(data)
+                        except: continue
                     
-                    # Парсим строку в список, если нужно
-                    if isinstance(raw_data, str):
-                        try:
-                            raw_data = ast.literal_eval(raw_data)
-                        except:
-                            continue
-                    
-                    if isinstance(raw_data, list):
-                        for item in raw_data:
-                            # Ищем имя товара в разных ключах
-                            name = (item.get('Товар') or 
-                                    item.get('Наименование') or 
-                                    item.get('item') or 
-                                    item.get('Название') or 
-                                    "Без названия")
+                    if isinstance(data, list):
+                        for item in data:
+                            if not isinstance(item, dict): continue
+                            name = item.get('Название товара') or item.get('Наименование') or "Без имени"
+                            if str(name).upper() in ["TOTAL", "ИТОГО"]: continue
+                            
+                            # Твои ключи: 'Количесво товаров' (с опечаткой) или 'Количество'
+                            qty = item.get('Количесво товаров') or item.get('Количество') or 0
                             
                             all_items.append({
-                                'Название товара': name,
-                                'ID Документа': str(row.get('id', '---')),
-                                'Тип': source["label"],
-                                'Адрес': row.get('Адрес хранения', row.get('location', 'Склад'))
+                                "id": row.get('id'),
+                                "Название товара": str(name),
+                                "Количество": float(qty) if qty else 0,
+                                "Адрес": str(item.get('Адрес') or "НЕ НАЗНАЧЕНО"),
+                                "Тип": "📦 ПРИХОД",
+                                "ID Документа": str(row.get('doc_number', row.get('id', 'Н/Д')))
                             })
+
+            # ===== ЗАКАЗЫ (ORDERS) =====
+            res_ord = supabase.table("orders").select("*").execute()
+            orders_data = pd.DataFrame(res_ord.data) if res_ord.data else pd.DataFrame()
+
+            if not orders_data.empty:
+                for _, row in orders_data.iterrows():
+                    data = row.get('items_data')
+                    if isinstance(data, str):
+                        try: data = json.loads(data)
+                        except: continue
+                    
+                    if isinstance(data, list):
+                        for item in data:
+                            if not isinstance(item, dict): continue
+                            name = item.get('Название товара') or item.get('Наименование') or "Без имени"
+                            if str(name).upper() in ["TOTAL", "ИТОГО"]: continue
+                            
+                            qty = item.get('Количесво товаров') or item.get('Количество') or 0
+                            
+                            all_items.append({
+                                "id": row.get('id'),
+                                "Название товара": str(name),
+                                "Количество": float(qty) if qty else 0,
+                                "Адрес": str(item.get('Адрес') or "НЕ НАЗНАЧЕНО"),
+                                "Тип": "🚚 ЗАКАЗ",
+                                "ID Документа": str(row.get('id', 'Н/Д'))
+                            })
+            
+            st.write(f"DEBUG: Всего товаров найдено: {len(all_items)}") 
+        except Exception as e:
+            st.error(f"❌ Ошибка парсинга: {e}")
+            return pd.DataFrame()
+
         return pd.DataFrame(all_items)
 
-    # Вызываем сбор данных
-    inventory_df = get_internal_inventory()
-    
-    # ПРОВЕРКА НА ПУСТОТУ
+    # Запускаем сбор
+    inventory_df = get_full_inventory_df()
+
     if inventory_df.empty:
         st.warning("В базе данных нет товаров для оформления брака.")
-        st.info("Проверьте, загружены ли данные в таблицы 'Приходы' и 'Заявки'.")
         return
 
-    # Подготовка названий для выпадающего списка
+    # Формируем красивое имя для селекбокса
     inventory_df['display_name'] = (
         inventory_df['Тип'] + ": " + 
         inventory_df['Название товара'] + 
         " (Док: " + inventory_df['ID Документа'] + ")"
     )
-    
+
     with st.form("defect_form"):
         st.markdown("### 1️⃣ Выбор поврежденного товара")
+        selected_display = st.selectbox("🔍 Выберите товар", inventory_df['display_name'].unique())
         
-        selected_item_name = st.selectbox(
-            "🔍 Выберите товар из базы данных", 
-            inventory_df['display_name'].unique()
-        )
-        
-        # Получаем инфо по выбранному товару
-        item_info = inventory_df[inventory_df['display_name'] == selected_item_name].iloc[0]
-        st.info(f"📍 Локация: **{item_info['Адрес']}** | Источник: **{item_info['Тип']}**")
+        # Берем данные конкретной выбранной строки
+        item_info = inventory_df[inventory_df['display_name'] == selected_display].iloc[0]
+        st.info(f"📍 Адрес: {item_info['Адрес']} | Доступно: {item_info['Количество']}")
 
         st.divider()
-        
-        st.markdown("### 2️⃣ Детали повреждения")
-        col1, col2, col3 = st.columns(3)
-        
-        defect_qty = col1.number_input("Количество брака", min_value=1, value=1)
-        defect_type = col2.selectbox("Тип брака", ["Механическое", "Заводской брак", "Испорчена упаковка", "Срок годности"])
-        responsibility = col3.selectbox("Виновник", ["Поставщик", "Перевозчик", "Склад"])
+        st.markdown("### 2️⃣ Детали и Решение")
+        c1, c2, c3 = st.columns(3)
+        qty_defect = c1.number_input("Кол-во брака", min_value=1, value=1)
+        defect_type = c2.selectbox("Тип", ["Бой", "Механика", "Заводской", "Срок"])
+        responsibility = c3.selectbox("Виновник", ["Склад", "Поставщик", "Транспорт"])
 
-        st.divider()
-        
-        st.markdown("### 3️⃣ Обоснование и Решение")
-        r3_c1, r3_c2 = st.columns([2, 1])
-        defect_desc = r3_c1.text_area("Описание дефекта")
-        action_taken = r3_c2.selectbox("Решение", ["Списание", "Возврат", "Ремонт", "Карантин"])
+        desc = st.text_area("Описание")
+        decision = st.selectbox("Решение", ["Списание", "Возврат", "Карантин"])
 
-        st.divider()
-        approved_by = st.text_input("👤 Кто зафиксировал", value="Старший смены")
-
-        submitted = st.form_submit_button("🚨 ОФОРМИТЬ АКТ БРАКА", use_container_width=True)
+        submitted = st.form_submit_button("🚨 ОФОРМИТЬ АКТ", use_container_width=True)
 
     if submitted:
         import uuid
-        defect_id = f"DEF-{str(uuid.uuid4())[:6].upper()}"
-        now = datetime.now()
+        def_id = f"DEF-{str(uuid.uuid4())[:6].upper()}"
         
-        supabase_payload = {
-            "id": defect_id,
+        # Твой ПОЛНЫЙ PAYLOAD для Supabase
+        payload = {
+            "id": def_id,
             "main_item": item_info['Название товара'],
-            "total_defective": int(defect_qty),
-            "quarantine_address": item_info['Адрес'],
+            "total_defective": int(qty_defect),
+            "related_doc_id": item_info['ID Документа'],
             "defect_type": defect_type,
             "culprit": responsibility,
-            "decision": action_taken,
-            "items_data": [{"Товар": item_info['Название товара'], "Кол-во": int(defect_qty), "Описание": defect_desc}],
-            "related_doc_id": item_info['ID Документа'],
             "status": "ОБНАРУЖЕНО",
-            "updated_at": now.isoformat()
+            "decision": decision,
+            "quarantine_address": item_info['Адрес'],
+            "items_data": [{"Товар": item_info['Название товара'], "Кол-во": int(qty_defect), "Описание": desc}],
+            "updated_at": datetime.now().isoformat()
         }
 
         try:
-            supabase.table("defects").insert(supabase_payload).execute()
-            st.success(f"✅ Акт {defect_id} успешно создан!")
+            supabase.table("defects").insert(payload).execute()
+            st.success("✅ Акт зафиксирован!")
             time.sleep(1)
             st.rerun()
         except Exception as e:
-            st.error(f"🚨 Ошибка сохранения: {e}")
-
+            st.error(f"Ошибка сохранения: {e}")
 @st.dialog("👤 Регистрация водителя", width="medium")
 def create_driver_modal():
     from database import supabase
@@ -974,6 +985,7 @@ def edit_vehicle_modal():
             st.success("Данные ТС успешно обновлены!")
             time.sleep(1)
             st.rerun()
+
 
 
 
