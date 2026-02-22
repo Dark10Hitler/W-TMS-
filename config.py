@@ -502,42 +502,69 @@ def show_print_modal(order_id):
 def edit_arrival_modal(entry_id):
     from database import supabase
     import numpy as np
+    import pandas as pd
+    from datetime import datetime
     import time
     
     table_key = "arrivals"
     
-    # --- 1. ИНИЦИАЛИЗАЦИЯ ---
+    # --- 1. УМНАЯ ИНИЦИАЛИЗАЦИЯ (ПРЯМАЯ ЗАГРУЗКА ИЗ БД) ---
     if f"temp_row_{entry_id}" not in st.session_state:
-        if table_key not in st.session_state:
-            st.error("Таблица приходов не загружена")
-            return
-            
-        df = st.session_state[table_key]
-        idx_list = df.index[df['id'] == entry_id].tolist()
-        if not idx_list:
-            st.error("Запись прихода не найдена")
-            return
-        
-        st.session_state[f"temp_idx_{entry_id}"] = idx_list[0]
-        st.session_state[f"temp_row_{entry_id}"] = df.iloc[idx_list[0]].to_dict()
-        
-        # Загрузка товаров из реестра
-        items_reg = st.session_state.items_registry.get(
-            entry_id, 
-            pd.DataFrame(columns=['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'])
-        ).copy()
-        
-        # Проверка наличия нужных колонок для корректной работы editor
-        for col in ['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес']:
-            if col not in items_reg.columns:
-                items_reg[col] = 0 if col == 'Кол-во' else ""
+        with st.spinner("🔄 Синхронизация состава прихода с БД..."):
+            try:
+                # Запрашиваем свежие данные из базы, чтобы достать поле items_data
+                response = supabase.table(table_key).select("*").eq("id", entry_id).execute()
                 
-        st.session_state[f"temp_items_{entry_id}"] = items_reg
+                if not response.data:
+                    st.error(f"Документ {entry_id} не найден в базе.")
+                    return
+                
+                db_row = response.data[0]
+                
+                # Мапим данные из БД на русские ключи твоего интерфейса
+                st.session_state[f"temp_row_{entry_id}"] = {
+                    'Клиент': db_row.get('client_name', db_row.get('Клиент', '')),
+                    'Телефон': db_row.get('phone', db_row.get('Телефон', '')),
+                    'Адрес загрузки': db_row.get('load_address', db_row.get('Адрес загрузки', 'Склад №1')),
+                    'Статус': db_row.get('status', db_row.get('Статус', 'ПРИЕМКА')),
+                    'ТС (Госномер)': db_row.get('vehicle', db_row.get('ТС (Госномер)', '')),
+                    'Водитель': db_row.get('driver', db_row.get('Водитель', '')),
+                    'Сертификат': db_row.get('has_certificate', db_row.get('Сертификат', 'Нет')),
+                    'Общий объем (м3)': db_row.get('total_volume', 0.0)
+                }
+                
+                # ДОСТАЕМ ТОВАРЫ ИЗ items_data (Тут решается проблема пустоты)
+                items_raw = db_row.get('items_data', [])
+                if isinstance(items_raw, list) and len(items_raw) > 0:
+                    items_reg = pd.DataFrame(items_raw)
+                else:
+                    # Фолбэк на реестр, если в базе совсем пусто
+                    items_reg = st.session_state.items_registry.get(
+                        entry_id, 
+                        pd.DataFrame(columns=['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'])
+                    ).copy()
+
+                # Проверка колонок
+                for col in ['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес']:
+                    if col not in items_reg.columns:
+                        items_reg[col] = 0 if 'Объем' in col or 'Кол' in col else "НЕ УКАЗАНО"
+                        
+                st.session_state[f"temp_items_{entry_id}"] = items_reg
+
+                # Индекс для локального DF
+                if table_key in st.session_state:
+                    df_local = st.session_state[table_key]
+                    idx_list = df_local.index[df_local['id'] == entry_id].tolist()
+                    st.session_state[f"temp_idx_{entry_id}"] = idx_list[0] if idx_list else None
+
+            except Exception as e:
+                st.error(f"Ошибка инициализации прихода: {e}")
+                return
 
     # Ссылки на данные в текущей сессии
     row = st.session_state[f"temp_row_{entry_id}"]
     items_df = st.session_state[f"temp_items_{entry_id}"]
-    idx = st.session_state[f"temp_idx_{entry_id}"]
+    idx = st.session_state.get(f"temp_idx_{entry_id}")
 
     st.markdown(f"### 📥 Приходная накладная `{entry_id}`")
     tab_info, tab_wh = st.tabs(["📋 Данные поставки", "🏗️ Размещение на складе"])
@@ -561,16 +588,17 @@ def edit_arrival_modal(entry_id):
 
         st.divider()
         st.markdown("### 📦 Состав принимаемого груза")
-        # Редактор состава прихода
-        updated_items = st.data_editor(items_df, use_container_width=True, num_rows="dynamic", key=f"ar_ed_{entry_id}")
+        
+        # Редактор (заменил на width="stretch")
+        updated_items = st.data_editor(items_df, width="stretch", num_rows="dynamic", key=f"ar_ed_{entry_id}")
         st.session_state[f"temp_items_{entry_id}"] = updated_items
 
-        if st.button("💾 ЗАФИКСИРОВАТЬ ПРИЕМКУ", use_container_width=True, type="primary"):
+        if st.button("💾 ЗАФИКСИРОВАТЬ ПРИЕМКУ", width="stretch", type="primary"):
             # Расчет итогов
             valid_vol = pd.to_numeric(updated_items['Объем (м3)'], errors='coerce').fillna(0)
             total_vol = round(float(valid_vol.sum()), 3)
             
-            # 1. ПОДГОТОВКА ДАННЫХ ДЛЯ SUPABASE (Таблица arrivals)
+            # 1. ПОДГОТОВКА ДАННЫХ (БЕЗ СОКРАЩЕНИЙ)
             db_payload = {
                 "client_name": row['Клиент'],
                 "phone": row['Телефон'],
@@ -586,52 +614,48 @@ def edit_arrival_modal(entry_id):
             }
 
             try:
-                # 2. СОХРАНЕНИЕ В ОБЛАКО (Документ)
+                # 2. СОХРАНЕНИЕ В ОБЛАКО
                 supabase.table(table_key).update(db_payload).eq("id", entry_id).execute()
 
-                # 3. ОБНОВЛЕНИЕ ИНВЕНТАРИЗАЦИИ (Таблица inventory)
-                # Если статус "ПРИНЯТО", фиксируем товары в ячейках
+                # 3. СИНХРОНИЗАЦИЯ С ТАБЛИЦЕЙ INVENTORY
                 if row['Статус'] == "ПРИНЯТО":
+                    # Сначала очищаем старые записи по этому doc_id, чтобы не было конфликта
+                    supabase.table("inventory").delete().eq("doc_id", entry_id).execute()
+                    
+                    inv_rows = []
                     for _, item in updated_items.iterrows():
-                        if item.get('Адрес') and item['Адрес'] != "НЕ УКАЗАНО":
-                            inv_item = {
+                        addr = item.get('Адрес')
+                        if addr and addr != "НЕ УКАЗАНО":
+                            inv_rows.append({
                                 "doc_id": entry_id,
                                 "item_name": item['Название товара'],
-                                "cell_address": item['Адрес'],
+                                "cell_address": addr,
                                 "quantity": float(item.get('Кол-во', 0)),
-                                "warehouse_id": item['Адрес'].split('-')[0].replace('WH', '') if '-' in item['Адрес'] else "1"
-                            }
-                            supabase.table("inventory").upsert(inv_item, on_conflict="doc_id, item_name").execute()
+                                "warehouse_id": addr.split('-')[0].replace('WH', '') if '-' in addr else "1"
+                            })
+                    if inv_rows:
+                        supabase.table("inventory").insert(inv_rows).execute()
 
-                # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ (DataFrame)
-                for field, val in row.items():
-                    if field in st.session_state[table_key].columns:
-                        st.session_state[table_key].at[idx, field] = val
+                # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ
+                if idx is not None:
+                    target_df = st.session_state[table_key]
+                    for field, val in row.items():
+                        if field in target_df.columns:
+                            target_df.at[idx, field] = val
+                    target_df.at[idx, 'Общий объем (м3)'] = total_vol
+                    if "items_data" in target_df.columns:
+                        target_df.at[idx, "items_data"] = db_payload["items_data"]
                 
-                st.session_state[table_key].at[idx, 'Общий объем (м3)'] = total_vol
-                st.session_state[table_key].at[idx, 'Кол-во позиций'] = len(updated_items)
-                
-                # Синхронизация с Main
-                if "main" in st.session_state:
-                    m_df = st.session_state["main"]
-                    m_match = m_df.index[m_df['id'] == entry_id].tolist()
-                    if m_match:
-                        m_idx = m_match[0]
-                        m_df.at[m_idx, 'Статус'] = row['Статус']
-                        m_df.at[m_idx, 'Общий объем (м3)'] = total_vol
-
                 st.session_state.items_registry[entry_id] = updated_items
-                st.success(f"✅ Приемка {entry_id} успешно сохранена в БД!")
+                st.success(f"✅ Приемка {entry_id} сохранена!")
                 time.sleep(1)
                 st.rerun()
 
             except Exception as e:
-                st.error(f"🚨 Ошибка сохранения прихода: {e}")
+                st.error(f"🚨 Ошибка: {e}")
 
     with tab_wh:
-        # Логика выбора ячеек (из config.py)
-        # Она обновляет st.session_state[f"temp_items_{entry_id}"], 
-        # который мы потом сохраняем кнопкой "Зафиксировать приемку"
+        from config import render_warehouse_logic # убедись, что импорт верный
         render_warehouse_logic(entry_id, updated_items)
         
 @st.dialog("🔍 Карточка Прихода", width="large")
@@ -1445,5 +1469,6 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
+
 
 
