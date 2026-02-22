@@ -1645,8 +1645,12 @@ elif st.session_state.get("active_print_modal"):
     show_print_modal(st.session_state.active_print_modal)
 
 # ПРИОРИТЕТ 3: СОЗДАНИЕ НОВЫХ ЗАПИСЕЙ
+# ПРИОРИТЕТ 3: СОЗДАНИЕ НОВЫХ ЗАПИСЕЙ
 elif st.session_state.get("active_modal"):
     m_type = st.session_state.active_modal
+    
+    # ВАЖНО: Сбрасываем ключ СРАЗУ, чтобы при реране диалог не открывался второй раз
+    st.session_state.active_modal = None 
     
     if m_type == "drivers_new":
         create_driver_modal()
@@ -1657,12 +1661,10 @@ elif st.session_state.get("active_modal"):
     elif m_type == "defects":
         create_defect_modal()
     elif m_type == "arrivals":
-        create_arrival_modal()
+        create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
-    else:
-        # Резервный вызов общей функции
-        create_modal(m_type)
+
 
 
 
