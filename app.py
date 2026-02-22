@@ -610,6 +610,7 @@ def render_aggrid_table(table_key, title):
     )
 
     # --- 3. ОБРАБОТКА ВЫБОРА ---
+    # --- 3. ОБРАБОТКА ВЫБОРА ---
     selected_rows = grid_response.selected_rows
     
     # Универсальная проверка выбора (pd.DataFrame или List)
@@ -624,29 +625,41 @@ def render_aggrid_table(table_key, title):
         row_id = row_data["id"]
         st.session_state.editing_id = row_id # Фиксируем ID для модалок
 
+        # --- ИНТЕЛЛЕКТУАЛЬНЫЙ РОУТИНГ ДЛЯ 'MAIN' ---
+        # Определяем, к какой таблице реально относится документ
+        target_key = table_key
+        if table_key == "main":
+            # Проверяем префикс ID (замените на свои, если они другие)
+            if str(row_id).startswith("ORD"): target_key = "orders"
+            elif str(row_id).startswith("IN") or str(row_id).startswith("ARR"): target_key = "arrivals"
+            elif str(row_id).startswith("DEF"): target_key = "defects"
+            # Если префиксов нет, можно ориентироваться на колонку "Секция"
+            elif row_data.get("Секция") == "ПРИХОД": target_key = "arrivals"
+            elif row_data.get("Секция") == "ЗАЯВКА": target_key = "orders"
+
         st.markdown("---")
         col_actions = st.columns([1, 1, 1, 3])
         
-        # Динамический вызов модальных окон на основе ключа таблицы
+        # Динамический вызов модальных окон на основе target_key
         with col_actions[0]:
-            if st.button("⚙️ ИЗМЕНИТЬ", key=f"edit_{table_key}", use_container_width=True):
-                if table_key == "orders": edit_order_modal(row_id)
-                elif table_key == "arrivals": edit_arrival_modal(row_id)
-                elif table_key == "extras": edit_extra_modal(row_id)
-                elif table_key == "defects": edit_defect_modal(row_id)
-                elif table_key == "drivers": edit_driver_modal(row_id)
-                elif table_key == "vehicles": edit_vehicle_modal(row_id)
+            if st.button("⚙️ ИЗМЕНИТЬ", key=f"edit_{table_key}", width="stretch"):
+                if target_key == "orders": edit_order_modal(row_id)
+                elif target_key == "arrivals": edit_arrival_modal(row_id)
+                elif target_key == "extras": edit_extra_modal(row_id)
+                elif target_key == "defects": edit_defect_modal(row_id)
+                elif target_key == "drivers": edit_driver_modal(row_id)
+                elif target_key == "vehicles": edit_vehicle_modal(row_id)
 
         with col_actions[1]:
-            if st.button("🔍 ПРОСМОТР", key=f"view_{table_key}", use_container_width=True):
-                if table_key == "orders": show_order_details_modal(row_id)
-                elif table_key == "arrivals": show_arrival_details_modal(row_id)
-                elif table_key == "defects": show_defect_details_modal(row_id)
+            if st.button("🔍 ПРОСМОТР", key=f"view_{table_key}", width="stretch"):
+                if target_key == "orders": show_order_details_modal(row_id)
+                elif target_key == "arrivals": show_arrival_details_modal(row_id)
+                elif target_key == "defects": show_defect_details_modal(row_id)
 
         with col_actions[2]:
-            if st.button("🖨️ ПЕЧАТЬ", key=f"print_{table_key}", use_container_width=True):
-                if table_key == "orders": show_print_modal(row_id)
-                elif table_key == "arrivals": show_arrival_print_modal(row_id)
+            if st.button("🖨️ ПЕЧАТЬ", key=f"print_{table_key}", width="stretch"):
+                if target_key == "orders": show_print_modal(row_id)
+                elif target_key == "arrivals": show_arrival_print_modal(row_id)
 
     else:
         st.info("💡 Выберите запись в таблице для управления")
@@ -1800,6 +1813,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
