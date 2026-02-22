@@ -46,8 +46,8 @@ def get_full_inventory_df():
 
 @st.dialog("📝 Создание новой заявки / документа", width="large")
 def create_modal(table_key):
-    # Получаем структуру колонок (предполагается наличие этих констант в вашем коде)
-    columns = TABLE_STRUCT.get(table_key, ORDER_COLUMNS) # Заменил дефолт на ORDER_COLUMNS
+    # Получаем структуру колонок
+    columns = TABLE_STRUCT.get(table_key, ORDER_COLUMNS) 
     st.subheader(f"📦 Регистрация нового документа: {table_key.upper()}")
     
     # Пытаемся безопасно получить имя оператора
@@ -58,58 +58,49 @@ def create_modal(table_key):
     
     st.markdown(f"**Оператор:** {operator_name}")
 
-    # --- 1. ПАРСИНГ ФАЙЛА СПЕЦИФИКАЦИИ ---
+    # --- 1. ПАРСИНГ ФАЙЛА СПЕЦИФИКАЦИИ (БЕЗ ИЗМЕНЕНИЙ) ---
     st.markdown("### 1️⃣ Загрузка спецификации")
     uploaded_file = st.file_uploader("📥 Выберите файл Excel или CSV для автоматического разбора позиций", type=["xlsx", "xls", "csv"])
     
     parsed_items_df = pd.DataFrame()
     total_vol = 0.0
     total_sum = 0.0
-    total_weight = 0.0 
 
     if uploaded_file:
         try:
-            # Чтение файла
             df = pd.read_excel(uploaded_file) if "xls" in uploaded_file.name else pd.read_csv(uploaded_file)
-            
-            # Ищем нужную колонку с названием товара
             name_col = next((c for c in df.columns if 'назван' in c.lower() or 'товар' in c.lower() or 'наимен' in c.lower()), None)
             
             if not name_col:
                 st.error("❌ Не нашел колонку с названием товара! Укажите её вручную:")
                 name_col = st.selectbox("Выберите колонку с товаром", df.columns)
             
-            # Переименовываем для стабильной работы кода
             df = df.rename(columns={name_col: 'Название товара'})
             
-            # Авто-расчет итогов (если колонки есть)
             vol_col = next((c for c in df.columns if 'объем' in c.lower() or 'м3' in c.lower()), None)
             sum_col = next((c for c in df.columns if 'сумма' in c.lower() or 'цена' in c.lower()), None)
             
             if vol_col: total_vol = float(df[vol_col].sum())
             if sum_col: total_sum = float(df[sum_col].sum())
             
-            # Добавляем колонку Адрес по умолчанию, если её нет
             if 'Адрес' not in df.columns:
                 df['Адрес'] = "НЕ НАЗНАЧЕНО"
             
             parsed_items_df = df
-            st.success(f"✅ Файл прочитан. Найдено позиций: {len(df)} | Общий объем: {total_vol:.2f} м3 | Общая сумма: {total_sum:.2f}")
+            st.success(f"✅ Файл прочитан. Найдено позиций: {len(df)} | Общий объем: {total_vol:.2f} м3 | Сумма: {total_sum:.2f}")
             with st.expander("👀 Предпросмотр загруженных позиций"):
                 st.dataframe(df.head(5), use_container_width=True)
 
         except Exception as e:
             st.error(f"❌ Ошибка парсинга файла: {e}")
 
-    # --- 2. ФОРМА ВВОДА ДАННЫХ ---
+    # --- 2. ФОРМА ВВОДА ДАННЫХ (БЕЗ ИЗМЕНЕНИЙ) ---
     st.markdown("### 2️⃣ Параметры заявки и Логистика")
     with st.form(f"full_create_form_{table_key}", clear_on_submit=False):
         
-        # ЛИНИЯ 1: Данные Клиента
         st.markdown("👤 **Информация о клиенте**")
         r1_c1, r1_c2, r1_c3 = st.columns(3)
         
-        # Пытаемся взять клиента из файла, если он там есть
         default_client = ""
         if not parsed_items_df.empty and 'Клиент' in parsed_items_df.columns:
             default_client = str(parsed_items_df['Клиент'].iloc[0])
@@ -120,14 +111,12 @@ def create_modal(table_key):
 
         st.divider()
 
-        # ЛИНИЯ 2: Основные статусы и транспорт
         st.markdown("🚚 **Транспорт и Статус**")
         r2_c1, r2_c2, r2_c3, r2_c4 = st.columns(4)
         
         status_options = ["ОЖИДАНИЕ", "Стоит на точке загрузки", "Выехал", "Ожидает догруз", "В пути", "Доставлено"]
         selected_status = r2_c1.selectbox("📍 Статус заявки", status_options)
 
-        # Проверка наличия данных в справочниках
         drivers_list = ["Наемный водитель"]
         if 'drivers' in st.session_state and not st.session_state.drivers.empty:
             drivers_list += st.session_state.drivers["Фамилия"].tolist()
@@ -137,12 +126,11 @@ def create_modal(table_key):
             vehicles_list += st.session_state.vehicles["Госномер"].tolist()
         
         selected_driver = r2_c2.selectbox("👤 Водитель", drivers_list)
-        selected_ts = r2_c3.selectbox("🚛 ТС (Госномер)", vehicles_list) # Соответствует колонке "ТС"
+        selected_ts = r2_c3.selectbox("🚛 ТС (Госномер)", vehicles_list)
         has_certificate = r2_c4.selectbox("📜 Сертификат", ["Нет", "Да"])
 
         st.divider()
 
-        # ЛИНИЯ 3: Контроль загрузки и Допуск
         st.markdown("⚖️ **Лимиты и Ответственность**")
         r3_c1, r3_c2, r3_c3, r3_c4 = st.columns(4)
         
@@ -153,54 +141,80 @@ def create_modal(table_key):
 
         st.divider()
 
-        # ЛИНИЯ 4: Медиа и Описание
         st.markdown("📝 **Дополнительные сведения и Документы**")
         r4_c1, r4_c2 = st.columns([2, 1])
         
         input_desc = r4_c1.text_area("Описание (детально по товару или особые отметки)", height=100)
-        
-        # Добавляем загрузку фото для колонки "Фото"
         uploaded_photo = r4_c2.file_uploader("📸 Прикрепить фото (Накладная/Груз)", type=['png', 'jpg', 'jpeg'])
         photo_status = "Прикреплено" if uploaded_photo else "Нет"
 
-        # КНОПКА
         st.markdown("<br>", unsafe_allow_html=True)
         submitted = st.form_submit_button("🚀 СФОРМИРОВАТЬ И СОХРАНИТЬ ЗАЯВКУ", use_container_width=True)
 
-    # --- 3. ОБРАБОТКА СОХРАНЕНИЯ ---
+    # --- 3. ОБРАБОТКА И СОХРАНЕНИЕ В SUPABASE ---
     if submitted:
-        # 1. Строгая Валидация
         if not input_client:
             st.error("❌ Ошибка: Поле 'Название Клиента' обязательно для заполнения!")
             return
 
-        # 2. Генерация уникального ID
+        # 1. Генерация уникального ID
         import uuid
-        order_id = str(uuid.uuid4())[:8].upper()
+        order_id = f"ORD-{str(uuid.uuid4())[:6].upper()}"
         
-        # Определение текущего времени
+        # Расчет КПД
+        efficiency = (total_vol / v_max_vol) * 100 if v_max_vol > 0 else 0
+
+        # Конвертация таблицы товаров в JSON для базы данных
+        items_json = []
+        if not parsed_items_df.empty:
+            # Превращаем DataFrame в список словарей, заменяя NaN на None (Supabase не любит NaN)
+            items_json = parsed_items_df.where(pd.notnull(parsed_items_df), None).to_dict(orient='records')
+
+        # 2. ФОРМИРОВАНИЕ PAYLOAD ДЛЯ SUPABASE (СТРОГО ПО SQL)
+        # Мы не передаем created_at и created_time, база подставит их сама (DEFAULT CURRENT_DATE)
+        supabase_data = {
+            "id": order_id,
+            "status": selected_status,
+            "client_name": input_client,
+            "items_count": len(parsed_items_df),
+            "total_volume": float(total_vol),
+            "total_sum": float(total_sum),
+            "loading_efficiency": float(efficiency),
+            "client_address": input_address,
+            "phone": input_phone,
+            "loading_address": input_loading_addr,
+            "certificate": has_certificate,
+            "driver_info": selected_driver,
+            "vehicle_info": selected_ts,
+            "description": input_desc,
+            "access_type": input_dopusk,
+            "items_data": items_json,  # Отправляем JSONB!
+            "photo_url": photo_status, # Позже заменим на URL картинки из Storage
+            "print_flag": False
+        }
+
+        # 3. ОТПРАВКА В БАЗУ ДАННЫХ
+        try:
+            # Предполагается, что объект supabase уже инициализирован в главном файле
+            # и доступен здесь (или импортирован).
+            from utils import supabase # <-- Убедись, что путь импорта верный
+            
+            response = supabase.table("orders").insert(supabase_data).execute()
+            
+            # Если ошибки нет, идем дальше
+        except Exception as e:
+            st.error(f"🚨 Ошибка при сохранении в облако: {e}")
+            return # Прерываем выполнение, если в базу не записалось
+
+        
+
+        # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО ИНТЕРФЕЙСА (Session State)
+        # Оставляем этот блок, чтобы таблица в интерфейсе обновилась моментально,
+        # без необходимости делать полный `SELECT * FROM orders` прямо сейчас.
         current_date = datetime.now().strftime("%Y-%m-%d")
         current_time = datetime.now().strftime("%H:%M:%S")
 
-        # 3. Сохранение позиций товаров в отдельный реестр (для просмотра деталей)
-        if not parsed_items_df.empty:
-            if "items_registry" not in st.session_state:
-                st.session_state.items_registry = {}
-            st.session_state.items_registry[order_id] = parsed_items_df
-
-        # Логика обработки фото (сохранение в Session State или файловую систему)
-        # В данном примере просто фиксируем статус для таблицы, но в реальном приложении 
-        # вы сохраните uploaded_photo.read() куда-либо
-        if uploaded_photo:
-            if "photos_registry" not in st.session_state:
-                st.session_state.photos_registry = {}
-            st.session_state.photos_registry[order_id] = uploaded_photo.name
-
-        # 4. Расчет КПД загрузки ТС
-        efficiency = (total_vol / v_max_vol) * 100 if v_max_vol > 0 else 0
-
-        # 5. СБОР ПОЛНЫХ ДАННЫХ СТРОГО ПО ORDER_COLUMNS
-        new_data = {
+        ui_data = {
             "📝 Ред.": "⚙️", 
             "id": order_id, 
             "🔍 Просмотр": "👀 Посмотреть", 
@@ -215,51 +229,37 @@ def create_modal(table_key):
             "Адрес загрузки": input_loading_addr, 
             "Сертификат": has_certificate,
             "Водитель": selected_driver,
-            "ТС": selected_ts, # Исправлено на 'ТС' согласно ORDER_COLUMNS
+            "ТС": selected_ts, 
             "Дата создания": current_date, 
             "Время создания": current_time,
             "Последнее изменение": f"{operator_name} ({current_time})",
-            "Фото": photo_status, # Добавлена колонка Фото
+            "Фото": photo_status,
             "Описание": input_desc,
             "Допуск": input_dopusk,
             "🖨️ Печать": False
         }
 
-        # Превращаем в DataFrame для вставки
-        new_row_df = pd.DataFrame([new_data])
+        new_row_df = pd.DataFrame([ui_data])
         
-        # 6. СОХРАНЕНИЕ В РЕЕСТР ЗАЯВОК 
-        # Используем безопасное извлечение таблицы
         if table_key not in st.session_state:
             st.session_state[table_key] = pd.DataFrame(columns=ORDER_COLUMNS)
             
-        # Проверяем, есть ли уже колонки, чтобы избежать сдвигов
         current_df = st.session_state[table_key]
         if current_df.empty:
             st.session_state[table_key] = new_row_df
         else:
             st.session_state[table_key] = pd.concat([current_df, new_row_df], ignore_index=True)
 
-        # 7. ЗЕРКАЛИРОВАНИЕ В ТАБЛИЦУ MAIN
-        if "main" not in st.session_state:
-            # Инициализация main, если её нет. Предполагается, что MAIN_COLUMNS импортируется.
-            try:
-                from constants import MAIN_COLUMNS
-                st.session_state["main"] = pd.DataFrame(columns=MAIN_COLUMNS)
-            except ImportError:
-                # Fallback, если не смогли импортировать
-                st.session_state["main"] = pd.DataFrame(columns=ORDER_COLUMNS + ["Тип документа"])
+        # Main обновлять не нужно, если ты потом будешь скачивать его из VIEW main_registry.
+        # Но чтобы интерфейс не моргал, тоже добавим:
+        if "main" in st.session_state:
+            main_row_df = new_row_df.copy()
+            main_row_df["Тип документа"] = "ЗАЯВКА"
+            main_row_df = main_row_df.reindex(columns=st.session_state["main"].columns, fill_value="")
+            st.session_state["main"] = pd.concat([st.session_state["main"], main_row_df], ignore_index=True)
 
-        main_row_df = new_row_df.copy()
-        main_row_df["Тип документа"] = "ЗАЯВКА"
-        
-        # Выравниваем колонки
-        main_row_df = main_row_df.reindex(columns=st.session_state["main"].columns, fill_value="")
-        st.session_state["main"] = pd.concat([st.session_state["main"], main_row_df], ignore_index=True)
-
-        # 8. Завершение работы модалки
         st.session_state.active_modal = None
-        st.success(f"✅ Документ {order_id} для клиента {input_client} успешно создан!")
+        st.success(f"✅ Документ {order_id} для клиента {input_client} успешно создан и сохранен в базе!")
         
         import time
         time.sleep(1.5)
@@ -845,4 +845,5 @@ def edit_vehicle_modal():
             
             st.success("Данные ТС обновлены!")
             time.sleep(1)
+
             st.rerun()
