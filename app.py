@@ -610,7 +610,6 @@ def render_aggrid_table(table_key, title):
     )
 
     # --- 3. ОБРАБОТКА ВЫБОРА ---
-    # --- 3. ОБРАБОТКА ВЫБОРА ---
     selected_rows = grid_response.selected_rows
     
     # Универсальная проверка выбора (pd.DataFrame или List)
@@ -627,15 +626,20 @@ def render_aggrid_table(table_key, title):
 
         # --- ИНТЕЛЛЕКТУАЛЬНЫЙ РОУТИНГ ДЛЯ 'MAIN' ---
         # Определяем, к какой таблице реально относится документ
+        # --- ИНТЕЛЛЕКТУАЛЬНЫЙ РОУТИНГ ДЛЯ 'MAIN' ---
         target_key = table_key
         if table_key == "main":
-            # Проверяем префикс ID (замените на свои, если они другие)
+            # 1. Проверка по префиксам ID
             if str(row_id).startswith("ORD"): target_key = "orders"
             elif str(row_id).startswith("IN") or str(row_id).startswith("ARR"): target_key = "arrivals"
             elif str(row_id).startswith("DEF"): target_key = "defects"
-            # Если префиксов нет, можно ориентироваться на колонку "Секция"
+            elif str(row_id).startswith("EXT"): target_key = "extras"  # ДОБАВЛЕНО
+            
+            # 2. Проверка по колонке "Секция" (как запасной вариант)
             elif row_data.get("Секция") == "ПРИХОД": target_key = "arrivals"
             elif row_data.get("Секция") == "ЗАЯВКА": target_key = "orders"
+            elif row_data.get("Секция") == "ДОПОЛНЕНИЕ": target_key = "extras" # ДОБАВЛЕНО
+            elif row_data.get("Секция") == "БРАК": target_key = "defects"     # ДОБАВЛЕНО
 
         st.markdown("---")
         col_actions = st.columns([1, 1, 1, 3])
@@ -655,11 +659,13 @@ def render_aggrid_table(table_key, title):
                 if target_key == "orders": show_order_details_modal(row_id)
                 elif target_key == "arrivals": show_arrival_details_modal(row_id)
                 elif target_key == "defects": show_defect_details_modal(row_id)
+                elif target_key == "extras": show_extra_details_modal(row_id)
 
         with col_actions[2]:
             if st.button("🖨️ ПЕЧАТЬ", key=f"print_{table_key}", width="stretch"):
                 if target_key == "orders": show_print_modal(row_id)
                 elif target_key == "arrivals": show_arrival_print_modal(row_id)
+                elif target_key == "extras": show_extra_print_modal(row_id)
 
     else:
         st.info("💡 Выберите запись в таблице для управления")
@@ -1813,6 +1819,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
