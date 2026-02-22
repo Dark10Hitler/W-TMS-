@@ -92,40 +92,63 @@ def render_warehouse_logic(entry_id, items_df):
         
 @st.dialog("⚙️ Редактирование данных", width="large")
 def edit_order_modal(entry_id, table_key="orders"):
-    from database import supabase
-    import numpy as np
-
-    # --- 1. ИНИЦИАЛИЗАЦИЯ ---
+    # --- 1. ИНИЦИАЛИЗАЦИЯ (ПРЯМАЯ ЗАГРУЗКА ИЗ БД КАК В ПРОСМОТРЕ) ---
     if f"temp_row_{entry_id}" not in st.session_state:
-        if table_key not in st.session_state:
-            st.error(f"Таблица {table_key} не найдена")
-            return
-            
-        df = st.session_state[table_key]
-        idx_list = df.index[df['id'] == entry_id].tolist()
-        
-        if not idx_list:
-            st.error(f"Запись {entry_id} не найдена")
-            return
-        
-        st.session_state[f"temp_idx_{entry_id}"] = idx_list[0]
-        st.session_state[f"temp_row_{entry_id}"] = df.iloc[idx_list[0]].to_dict()
-        
-        # Загрузка товаров из реестра или создание пустого
-        items_df = st.session_state.items_registry.get(
-            entry_id, 
-            pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
-        ).copy()
-        
-        if 'Адрес' not in items_df.columns:
-            items_df['Адрес'] = "НЕ УКАЗАНО"
-            
-        st.session_state[f"temp_items_{entry_id}"] = items_df
+        with st.spinner("📥 Получение данных из базы..."):
+            try:
+                # Тянем данные из БД, чтобы товары (items_data) точно подтянулись
+                response = supabase.table(table_key).select("*").eq("id", entry_id).execute()
+                
+                if not response.data:
+                    st.error(f"Запись {entry_id} не найдена в Supabase")
+                    return
+                
+                db_row = response.data[0]
+                
+                # Мапим данные из БД на русские ключи, которые используются в твоем интерфейсе
+                # Это гарантирует, что row['Клиент'] и прочие не будут пустыми
+                st.session_state[f"temp_row_{entry_id}"] = {
+                    'id': db_row.get('id'),
+                    'Клиент': db_row.get('client_name', db_row.get('Клиент', '')),
+                    'Телефон': db_row.get('phone', db_row.get('Телефон', '')),
+                    'Адрес клиента': db_row.get('delivery_address', db_row.get('Адрес клиента', '')),
+                    'Статус': db_row.get('status', db_row.get('Статус', 'ОЖИДАНИЕ')),
+                    'Водитель': db_row.get('driver', db_row.get('Водитель', '')),
+                    'ТС': db_row.get('vehicle', db_row.get('ТС', '')),
+                    'Адрес загрузки': db_row.get('load_address', db_row.get('Адрес загрузки', '')),
+                    'Сумма заявки': db_row.get('total_sum', db_row.get('Сумма заявки', 0.0)),
+                    'Общий объем (м3)': db_row.get('total_volume', db_row.get('Общий объем (м3)', 0.0)),
+                    'Допуск': db_row.get('approval_by', db_row.get('Допуск', '')),
+                    'Сертификат': db_row.get('has_certificate', db_row.get('Сертификат', 'Нет')),
+                    'Описание': db_row.get('description', db_row.get('Описание', ''))
+                }
+
+                # Загружаем товары из JSON-поля items_data (самая важная часть!)
+                items_raw = db_row.get('items_data', [])
+                if isinstance(items_raw, list) and len(items_raw) > 0:
+                    items_df = pd.DataFrame(items_raw)
+                else:
+                    items_df = pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
+                
+                if 'Адрес' not in items_df.columns:
+                    items_df['Адрес'] = "НЕ УКАЗАНО"
+                
+                st.session_state[f"temp_items_{entry_id}"] = items_df
+
+                # Сохраняем индекс для локального обновления
+                if table_key in st.session_state:
+                    df_local = st.session_state[table_key]
+                    idx_l = df_local.index[df_local['id'] == entry_id].tolist()
+                    st.session_state[f"temp_idx_{entry_id}"] = idx_l[0] if idx_l else None
+
+            except Exception as e:
+                st.error(f"Ошибка при инициализации: {e}")
+                return
 
     # Ссылки на текущие данные в сессии
     row = st.session_state[f"temp_row_{entry_id}"]
     items_df = st.session_state[f"temp_items_{entry_id}"]
-    idx = st.session_state[f"temp_idx_{entry_id}"]
+    idx = st.session_state.get(f"temp_idx_{entry_id}")
 
     st.markdown(f"### 🖋️ Редактор документа `{entry_id}`")
     tab_main, tab_geo = st.tabs(["📝 Информация и Поля", "📍 Склад (3D)"])
@@ -158,13 +181,12 @@ def edit_order_modal(entry_id, table_key="orders"):
 
         st.divider()
         st.markdown("### 📦 Состав товаров")
-        # Редактор таблицы товаров
-        updated_items = st.data_editor(items_df, use_container_width=True, num_rows="dynamic", key=f"ed_it_{entry_id}")
+        # Редактор таблицы товаров (используем width="stretch" для совместимости)
+        updated_items = st.data_editor(items_df, width="stretch", num_rows="dynamic", key=f"ed_it_{entry_id}")
         st.session_state[f"temp_items_{entry_id}"] = updated_items
 
-        if st.button("💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
-            # 1. Подготовка данных для БД (мапинг русских полей на английские колонки Supabase)
-            # Убедитесь, что названия ключей совпадают с вашей структурой в Supabase!
+        if st.button("💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ", width="stretch", type="primary"):
+            # 1. ТВОЙ PAYLOAD БЕЗ СОКРАЩЕНИЙ
             db_payload = {
                 "client_name": row['Клиент'],
                 "phone": row['Телефон'],
@@ -183,12 +205,12 @@ def edit_order_modal(entry_id, table_key="orders"):
             }
 
             try:
-                # 2. СОХРАНЕНИЕ В ОБЛАКО (Таблица заказов/приходов)
+                # 2. СОХРАНЕНИЕ В ОБЛАКО
                 supabase.table(table_key).update(db_payload).eq("id", entry_id).execute()
 
-                # 3. СИНХРОНИЗАЦИЯ С ТАБЛИЦЕЙ INVENTORY (Складские ячейки)
+                # 3. СИНХРОНИЗАЦИЯ С ТАБЛИЦЕЙ INVENTORY
                 for _, item in updated_items.iterrows():
-                    if item['Адрес'] != "НЕ УКАЗАНО":
+                    if item.get('Адрес') and item['Адрес'] != "НЕ УКАЗАНО":
                         inv_payload = {
                             "doc_id": entry_id,
                             "item_name": item['Название товара'],
@@ -196,20 +218,24 @@ def edit_order_modal(entry_id, table_key="orders"):
                             "quantity": float(item.get('Кол-во', 0)),
                             "warehouse_id": item['Адрес'].split('-')[0].replace('WH', '') if '-' in item['Адрес'] else "1"
                         }
-                        # Upsert обновляет ячейку, если товар уже там был
                         supabase.table("inventory").upsert(inv_payload, on_conflict="doc_id, item_name").execute()
 
                 # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ
-                target_df = st.session_state[table_key]
-                for field, val in row.items():
-                    if field in target_df.columns:
-                        target_df.at[idx, field] = val
-                
-                st.session_state.items_registry[entry_id] = updated_items
-                
+                if idx is not None:
+                    target_df = st.session_state[table_key]
+                    for field, val in row.items():
+                        if field in target_df.columns:
+                            target_df.at[idx, field] = val
+                    # Принудительно обновляем товары в локальном кэше
+                    if "items_data" in target_df.columns:
+                        target_df.at[idx, "items_data"] = db_payload["items_data"]
+
                 st.success("✅ Все данные синхронизированы с базой данных!")
                 time.sleep(1)
                 st.rerun()
+
+            except Exception as e:
+                st.error(f"🚨 Ошибка сохранения в Supabase: {e}")
 
             except Exception as e:
                 st.error(f"🚨 Ошибка сохранения в Supabase: {e}")
@@ -1419,4 +1445,5 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
+
 
