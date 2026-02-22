@@ -9,6 +9,7 @@ from streamlit_folium import st_folium
 from constants import TABLE_STRUCT
 from constants import ORDER_COLUMNS, ARRIVAL_COLUMNS, EXTRA_COLUMNS, DEFECT_COLUMNS, MAIN_COLUMNS
 import base64
+from database import supabase
 
 def process_image(uploaded_file):
     if uploaded_file is not None:
@@ -847,3 +848,4 @@ def edit_vehicle_modal():
             time.sleep(1)
 
             st.rerun()
+
