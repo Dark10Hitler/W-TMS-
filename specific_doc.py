@@ -271,6 +271,9 @@ def create_modal(table_key):
 
 @st.dialog("📥 Регистрация нового Прихода (Поставка)", width="large")
 def create_arrival_modal():
+    from database import supabase # Импортируем наше подключение
+    import numpy as np
+    
     st.subheader("🚚 Приемка товаров на склад")
     
     # Имя оператора
@@ -281,7 +284,7 @@ def create_arrival_modal():
 
     # --- 1. ПАРСИНГ СПЕЦИФИКАЦИИ ПОСТАВЩИКА ---
     st.markdown("### 1️⃣ Загрузка накладной (Excel/CSV)")
-    uploaded_file = st.file_uploader("📥 Загрузите файл от поставщика для авто-разбора позиций", type=["xlsx", "xls", "csv"], key="arrival_uploader")
+    uploaded_file = st.file_uploader("📥 Загрузите файл от поставщика", type=["xlsx", "xls", "csv"], key="arrival_uploader")
     
     parsed_items_df = pd.DataFrame()
     total_vol = 0.0
@@ -294,6 +297,11 @@ def create_arrival_modal():
             if name_col:
                 df = df.rename(columns={name_col: 'Название товара'})
                 if 'Адрес' not in df.columns: df['Адрес'] = "НЕ НАЗНАЧЕНО"
+                
+                # Авто-сумма, если есть колонки суммы
+                sum_col = next((c for c in df.columns if 'сумма' in c.lower() or 'цена' in c.lower()), None)
+                if sum_col: total_sum = float(df[sum_col].sum())
+                
                 parsed_items_df = df
                 st.success(f"✅ Найдено товаров в накладной: {len(df)}")
                 st.dataframe(df.head(3), use_container_width=True)
@@ -304,13 +312,11 @@ def create_arrival_modal():
     with st.form("arrival_create_form"):
         st.markdown("### 2️⃣ Данные поставки и Сопроводительные документы")
         
-        # ЛИНИЯ 1: Контрагент и Документы
         r1_c1, r1_c2, r1_c3 = st.columns([2, 1, 1])
         vendor_name = r1_c1.text_input("🏢 Поставщик / Отправитель", placeholder="ООО 'Мега-Трейд'")
         doc_number = r1_c2.text_input("📄 № Накладной (УПД/ТТН)")
         arrival_type = r1_c3.selectbox("📦 Тип приемки", ["Полная", "Частичная", "Пересорт", "Возврат"])
 
-        # ЛИНИЯ 2: Транспорт и Ответственные
         st.markdown("🚢 **Логистика**")
         r2_c1, r2_c2, r2_c3, r2_c4 = st.columns(4)
         
@@ -321,15 +327,12 @@ def create_arrival_modal():
         receiver_name = r2_c4.text_input("👷 Приемщик (Кладовщик)", value=operator_name)
 
         st.divider()
-
-        # ЛИНИЯ 3: Состояние и Качество
         st.markdown("🛡️ **Входной контроль качества**")
         r3_c1, r3_c2, r3_c3 = st.columns(3)
         package_integrity = r3_c1.selectbox("📦 Целостность упаковки", ["Цела", "Повреждена (см. Брак)", "Следы вскрытия"])
         seals_check = r3_c2.selectbox("🔒 Наличие пломб", ["Есть/Совпадают", "Отсутствуют", "Сорваны"])
         temp_mode = r3_c3.text_input("🌡️ Темп. режим (если нужен)", value="Норма")
 
-        # ЛИНИЯ 4: Итоговые данные
         st.divider()
         r4_c1, r4_c2 = st.columns([2, 1])
         comments = r4_c1.text_area("📝 Замечания по приемке", height=70)
@@ -338,85 +341,93 @@ def create_arrival_modal():
         submitted = st.form_submit_button("📥 ПОДТВЕРДИТЬ ПРИЕМКУ И ВНЕСТИ В РЕЕСТР", use_container_width=True)
 
     if submitted:
-            # 1. Валидация
-            if not vendor_name or not doc_number:
-                st.error("❌ Укажите поставщика и номер документа!")
-                return
+        if not vendor_name or not doc_number:
+            st.error("❌ Укажите поставщика и номер документа!")
+            return
 
-            # 2. Генерация ID
-            import uuid
-            arrival_id = f"IN-{str(uuid.uuid4())[:6].upper()}"
-            
-            # 3. Сохранение позиций в реестр товаров (items_registry)
-            if not parsed_items_df.empty:
-                if "items_registry" not in st.session_state: 
-                    st.session_state.items_registry = {}
-                st.session_state.items_registry[arrival_id] = parsed_items_df
+        # 1. Генерация ID
+        arrival_id = f"IN-{str(uuid.uuid4())[:6].upper()}"
+        
+        # 2. Очистка данных товара (NaN -> None) для JSONB
+        items_json = []
+        if not parsed_items_df.empty:
+            clean_items_df = parsed_items_df.replace({np.nan: None})
+            items_json = clean_items_df.to_dict(orient='records')
 
-            # 4. ПОЛНЫЕ ДАННЫХ ДЛЯ ТАБЛИЦЫ ARRIVALS (Специфический реестр)
-            arrival_data = {
-                "📝 Ред.": "⚙️",
-                "id": arrival_id,
-                "Статус": "На приемке",
-                "Поставщик": vendor_name,
-                "Документ": doc_number,
-                "Водитель": selected_driver,
-                "ТС": vehicle_num,
-                "Тип": arrival_type,
-                "Кол-во позиций": len(parsed_items_df),
-                "Сумма заявки": total_sum_input,
-                "Приемщик": receiver_name,
-                "Целостность": package_integrity,
-                "Дата создания": datetime.now().strftime("%Y-%m-%d"),
-                "Время": datetime.now().strftime("%H:%M"),
-                "🔍 Просмотр": "👀",
-                "🖨️ Печать": False
-            }
+        # 3. ПОДГОТОВКА ДАННЫХ ДЛЯ SUPABASE (английские ключи)
+        supabase_payload = {
+            "id": arrival_id,
+            "status": "На приемке",
+            "vendor_name": vendor_name,
+            "doc_number": doc_number,
+            "driver_name": selected_driver,
+            "vehicle_number": vehicle_num,
+            "arrival_type": arrival_type,
+            "items_count": len(parsed_items_df),
+            "total_sum": float(total_sum_input),
+            "receiver_name": receiver_name,
+            "package_integrity": package_integrity,
+            "seals_check": seals_check,
+            "temp_mode": temp_mode,
+            "comments": comments,
+            "gate_number": gate_num,
+            "items_data": items_json, # Состав накладной
+            "print_flag": False
+        }
 
-            # Создаем DataFrame для вставки
-            arrival_row_df = pd.DataFrame([arrival_data])
+        # 4. ОТПРАВКА В SUPABASE
+        try:
+            supabase.table("arrivals").insert(supabase_payload).execute()
+        except Exception as e:
+            st.error(f"🚨 Ошибка сохранения прихода в облако: {e}")
+            return
 
-            # 5. СОХРАНЕНИЕ В РЕЕСТР ПРИХОДОВ
-            if "arrivals" not in st.session_state:
-                st.session_state["arrivals"] = pd.DataFrame(columns=arrival_data.keys())
-            
-            st.session_state["arrivals"] = pd.concat([st.session_state["arrivals"], arrival_row_df], ignore_index=True)
+        # 5. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО ИНТЕРФЕЙСА (русские названия)
+        now = datetime.now()
+        ui_arrival_data = {
+            "📝 Ред.": "⚙️",
+            "id": arrival_id,
+            "Статус": "На приемке",
+            "Поставщик": vendor_name,
+            "Документ": doc_number,
+            "Водитель": selected_driver,
+            "ТС": vehicle_num,
+            "Тип": arrival_type,
+            "Кол-во позиций": len(parsed_items_df),
+            "Сумма заявки": total_sum_input,
+            "Приемщик": receiver_name,
+            "Целостность": package_integrity,
+            "Дата создания": now.strftime("%Y-%m-%d"),
+            "Время": now.strftime("%H:%M"),
+            "🔍 Просмотр": "👀",
+            "🖨️ Печать": False
+        }
 
-            # 6. ЗЕРКАЛИРОВАНИЕ В ТАБЛИЦУ MAIN (Полное соответствие колонкам)
-            # Здесь мы используем MAIN_COLUMNS, чтобы данные легли в свои специфические ячейки
-            
-            if "main" not in st.session_state:
-                from constants import MAIN_COLUMNS
-                st.session_state["main"] = pd.DataFrame(columns=MAIN_COLUMNS)
+        # Обновляем реестр arrivals
+        new_row_df = pd.DataFrame([ui_arrival_data])
+        if "arrivals" not in st.session_state:
+            st.session_state["arrivals"] = pd.DataFrame()
+        st.session_state["arrivals"] = pd.concat([st.session_state["arrivals"], new_row_df], ignore_index=True)
 
-            # Подготавливаем строку для Main
-            main_entry = arrival_data.copy()
+        # Обновляем MAIN
+        if "main" in st.session_state:
+            main_entry = ui_arrival_data.copy()
             main_entry["Тип документа"] = "ПРИХОД"
+            main_entry["Время создания"] = main_entry.pop("Время")
+            main_entry["Описание"] = f"Приход: {arrival_type}. Док: {doc_number}. Пост: {vendor_name}"
             
-            # Синхронизируем название колонки времени, если в Main она называется "Время создания"
-            if "Время" in main_entry:
-                main_entry["Время создания"] = main_entry.pop("Время")
-            
-            # Описание формируем подробно
-            main_entry["Описание"] = f"Приход: {arrival_type}. Док: {doc_number}. Целостность: {package_integrity}"
-            
-            # Создаем DF и выравниваем его по всем колонкам Main (пустые заполнятся "")
             main_row_df = pd.DataFrame([main_entry])
             main_row_df = main_row_df.reindex(columns=st.session_state["main"].columns, fill_value="")
-            
             st.session_state["main"] = pd.concat([st.session_state["main"], main_row_df], ignore_index=True)
 
-            # 7. Финал
-            st.success(f"✅ Приход {arrival_id} успешно зарегистрирован!")
-            st.session_state.active_modal = None
-            
-            import time
-            time.sleep(1)
-            st.rerun()
+        st.success(f"✅ Приход {arrival_id} успешно зарегистрирован в базе!")
+        time.sleep(1)
+        st.rerun()
         
     
 @st.dialog("➕ Регистрация Дополнительного События/Услуги", width="large")
 def create_extras_modal():
+    from database import supabase  # Наше подключение
     st.subheader("🛠️ Фиксация доп. работ, ресурсов и согласований")
     
     with st.form("extras_detailed_form"):
@@ -426,15 +437,12 @@ def create_extras_modal():
         approved_by = r1_c1.text_input("👤 Кто одобрил (ФИО)", placeholder="Напр: Иванов И.И.")
         executor = r1_c2.text_input("👷 Исполнитель", placeholder="Бригада 2 / Сотрудник")
         
-        # ИСПРАВЛЕНИЕ: Используем date_input вместо несуществующего datetime_input
-        # Если время критично, можно добавить второй виджет в ту же колонку
         selected_date = r1_c3.date_input("📅 Дата события", datetime.now())
         selected_time = r1_c3.time_input("🕒 Время", datetime.now().time())
 
         st.divider()
 
-        # ... (ваш код Линии 2 и 3 без изменений) ...
-        # Линия 2
+        # Линия 2: Предмет
         st.markdown("### 📦 Предмет дополнения")
         r2_c1, r2_c2, r2_c3 = st.columns([2, 1, 1])
         subject_type = r2_c1.selectbox("Тип ресурса", [
@@ -446,29 +454,58 @@ def create_extras_modal():
 
         st.divider()
 
-        # Линия 3
+        # Линия 3: Логика
         st.markdown("### ❓ Причина и Результат")
         r3_c1, r3_c2 = st.columns([2, 1])
         reason = r3_c1.text_area("Почему (Причина возникновения)", height=68, placeholder="Опишите ситуацию детально...")
         status = r3_c2.selectbox("Статус", ["СОГЛАСОВАНО", "В ПРОЦЕССЕ", "ВЫПОЛНЕНО", "ОЖИДАЕТ ОПЛАТЫ"])
 
-        # ЛИНИЯ 4
+        # ЛИНИЯ 4: Цифры
         r4_c1, r4_c2, r4_c3 = st.columns(3)
         qty = r4_c1.number_input("Сколько (Кол-во)", min_value=0.0, value=1.0)
         cost = r4_c2.number_input("Сумма (если применимо, ₽)", min_value=0.0, value=0.0)
         link_id = r4_c3.text_input("🔗 Связь с ID Заявки (если есть)")
 
-        # Теперь кнопка будет видна и распознана
         submitted = st.form_submit_button("🚀 ЗАФИКСИРОВАТЬ В БАЗЕ И MAIN", use_container_width=True)
 
     if submitted:
-        # 1. Генерация ID и подготовка времени
+        # 1. Валидация
+        if not approved_by or not reason:
+            st.error("❌ Заполните поле 'Кто одобрил' и 'Причина'!")
+            return
+
+        # 2. Генерация ID и времени
         import uuid
         extra_id = f"EXT-{str(uuid.uuid4())[:6].upper()}"
         now = datetime.now()
         
-        # 2. ПОЛНЫЕ ДАННЫЕ ДЛЯ ТАБЛИЦЫ EXTRAS (Специфический реестр)
-        extra_data = {
+        # 3. ПОДГОТОВКА ДАННЫХ ДЛЯ SUPABASE (английские ключи)
+        supabase_payload = {
+            "id": extra_id,
+            "approved_by": approved_by,
+            "executor": executor,
+            "subject_type": subject_type,
+            "resource_used": resource_used,
+            "event_date": selected_date.strftime("%Y-%m-%d"),
+            "event_time": selected_time.strftime("%H:%M:%S"),
+            "location": location,
+            "reason": reason,
+            "status": status,
+            "quantity": float(qty),
+            "total_sum": float(cost),
+            "linked_order_id": link_id,
+            "created_at": now.isoformat()
+        }
+
+        # 4. ОТПРАВКА В ОБЛАКО
+        try:
+            supabase.table("extras").insert(supabase_payload).execute()
+        except Exception as e:
+            st.error(f"🚨 Ошибка сохранения услуги в Supabase: {e}")
+            return
+
+        # 5. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО ИНТЕРФЕЙСА (русские ключи для AgGrid)
+        ui_extra_data = {
             "📝 Ред.": "⚙️",
             "id": extra_id,
             "Кто одобрил": approved_by,
@@ -486,54 +523,36 @@ def create_extras_modal():
             "🔍 Просмотр": "👀",
             "🖨️ Печать": False
         }
-        
-        # Создаем DataFrame для вставки
-        extra_row_df = pd.DataFrame([extra_data])
 
-        # 3. СОХРАНЕНИЕ В РЕЕСТР ДОПОЛНЕНИЙ
+        # Обновляем реестр extras в session_state
+        new_row_df = pd.DataFrame([ui_extra_data])
         if "extras" not in st.session_state:
-            st.session_state["extras"] = pd.DataFrame(columns=extra_data.keys())
-        
-        st.session_state["extras"] = pd.concat([st.session_state["extras"], extra_row_df], ignore_index=True)
+            st.session_state["extras"] = pd.DataFrame()
+        st.session_state["extras"] = pd.concat([st.session_state["extras"], new_row_df], ignore_index=True)
 
-        # 4. ЗЕРКАЛИРОВАНИЕ В ТАБЛИЦУ MAIN (Глобальный реестр)
-        # Мы НЕ "впихиваем" Одобрившего в колонку Клиент. 
-        # Мы используем MAIN_COLUMNS, где для этого есть свои поля.
+        # 6. ЗЕРКАЛИРОВАНИЕ В ТАБЛИЦУ MAIN
+        if "main" in st.session_state:
+            main_entry = ui_extra_data.copy()
+            main_entry["Тип документа"] = "ДОП.УСЛУГА"
+            main_entry["Время создания"] = main_entry.pop("Время")
+            main_entry["Описание"] = f"Доп.услуга: {subject_type}. Причина: {reason}"
+            main_entry["Статус"] = f"ДОП: {status}"
+            
+            main_row_df = pd.DataFrame([main_entry])
+            main_row_df = main_row_df.reindex(columns=st.session_state["main"].columns, fill_value="")
+            st.session_state["main"] = pd.concat([st.session_state["main"], main_row_df], ignore_index=True)
 
-        if "main" not in st.session_state:
-            from constants import MAIN_COLUMNS
-            st.session_state["main"] = pd.DataFrame(columns=MAIN_COLUMNS)
-
-        # Подготавливаем данные для Main
-        main_entry = extra_data.copy()
-        main_entry["Тип документа"] = "ДОП.УСЛУГА"
-        
-        # Синхронизируем колонки времени и описания
-        main_entry["Время создания"] = main_entry.pop("Время")
-        main_entry["Описание"] = f"Доп.услуга: {subject_type}. Причина: {reason}"
-        
-        # Если в Main нужна колонка "Статус" с префиксом (опционально)
-        main_entry["Статус"] = f"ДОП: {status}"
-
-        # Создаем DF и выравниваем его по всем колонкам Main
-        main_row_df = pd.DataFrame([main_entry])
-        main_row_df = main_row_df.reindex(columns=st.session_state["main"].columns, fill_value="")
-        
-        st.session_state["main"] = pd.concat([st.session_state["main"], main_row_df], ignore_index=True)
-
-        # 5. Завершение
-        st.success(f"✅ Дополнение {extra_id} успешно добавлено!")
-        st.session_state.active_modal = None
-        
-        import time
+        st.success(f"✅ Услуга {extra_id} сохранена в облаке!")
         time.sleep(1)
         st.rerun()
         
 @st.dialog("⚠️ Регистрация Брака / Повреждений", width="large")
 def create_defect_modal():
+    from database import supabase  # Наше подключение
     st.subheader("🚨 Акт о выявлении дефектов")
     
     # 1. Получаем все товары из всех активных заказов/приходов для выбора
+    # Убедитесь, что функция get_full_inventory_df() подтягивает данные из Supabase
     inventory_df = get_full_inventory_df()
     
     if inventory_df.empty:
@@ -546,13 +565,10 @@ def create_defect_modal():
     with st.form("defect_form"):
         st.markdown("### 1️⃣ Выбор поврежденного товара")
         
-        # Выбор товара из БД
         selected_item_name = st.selectbox("🔍 Выберите товар из базы данных", inventory_df['display_name'].unique())
         
-        # Получаем данные выбранного товара для лимитов
+        # Получаем данные выбранного товара
         item_info = inventory_df[inventory_df['display_name'] == selected_item_name].iloc[0]
-        max_qty = 100 # Если в БД нет колонки количества, ставим лимит. Если есть — берем из item_info['Кол-во']
-        
         st.info(f"📍 Текущее местоположение: **{item_info['Адрес']}** | Оригинальный документ: **{item_info['ID Документа']}**")
 
         st.divider()
@@ -571,20 +587,42 @@ def create_defect_modal():
         defect_desc = r3_c1.text_area("Описание дефекта (детально)", placeholder="Напр: Треснул корпус при разгрузке...")
         action_taken = r3_c2.selectbox("Решение", ["Списание", "Возврат поставщику", "Уценка/Ремонт", "Карантин"])
 
-        # Поля для Main
         st.divider()
         approved_by = st.text_input("👤 Кто зафиксировал брак (ФИО)", value=st.session_state.get('user_name', 'Старший смены'))
 
         submitted = st.form_submit_button("🚨 ОФОРМИТЬ АКТ БРАКА", use_container_width=True)
 
     if submitted:
-        # 1. Генерация уникального ID акта брака
+        # 1. Генерация уникального ID
         import uuid
         defect_id = f"BRK-{str(uuid.uuid4())[:6].upper()}"
+        now = datetime.now()
         
-        # 2. ПОЛНЫЕ ДАННЫЕ ДЛЯ ТАБЛИЦЫ DEFECTS (Специфический реестр)
-        # Ничего не сокращаем, записываем все технические детали
-        defect_data = {
+        # 2. ПОДГОТОВКА ДАННЫХ ДЛЯ SUPABASE (английские ключи)
+        supabase_payload = {
+            "id": defect_id,
+            "item_name": item_info['Название товара'],
+            "quantity": int(defect_qty),
+            "storage_address": item_info['Адрес'],
+            "defect_type": defect_type,
+            "responsible_party": responsibility,
+            "decision": action_taken,
+            "description": defect_desc,
+            "linked_doc_id": item_info['ID Документа'],
+            "reported_by": approved_by,
+            "status": "АКТИВЕН",
+            "created_at": now.isoformat()
+        }
+
+        # 3. СОХРАНЕНИЕ В ОБЛАКО
+        try:
+            supabase.table("defects").insert(supabase_payload).execute()
+        except Exception as e:
+            st.error(f"🚨 Ошибка сохранения акта брака в Supabase: {e}")
+            return
+
+        # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО ИНТЕРФЕЙСА (для AgGrid)
+        ui_defect_data = {
             "📝 Ред.": "⚙️",
             "id": defect_id,
             "Товар": item_info['Название товара'],
@@ -594,37 +632,27 @@ def create_defect_modal():
             "Виновник": responsibility,
             "Решение": action_taken,
             "Связь с документом": item_info['ID Документа'],
-            "Дата создания": datetime.now().strftime("%Y-%m-%d"),
-            "Время": datetime.now().strftime("%H:%M"), # Добавили время для точности
+            "Дата создания": now.strftime("%Y-%m-%d"),
+            "Время": now.strftime("%H:%M"),
             "Статус": "АКТИВЕН",
             "🔍 Просмотр": "👀",
-            "🖨️ Печать": False # Добавили поле печати для единообразия
+            "🖨️ Печать": False
         }
 
-        # Превращаем в DataFrame для вставки
-        defect_row_df = pd.DataFrame([defect_data])
-
-        # 3. СОХРАНЕНИЕ В РЕЕСТР БРАКА
-        # Проверяем инициализацию таблицы
+        # Обновляем session_state["defects"]
+        new_row_df = pd.DataFrame([ui_defect_data])
         if "defects" not in st.session_state:
-            st.session_state["defects"] = pd.DataFrame(columns=defect_data.keys())
-        
-        st.session_state["defects"] = pd.concat([st.session_state["defects"], defect_row_df], ignore_index=True)
+            st.session_state["defects"] = pd.DataFrame()
+        st.session_state["defects"] = pd.concat([st.session_state["defects"], new_row_df], ignore_index=True)
 
-        # 4. ЗЕРКАЛИРОВАНИЕ В MAIN — ИСКЛЮЧЕНО
-        # Согласно вашему требованию, брак в общую таблицу (Main) не идет.
-        # Это позволяет разделить финансовые потоки и складские потери.
-
-        # 5. Завершение работы
-        st.success(f"✅ Акт брака {defect_id} оформлен и сохранен в реестре брака!")
-        st.session_state.active_modal = None
-        
-        import time
+        # 5. Завершение
+        st.success(f"✅ Акт брака {defect_id} успешно сохранен в облачной базе!")
         time.sleep(1)
         st.rerun()
 
 @st.dialog("👤 Регистрация водителя", width="medium")
 def create_driver_modal():
+    from database import supabase
     st.subheader("📝 Данные нового сотрудника")
     uploaded_photo = st.file_uploader("📸 Фото водителя", type=["jpg", "png", "jpeg"], key="upload_drv_new")
     
@@ -646,28 +674,51 @@ def create_driver_modal():
             st.error("Введите имя и фамилию!")
             return
         
-        final_photo = process_image(uploaded_photo) or "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+        # Обработка фото (функция process_image должна возвращать URL или base64)
+        final_photo = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+        if uploaded_photo:
+            try:
+                final_photo = process_image(uploaded_photo)
+            except: pass
+
+        driver_id = f"DRV-{str(uuid.uuid4())[:4].upper()}"
         
-        new_driver = {
-            "id": f"DRV-{str(uuid.uuid4())[:4].upper()}",
-            "Имя": f_name, "Фамилия": l_name, "Телефон": phone,
+        # 1. Данные для Supabase
+        db_data = {
+            "id": driver_id,
+            "first_name": f_name,
+            "last_name": l_name,
+            "phone": phone,
+            "categories": ", ".join(license_cat),
+            "experience": experience,
+            "status": status,
+            "photo_url": final_photo,
+            "created_at": datetime.now().strftime("%Y-%m-%d")
+        }
+
+        try:
+            supabase.table("drivers").insert(db_data).execute()
+        except Exception as e:
+            st.error(f"Ошибка сохранения в базу: {e}")
+            return
+
+        # 2. Обновление локально для скорости
+        new_driver_ui = {
+            "id": driver_id, "Имя": f_name, "Фамилия": l_name, "Телефон": phone,
             "Категории": ", ".join(license_cat), "Стаж": experience,
             "Статус": status, "Фото": final_photo,
             "Дата регистрации": datetime.now().strftime("%Y-%m-%d")
         }
+        st.session_state.drivers = pd.concat([st.session_state.drivers, pd.DataFrame([new_driver_ui])], ignore_index=True)
         
-        st.session_state.drivers = pd.concat([st.session_state.drivers, pd.DataFrame([new_driver])], ignore_index=True)
-        st.success(f"Водитель {l_name} добавлен!")
-        
-        # ОЧИСТКА ВСЕХ ФЛАГОВ ПЕРЕД ВЫХОДОМ
+        st.success(f"Водитель {l_name} добавлен в облако!")
         st.session_state.active_modal = None
-        st.session_state.active_edit_modal = None
         time.sleep(1)
         st.rerun()
 
 @st.dialog("⚙️ Редактирование водителя", width="medium")
 def edit_driver_modal():
-    # Защита от пустого ID
+    from database import supabase
     if not st.session_state.get("editing_id"):
         st.error("Ошибка: ID не найден")
         return
@@ -675,10 +726,9 @@ def edit_driver_modal():
     d_id = st.session_state.editing_id
     df = st.session_state.drivers
     
-    # Ищем индекс водителя
     matching_rows = df.index[df['id'] == d_id].tolist()
     if not matching_rows:
-        st.error("Водитель не найден в базе")
+        st.error("Водитель не найден")
         return
         
     idx = matching_rows[0]
@@ -693,7 +743,6 @@ def edit_driver_modal():
         l_name = col2.text_input("Фамилия", value=curr['Фамилия'])
         phone = st.text_input("Телефон", value=curr['Телефон'])
         
-        # Конвертация строки категорий обратно в список
         default_cats = curr['Категории'].split(", ") if isinstance(curr['Категории'], str) else []
         cats = st.multiselect("Категории", ["B", "C", "CE", "D"], default=default_cats)
         
@@ -702,27 +751,45 @@ def edit_driver_modal():
         status = st.selectbox("Статус", status_options, index=current_status_idx)
         
         if st.form_submit_button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True):
-            # Если загружено новое фото — обновляем, иначе оставляем старое
+            new_photo = curr['Фото']
             if up_photo:
-                df.at[idx, 'Фото'] = process_image(up_photo)
+                try:
+                    new_photo = process_image(up_photo)
+                except: pass
+
+            # 1. ОБНОВЛЯЕМ В SUPABASE
+            update_data = {
+                "first_name": f_name,
+                "last_name": l_name,
+                "phone": phone,
+                "categories": ", ".join(cats),
+                "status": status,
+                "photo_url": new_photo
+            }
             
+            try:
+                supabase.table("drivers").update(update_data).eq("id", d_id).execute()
+            except Exception as e:
+                st.error(f"Ошибка обновления в облаке: {e}")
+                return
+
+            # 2. ОБНОВЛЯЕМ В SESSION STATE (локально)
             df.at[idx, 'Имя'] = f_name
             df.at[idx, 'Фамилия'] = l_name
             df.at[idx, 'Телефон'] = phone
             df.at[idx, 'Статус'] = status
             df.at[idx, 'Категории'] = ", ".join(cats)
+            df.at[idx, 'Фото'] = new_photo
             
             st.session_state.drivers = df
-            
-            # ВАЖНО: Сбрасываем именно edit_modal
             st.session_state.active_edit_modal = None
-            st.session_state.active_modal = None 
-            st.success("Данные успешно обновлены!")
+            st.success("Данные синхронизированы с базой!")
             time.sleep(1)
             st.rerun()
             
 @st.dialog("🚛 Регистрация ТС", width="large")
 def create_vehicle_modal():
+    from database import supabase
     st.subheader("📋 Технический паспорт автомобиля")
     uploaded_v_photo = st.file_uploader("📸 Фото автомобиля", type=["jpg", "png"], key="upload_v_new")
 
@@ -746,11 +813,6 @@ def create_vehicle_modal():
             r3_c1, r3_c2 = st.columns(2)
             l_to = r3_c1.date_input("Дата ТО", value=datetime.now())
             ins = r3_c2.date_input("Страховка до", value=datetime.now())
-            
-            r4_c1, r4_c2, r4_c3 = st.columns(3)
-            curr_odo = r4_c1.number_input("Текущий пробег (км)", value=0)
-            oil_limit = r4_c2.number_input("Ресурс масла (км)", value=10000)
-            grm_limit = r4_c3.number_input("Ресурс ГРМ (км)", value=60000)
 
         submitted = st.form_submit_button("✅ ВНЕСТИ ТС В РЕЕСТР", use_container_width=True)
 
@@ -759,7 +821,7 @@ def create_vehicle_modal():
             st.error("Заполните госномер и марку!")
             return
         
-        # Дефолтные иконки, если фото не загружено
+        # Обработка фото
         img_map = {
             "Тент": "https://cdn-icons-png.flaticon.com/512/3564/3564344.png", 
             "Рефрижератор": "https://cdn-icons-png.flaticon.com/512/3564/3564359.png",
@@ -767,26 +829,48 @@ def create_vehicle_modal():
             "Бортовой": "https://cdn-icons-png.flaticon.com/512/2554/2554977.png"
         }
         final_v_photo = process_image(uploaded_v_photo) or img_map.get(v_type)
+        vehicle_id = f"VEH-{str(uuid.uuid4())[:4].upper()}"
 
-        new_v = {
-            "id": f"VEH-{str(uuid.uuid4())[:4].upper()}", 
+        # 1. ОТПРАВКА В SUPABASE
+        db_payload = {
+            "id": vehicle_id,
+            "brand": brand,
+            "gov_number": gov_num,
+            "vin": vin,
+            "body_type": v_type,
+            "capacity": float(cap),
+            "volume": float(vol),
+            "pallets": int(pal),
+            "last_service": l_to.strftime("%Y-%m-%d"),
+            "insurance_expiry": ins.strftime("%Y-%m-%d"),
+            "photo_url": final_v_photo,
+            "status": "На линии"
+        }
+
+        try:
+            supabase.table("vehicles").insert(db_payload).execute()
+        except Exception as e:
+            st.error(f"Ошибка сохранения ТС в облако: {e}")
+            return
+
+        # 2. ОБНОВЛЕНИЕ ЛОКАЛЬНО
+        new_v_ui = {
+            "id": vehicle_id, 
             "Марка": brand, "Госномер": gov_num, "Тип": v_type, 
             "Грузоподъемность": cap, "Объем": vol, "Паллеты": pal,
             "ТО": l_to.strftime("%Y-%m-%d"), "Страховка": ins.strftime("%Y-%m-%d"),
             "Фото": final_v_photo, "Статус": "На линии"
         }
+        st.session_state.vehicles = pd.concat([st.session_state.vehicles, pd.DataFrame([new_v_ui])], ignore_index=True)
         
-        st.session_state.vehicles = pd.concat([st.session_state.vehicles, pd.DataFrame([new_v])], ignore_index=True)
-        st.success(f"ТС {gov_num} добавлено!")
-        
-        # Чистим все флаги, чтобы диспетчер не запутался
+        st.success(f"ТС {gov_num} успешно зарегистрировано!")
         st.session_state.active_modal = None
-        st.session_state.active_edit_modal = None
         time.sleep(1)
         st.rerun()
 
 @st.dialog("⚙️ Редактирование ТС", width="large")
 def edit_vehicle_modal():
+    from database import supabase
     if not st.session_state.get("editing_id"):
         st.error("ID автомобиля не найден!")
         return
@@ -796,7 +880,7 @@ def edit_vehicle_modal():
     
     matching = df.index[df['id'] == v_id].tolist()
     if not matching:
-        st.error("Автомобиль не найден в базе!")
+        st.error("Автомобиль не найден!")
         return
         
     idx = matching[0]
@@ -813,27 +897,46 @@ def edit_vehicle_modal():
         
         st.divider()
         r2_1, r2_2, r2_3 = st.columns(3)
-        cap = r2_1.number_input("Грузоподъемность", value=int(curr['Грузоподъемность']))
+        cap = r2_1.number_input("Грузоподъемность", value=float(curr['Грузоподъемность']))
         vol = r2_2.number_input("Объем", value=float(curr['Объем']))
         pal = r2_3.number_input("Паллеты", value=int(curr['Паллеты']))
         
         st.divider()
-        # Поля дат (если они в DataFrame строками, нужно перевести в date)
         try:
             d_to = datetime.strptime(curr['ТО'], "%Y-%m-%d")
             d_ins = datetime.strptime(curr['Страховка'], "%Y-%m-%d")
         except:
-            d_to = datetime.now()
-            d_ins = datetime.now()
+            d_to, d_ins = datetime.now(), datetime.now()
 
         r3_1, r3_2 = st.columns(2)
         new_to = r3_1.date_input("Дата ТО", value=d_to)
         new_ins = r3_2.date_input("Страховка до", value=d_ins)
         
         if st.form_submit_button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True):
+            new_photo = curr['Фото']
             if up_v_photo:
-                df.at[idx, 'Фото'] = process_image(up_v_photo)
-            
+                try: new_photo = process_image(up_v_photo)
+                except: pass
+
+            # 1. СИНХРОНИЗАЦИЯ С SUPABASE
+            update_payload = {
+                "brand": brand,
+                "body_type": v_type,
+                "capacity": float(cap),
+                "volume": float(vol),
+                "pallets": int(pal),
+                "last_service": new_to.strftime("%Y-%m-%d"),
+                "insurance_expiry": new_ins.strftime("%Y-%m-%d"),
+                "photo_url": new_photo
+            }
+
+            try:
+                supabase.table("vehicles").update(update_payload).eq("id", v_id).execute()
+            except Exception as e:
+                st.error(f"Ошибка обновления ТС в облаке: {e}")
+                return
+
+            # 2. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ
             df.at[idx, 'Марка'] = brand
             df.at[idx, 'Тип'] = v_type
             df.at[idx, 'Грузоподъемность'] = cap
@@ -841,15 +944,12 @@ def edit_vehicle_modal():
             df.at[idx, 'Паллеты'] = pal
             df.at[idx, 'ТО'] = new_to.strftime("%Y-%m-%d")
             df.at[idx, 'Страховка'] = new_ins.strftime("%Y-%m-%d")
+            df.at[idx, 'Фото'] = new_photo
             
             st.session_state.vehicles = df
-            # СБРАСЫВАЕМ ФЛАГИ
             st.session_state.active_edit_modal = None
-            st.session_state.active_modal = None
-            
-            st.success("Данные ТС обновлены!")
+            st.success("Данные ТС успешно обновлены!")
             time.sleep(1)
-
             st.rerun()
 
 
