@@ -1499,7 +1499,7 @@ elif selected == "База Данных":
             
             st.divider()
             
-            # Основная информация - метрики
+            # Основная информация - метрики с временем
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
@@ -1512,7 +1512,20 @@ elif selected == "База Данных":
                 st.metric("Контрагент", item.get('Контрагент', 'Н/Д')[:15])
             
             with col4:
-                st.metric("Дата", str(item.get('Дата', 'Н/Д'))[:10])
+                # Форматирование времени с секундами
+                from datetime import datetime
+                try:
+                    date_str = str(item.get('Дата', 'Н/Д'))
+                    # Если это ISO формат с временем
+                    if 'T' in date_str:
+                        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                        formatted_time = dt.strftime("%d.%m.%Y %H:%M:%S")
+                    else:
+                        formatted_time = date_str[:10]
+                except:
+                    formatted_time = str(item.get('Дата', 'Н/Д'))[:10]
+                
+                st.metric("Дата и время", formatted_time)
             
             st.divider()
             
@@ -1526,11 +1539,22 @@ elif selected == "База Данных":
                 </div>
                 """, unsafe_allow_html=True)
                 
+                # Форматирование полного времени с секундами
+                try:
+                    date_str = str(item.get('Дата', 'Н/Д'))
+                    if 'T' in date_str:
+                        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                        full_datetime = dt.strftime("%d.%m.%Y %H:%M:%S")
+                    else:
+                        full_datetime = date_str
+                except:
+                    full_datetime = str(item.get('Дата', 'Н/Д'))
+                
                 st.markdown(f"""
 - **ID Товара:** `{item.get('id', 'Н/Д')}`
 - **Номер документа:** {item.get('ID Документа', 'Н/Д')}
 - **Контрагент:** {item.get('Контрагент', 'Н/Д')}
-- **Дата операции:** {item.get('Дата', 'Н/Д')}
+- **Дата и время:** 🕐 **{full_datetime}**
 - **Кол-во:** {item.get('Количество', 0)} шт
                 """)
             
@@ -1581,6 +1605,9 @@ elif selected == "База Данных":
                 # Кнопка сохранения
                 if st.button("💾 СОХРАНИТЬ АДРЕС", use_container_width=True, type="primary", key=f"save_{doc_id}"):
                     try:
+                        from datetime import datetime
+                        import time
+                        
                         inv_payload = {
                             "doc_id": doc_id,
                             "item_name": item_name,
@@ -1595,7 +1622,9 @@ elif selected == "База Данных":
                             on_conflict="doc_id,item_name"
                         ).execute()
                         
-                        st.success(f"✅ Адрес обновлен: {selected_cell}")
+                        # Форматированное время для сообщения об успехе
+                        success_time = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+                        st.success(f"✅ Адрес обновлен: {selected_cell} | Время: {success_time}")
                         time.sleep(1)
                         st.rerun()
                         
@@ -1771,6 +1800,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
