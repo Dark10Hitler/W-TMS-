@@ -599,12 +599,14 @@ def render_aggrid_table(table_key, title):
     gridOptions = gb.build()
 
     # Рендеринг
+    # Рендеринг AgGrid без DeprecationWarning
     grid_response = AgGrid(
         df,
         gridOptions=gridOptions,
         height=500,
         theme='alpine',
-        update_mode=GridUpdateMode.SELECTION_CHANGED,
+    # Заменяем update_mode на update_on
+        update_on=['selectionChanged'], 
         allow_unsafe_jscode=True,
         key=f"grid_{table_key}"
     )
@@ -1768,50 +1770,37 @@ if st.session_state.current_page != selected:
 
 # --- 3. ГЛАВНЫЙ ДИСПЕТЧЕР (БЕЗ ОШИБОК ИМЕНИ) ---
 
+# --- 3. ГЛАВНЫЙ ДИСПЕТЧЕР (ФИНАЛЬНАЯ ВЕРСИЯ) ---
+
 # ПРИОРИТЕТ 1: РЕДАКТИРОВАНИЕ
 if st.session_state.get("active_edit_modal"):
     target = st.session_state.active_edit_modal
     eid = st.session_state.get("editing_id")
-    
     if eid:
         if target == "drivers": edit_driver_modal(eid)
         elif target == "vehicles": edit_vehicle_modal(eid)
         else: edit_order_modal(eid, target)
-    
-    # Сброс, чтобы модалка не открывалась по кругу
     st.session_state.active_edit_modal = None 
 
 # ПРИОРИТЕТ 2: ПРОСМОТР
 elif st.session_state.get("active_view_modal"):
     vid = st.session_state.active_view_modal
-    
     if str(vid).startswith("ORD"): show_order_details_modal(vid)
     elif str(vid).startswith("ARR") or str(vid).startswith("IN"): show_arrival_details_modal(vid)
     elif str(vid).startswith("DEF"): show_defect_details_modal(vid)
     elif str(vid).startswith("EXT"): show_extra_details_modal(vid)
-    
     st.session_state.active_view_modal = None
 
-# ПРИОРИТЕТ 3: ПЕЧАТЬ
-elif st.session_state.get("active_print_modal"):
-    pid = st.session_state.active_print_modal
-    
-    if str(pid).startswith("ARR"): show_arrival_print_modal(pid)
-    elif str(pid).startswith("DEF"): show_defect_print_modal(pid)
-    elif str(pid).startswith("EXT"): show_extra_print_modal(pid)
-    else: show_print_modal(pid)
-    
-    st.session_state.active_print_modal = None
-
-# ПРИОРИТЕТ 4: СОЗДАНИЕ (ИСПРАВЛЕНО НА create_modal)
+# ПРИОРИТЕТ 3: СОЗДАНИЕ (ИСПРАВЛЕН TypeError)
 elif st.session_state.get("active_modal"):
     m_type = st.session_state.active_modal
     st.session_state.active_modal = None
     
     if m_type in ["orders", "orders_new"]: 
-        create_modal()  # Вызываем именно то имя, которое импортировано!
+        # ПЕРЕДАЕМ АРГУМЕНТ, который требует функция в specific_doc
+        create_modal(table_key="orders")  
     elif m_type == "arrivals": 
-        create_arrival_modal()
+        create_arrival_modal() # Проверь, не нужен ли и тут table_key!
     elif m_type == "extras": 
         create_extras_modal()
     elif m_type == "defects": 
@@ -1820,8 +1809,6 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
-
-
 
 
 
