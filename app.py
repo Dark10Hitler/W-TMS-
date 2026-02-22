@@ -29,6 +29,7 @@ from streamlit_folium import st_folium
 import requests
 from streamlit_autorefresh import st_autorefresh
 from supabase import create_client, Client
+from utils import supabase
 
 @st.cache_resource
 def init_connection():
@@ -1326,3 +1327,4 @@ elif st.session_state.get("active_modal"):
     elif m_type: # Если есть какой-то другой тип для общей функции
 
         create_modal(m_type)
+
