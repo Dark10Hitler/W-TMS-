@@ -19,6 +19,19 @@ import pandas as pd
 import streamlit as st
 import time
 
+
+def get_cell_occupancy():
+    # Забираем данные из нашего VIEW
+    response = supabase.table("warehouse_utilization").select("*").execute()
+    # Превращаем в словарь { 'WH1-R1-S1-A': 'Заполнена', ... }
+    return {row['cell_address']: row['occupancy_status'] for row in response.data}
+
+# Внутри функции отрисовки карты:
+occupancy_map = get_cell_occupancy()
+# Теперь ты можешь передать это в get_warehouse_figure, 
+# чтобы она красила ячейки на основе occupancy_map
+
+
 def render_warehouse_logic(entry_id, items_df):
     """Универсальная логика управления ячейками склада для любого типа документа"""
     if items_df.empty:
@@ -57,13 +70,19 @@ def render_warehouse_logic(entry_id, items_df):
             key=f"cs_{entry_id}"
         )
         
-        if st.button("🔗 ПРИВЯЗАТЬ К ЯЧЕЙКЕ", use_container_width=True, type="primary", key=f"btn_bind_{entry_id}"):
-            # Обновляем адрес в буфере сессии
-            st.session_state[f"temp_items_{entry_id}"].loc[
-                st.session_state[f"temp_items_{entry_id}"]['Название товара'] == target_item, 'Адрес'
-            ] = selected_cell
-            st.toast(f"Товар {target_item} привязан к {selected_cell}")
-            # Мы не делаем rerun, чтобы пользователь мог привязать несколько товаров подряд
+        if st.button("🔗 ПРИВЯЗАТЬ К ЯЧЕЙКЕ", use_container_width=True, type="primary"):
+            # Данные для базы
+            inv_data = {
+        "doc_id": entry_id,
+        "item_name": target_item,
+        "warehouse_id": wh_id,
+        "cell_address": selected_cell,
+        "quantity": items_df.loc[items_df['Название товара'] == target_item, 'Количесво товаров'].values[0] or 0
+        }
+    
+    # Сохраняем (UPSERT обновит адрес, если товар уже был привязан)
+        supabase.table("inventory").upsert(inv_data, on_conflict="doc_id, item_name, cell_address").execute()
+        st.toast("Данные синхронизированы с топологией склада!")
 
     with col_viz:
         # Визуализация
@@ -72,23 +91,26 @@ def render_warehouse_logic(entry_id, items_df):
         
 @st.dialog("⚙️ Редактирование данных", width="large")
 def edit_order_modal(entry_id, table_key="orders"):
-    # --- 1. ИНИЦИАЛИЗАЦИЯ (Единоразово для конкретного ID) ---
+    from database import supabase
+    import numpy as np
+
+    # --- 1. ИНИЦИАЛИЗАЦИЯ ---
     if f"temp_row_{entry_id}" not in st.session_state:
         if table_key not in st.session_state:
-            st.error(f"Таблица {table_key} не найдена в системе")
+            st.error(f"Таблица {table_key} не найдена")
             return
             
         df = st.session_state[table_key]
         idx_list = df.index[df['id'] == entry_id].tolist()
         
         if not idx_list:
-            st.error(f"Запись с ID {entry_id} не найдена в таблице {table_key}")
+            st.error(f"Запись {entry_id} не найдена")
             return
         
         st.session_state[f"temp_idx_{entry_id}"] = idx_list[0]
         st.session_state[f"temp_row_{entry_id}"] = df.iloc[idx_list[0]].to_dict()
         
-        # Загрузка товаров
+        # Загрузка товаров из реестра или создание пустого
         items_df = st.session_state.items_registry.get(
             entry_id, 
             pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
@@ -99,174 +121,204 @@ def edit_order_modal(entry_id, table_key="orders"):
             
         st.session_state[f"temp_items_{entry_id}"] = items_df
 
-    # Ссылки на данные
+    # Ссылки на текущие данные в сессии
     row = st.session_state[f"temp_row_{entry_id}"]
     items_df = st.session_state[f"temp_items_{entry_id}"]
     idx = st.session_state[f"temp_idx_{entry_id}"]
 
     st.markdown(f"### 🖋️ Редактор документа `{entry_id}`")
-    
     tab_main, tab_geo = st.tabs(["📝 Информация и Поля", "📍 Склад (3D)"])
 
-    # --- ВКЛАДКА 1: РЕДАКТИРОВАНИЕ ВСЕХ ПОЛЕЙ (ORDER_COLUMNS) ---
+    # --- ВКЛАДКА 1: ОСНОВНЫЕ ДАННЫЕ ---
     with tab_main:
-        # Ряд 1: Основные данные
         st.markdown("##### 👤 Клиент и Контакты")
         c1, c2, c3 = st.columns(3)
         row['Клиент'] = c1.text_input("Клиент", value=str(row.get('Клиент', '')), key=f"edit_cli_{entry_id}")
         row['Телефон'] = c2.text_input("Телефон", value=str(row.get('Телефон', '')), key=f"edit_ph_{entry_id}")
         row['Адрес клиента'] = c3.text_input("Адрес доставки", value=str(row.get('Адрес клиента', '')), key=f"edit_adr_c_{entry_id}")
 
-        # Ряд 2: Логистика
         st.markdown("##### 🚚 Логистика и Транспорт")
         r2_1, r2_2, r2_3, r2_4 = st.columns(4)
-        
         status_list = ["ОЖИДАНИЕ", "Стоит на точке загрузки", "Выехал", "Ожидает догруз", "В пути", "Доставлено", "БРАК"]
         curr_st = str(row.get('Статус', 'ОЖИДАНИЕ'))
         st_idx = status_list.index(curr_st) if curr_st in status_list else 0
-        
         row['Статус'] = r2_1.selectbox("Статус", status_list, index=st_idx, key=f"edit_st_{entry_id}")
         row['Водитель'] = r2_2.text_input("Водитель", value=str(row.get('Водитель', '')), key=f"edit_dr_{entry_id}")
         row['ТС'] = r2_3.text_input("ТС (Госномер)", value=str(row.get('ТС', '')), key=f"edit_ts_{entry_id}")
         row['Адрес загрузки'] = r2_4.text_input("Адрес загрузки", value=str(row.get('Адрес загрузки', 'Центральный склад')), key=f"edit_adr_z_{entry_id}")
 
-        # Ряд 3: Финансы, Сертификаты и Допуски
         st.markdown("##### ⚖️ Параметры и Допуски")
         r3_1, r3_2, r3_3, r3_4 = st.columns(4)
-        
-        try:
-            curr_sum = float(row.get('Сумма заявки', 0.0))
-            curr_vol = float(row.get('Общий объем (м3)', 0.0))
-        except:
-            curr_sum, curr_vol = 0.0, 0.0
-
-        row['Сумма заявки'] = r3_1.number_input("Сумма заявки", value=curr_sum, key=f"edit_sum_{entry_id}")
-        row['Общий объем (м3)'] = r3_2.number_input("Общий объем (м3)", value=curr_vol, key=f"edit_vol_{entry_id}")
+        row['Сумма заявки'] = r3_1.number_input("Сумма заявки", value=float(row.get('Сумма заявки', 0.0)), key=f"edit_sum_{entry_id}")
+        row['Общий объем (м3)'] = r3_2.number_input("Общий объем (м3)", value=float(row.get('Общий объем (м3)', 0.0)), key=f"edit_vol_{entry_id}")
         row['Допуск'] = r3_3.text_input("Допуск (Кто разрешил)", value=str(row.get('Допуск', '')), key=f"edit_dop_{entry_id}")
-        
         cert_val = str(row.get('Сертификат', 'Нет'))
         row['Сертификат'] = r3_4.selectbox("Сертификат", ["Да", "Нет"], index=0 if cert_val == "Да" else 1, key=f"edit_cert_{entry_id}")
 
-        # Ряд 4: Медиа и Описание
-        st.markdown("##### 📝 Дополнительно")
-        r4_1, r4_2 = st.columns([2, 1])
-        row['Описание'] = r4_1.text_area("Описание", value=str(row.get('Описание', '')), height=100, key=f"edit_desc_{entry_id}")
-        
-        st.write(f"Текущее фото: {row.get('Фото', 'Нет')}")
-        new_photo = r4_2.file_uploader("Обновить фото", type=['png', 'jpg', 'jpeg'], key=f"edit_photo_up_{entry_id}")
-
         st.divider()
         st.markdown("### 📦 Состав товаров")
+        # Редактор таблицы товаров
         updated_items = st.data_editor(items_df, use_container_width=True, num_rows="dynamic", key=f"ed_it_{entry_id}")
         st.session_state[f"temp_items_{entry_id}"] = updated_items
 
         if st.button("💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
-            # Расчет КПД (если есть данные о ТС в системе)
-            # Здесь можно добавить логику пересчета КПД загрузки
-            
-            # Логирование изменений
-            try: operator = st.session_state.profile_data.iloc[0]['Значение']
-            except: operator = "Admin"
-            
-            row['Последнее изменение'] = f"{operator} ({datetime.now().strftime('%H:%M')})"
-            row['Кол-во позиций'] = len(updated_items)
-            if new_photo: row['Фото'] = "Прикреплено (Обновлено)"
+            # 1. Подготовка данных для БД (мапинг русских полей на английские колонки Supabase)
+            # Убедитесь, что названия ключей совпадают с вашей структурой в Supabase!
+            db_payload = {
+                "client_name": row['Клиент'],
+                "phone": row['Телефон'],
+                "delivery_address": row['Адрес клиента'],
+                "status": row['Статус'],
+                "driver": row['Водитель'],
+                "vehicle": row['ТС'],
+                "load_address": row['Адрес загрузки'],
+                "total_sum": float(row['Сумма заявки']),
+                "total_volume": float(row['Общий объем (м3)']),
+                "approval_by": row['Допуск'],
+                "has_certificate": row['Сертификат'],
+                "description": row.get('Описание', ''),
+                "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
+                "updated_at": datetime.now().isoformat()
+            }
 
-            # Сохранение
-            target_df = st.session_state[table_key]
-            for field, val in row.items():
-                if field in target_df.columns:
-                    target_df.at[idx, field] = val
-            
-            st.session_state.items_registry[entry_id] = updated_items
-            
-            # Зеркалирование в Main
-            if "main" in st.session_state:
-                m_df = st.session_state["main"]
-                m_idx = m_df.index[m_df['id'] == entry_id].tolist()
-                if m_idx:
-                    for field in row:
-                        if field in m_df.columns: m_df.at[m_idx[0], field] = row[field]
+            try:
+                # 2. СОХРАНЕНИЕ В ОБЛАКО (Таблица заказов/приходов)
+                supabase.table(table_key).update(db_payload).eq("id", entry_id).execute()
 
-            st.success("✅ Данные успешно обновлены!")
-            time.sleep(1)
-            st.rerun()
+                # 3. СИНХРОНИЗАЦИЯ С ТАБЛИЦЕЙ INVENTORY (Складские ячейки)
+                for _, item in updated_items.iterrows():
+                    if item['Адрес'] != "НЕ УКАЗАНО":
+                        inv_payload = {
+                            "doc_id": entry_id,
+                            "item_name": item['Название товара'],
+                            "cell_address": item['Адрес'],
+                            "quantity": float(item.get('Кол-во', 0)),
+                            "warehouse_id": item['Адрес'].split('-')[0].replace('WH', '') if '-' in item['Адрес'] else "1"
+                        }
+                        # Upsert обновляет ячейку, если товар уже там был
+                        supabase.table("inventory").upsert(inv_payload, on_conflict="doc_id, item_name").execute()
 
-    # --- ВКЛАДКА 2: ВЫБОР МЕСТА (Твой оригинальный код с 3D) ---
+                # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ
+                target_df = st.session_state[table_key]
+                for field, val in row.items():
+                    if field in target_df.columns:
+                        target_df.at[idx, field] = val
+                
+                st.session_state.items_registry[entry_id] = updated_items
+                
+                st.success("✅ Все данные синхронизированы с базой данных!")
+                time.sleep(1)
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"🚨 Ошибка сохранения в Supabase: {e}")
+
+    # --- ВКЛАДКА 2: СКЛАД (ПРИВЯЗКА ЯЧЕЕК) ---
     with tab_geo:
         if updated_items.empty:
-            st.warning("Добавьте товары во вкладке 'Информация'!")
+            st.warning("Сначала добавьте товары!")
         else:
             col_sel, col_viz = st.columns([1, 2])
             with col_sel:
-                st.subheader("Привязка к ячейке")
+                st.subheader("Выбор ячейки")
                 target_item = st.selectbox("📦 Товар:", updated_items['Название товара'].unique(), key=f"t_sel_{entry_id}")
                 wh_id = str(st.selectbox("🏪 Склад:", list(WAREHOUSE_MAP.keys()), key=f"wh_sel_{entry_id}"))
                 
-                # Генератор ячеек (Логика сохранена)
+                # Генератор ячеек
                 conf = WAREHOUSE_MAP[wh_id]
                 all_cells = []
                 for r in conf['rows']:
-                    all_cells.extend([f"WH{wh_id}-{r}", f"{wh_id}-{r}"])
+                    all_cells.append(f"WH{wh_id}-{r}")
                     for s in range(1, conf.get('sections', 1) + 1):
                         for t in conf.get('tiers', ['A']):
-                            all_cells.extend([f"WH{wh_id}-{r}-R1-S{s}-{t}", f"WH{wh_id}-{r}-S{s}-{t}", f"{wh_id}-{r}-{s}-{t}"])
+                            all_cells.append(f"WH{wh_id}-{r}-S{s}-{t}")
                 all_cells = sorted(list(set(all_cells)))
                 
                 match_cond = updated_items['Название товара'] == target_item
                 curr_addr = updated_items.loc[match_cond, 'Адрес'].values[0] if not updated_items.loc[match_cond, 'Адрес'].empty else "НЕ УКАЗАНО"
-                if curr_addr not in all_cells and curr_addr != "НЕ УКАЗАНО": all_cells.insert(0, curr_addr)
                 
-                selected_cell = st.selectbox("📍 Ячейка:", options=all_cells, index=all_cells.index(curr_addr) if curr_addr in all_cells else 0, key=f"cs_sel_{entry_id}")
+                selected_cell = st.selectbox("📍 Ячейка:", options=all_cells, 
+                                             index=all_cells.index(curr_addr) if curr_addr in all_cells else 0, 
+                                             key=f"cs_sel_{entry_id}")
                 
-                if st.button("🔗 ПРИВЯЗАТЬ", use_container_width=True, type="primary", key=f"bind_{entry_id}"):
-                    st.session_state[f"temp_items_{entry_id}"].loc[st.session_state[f"temp_items_{entry_id}"]['Название товара'] == target_item, 'Адрес'] = selected_cell
-                    st.toast(f"Привязано к {selected_cell}")
+                if st.button("🔗 ПРИМЕНИТЬ АДРЕС", use_container_width=True, type="secondary", key=f"bind_{entry_id}"):
+                    # Обновляем только в локальном буфере редактора
+                    st.session_state[f"temp_items_{entry_id}"].loc[
+                        st.session_state[f"temp_items_{entry_id}"]['Название товара'] == target_item, 'Адрес'
+                    ] = selected_cell
+                    st.toast(f"Адрес {selected_cell} зафиксирован в черновике. Нажмите 'Сохранить изменения' для записи в БД.")
 
             with col_viz:
-                st.subheader("3D Визуализация")
+                st.subheader("Карта склада")
                 fig = get_warehouse_figure(wh_id, highlighted_cell=selected_cell)
                 st.plotly_chart(fig, use_container_width=True, key=f"p_viz_{entry_id}")
 
 @st.dialog("🔍 Детальный просмотр заявки", width="large")
 def show_order_details_modal(order_id):
-    df_main = st.session_state.main
-    row_match = df_main[df_main['id'] == order_id]
+    from database import supabase
     
-    if row_match.empty:
-        st.error("Документ не найден.")
-        return
+    # --- 1. ПРЯМАЯ ИНТЕГРАЦИЯ С БД (Загрузка актуальной версии) ---
+    try:
+        # Определяем таблицу (если ID начинается на ORD — это заказы, если на IN — приходы)
+        table_name = "orders" if order_id.startswith("ORD") else "arrivals"
         
-    row = row_match.iloc[0]
+        response = supabase.table(table_name).select("*").eq("id", order_id).execute()
+        
+        if not response.data:
+            st.error(f"Документ {order_id} не найден в базе данных Supabase.")
+            return
+            
+        # Получаем данные напрямую из БД
+        db_row = response.data[0]
+        
+        # Парсим товары из JSONB поля базы данных
+        items_list = db_row.get('items_data', [])
+        items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
+        
+    except Exception as e:
+        st.warning(f"⚠️ Ошибка прямого подключения к БД. Использую локальный кэш. Ошибка: {e}")
+        # Фолбэк на локальный кэш, если база недоступна
+        df_main = st.session_state.get('main', pd.DataFrame())
+        row_match = df_main[df_main['id'] == order_id]
+        if row_match.empty:
+            st.error("Запись не найдена.")
+            return
+        db_row = row_match.iloc[0].to_dict()
+        items_df = st.session_state.items_registry.get(order_id, pd.DataFrame())
+
+    # --- 2. ОТОБРАЖЕНИЕ ДАННЫХ ---
     st.subheader(f"📄 Просмотр документа: {order_id}")
     
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown(f"**👤 Клиент:** {row.get('Клиент', '---')}")
-        st.markdown(f"**📞 Телефон:** {row.get('Телефон', '---')}")
-        st.markdown(f"**📍 Адрес:** {row.get('Адрес клиента', '---')}")
+        st.markdown(f"**👤 Клиент:** {db_row.get('client_name', db_row.get('Клиент', '---'))}")
+        st.markdown(f"**📞 Телефон:** {db_row.get('phone', db_row.get('Телефон', '---'))}")
+        st.markdown(f"**📍 Адрес:** {db_row.get('delivery_address', db_row.get('Адрес клиента', '---'))}")
     with c2:
-        st.markdown(f"**📦 Статус:** `{row.get('Статус', '---')}`")
-        st.markdown(f"**📜 Сертификат:** {row.get('Сертификат', '---')}")
-        st.markdown(f"**🏗️ Адрес загрузки:** {row.get('Адрес загрузки', '---')}")
+        st.markdown(f"**📦 Статус:** `{db_row.get('status', db_row.get('Статус', '---'))}`")
+        st.markdown(f"**📜 Сертификат:** {db_row.get('has_certificate', db_row.get('Сертификат', '---'))}")
+        st.markdown(f"**🏗️ Адрес загрузки:** {db_row.get('load_address', db_row.get('Адрес загрузки', '---'))}")
     with c3:
-        st.markdown(f"**🚛 ТС:** {row.get('ТС (Госномер)', row.get('ТС', '---'))}")
-        st.markdown(f"**👤 Водитель:** {row.get('Водитель', '---')}")
+        # Учитываем возможные разные названия ключей в БД и в UI
+        v_num = db_row.get('vehicle', db_row.get('ТС', '---'))
+        st.markdown(f"**🚛 ТС:** {v_num}")
+        st.markdown(f"**👤 Водитель:** {db_row.get('driver', db_row.get('Водитель', '---'))}")
+        
         with st.expander("🕒 История правок"):
-            st.caption(f"Создан: {row.get('Дата создания')} {row.get('Время создания')}")
-            st.caption(f"Последнее изменение: {row.get('Последнее изменение', 'Первичная запись')}")
+            st.caption(f"Создан: {db_row.get('created_at', '---')}")
+            st.caption(f"Изменил: {db_row.get('updated_by', '---')} ({db_row.get('updated_at', '---')})")
 
     st.divider()
 
     st.markdown("### 📋 Товарная спецификация и места хранения")
-    if order_id in st.session_state.items_registry:
-        items_df = st.session_state.items_registry[order_id]
-        
+    
+    if not items_df.empty:
         # Красивое оформление таблицы: подсвечиваем адреса
         def color_addr(val):
-            color = 'lightgreen' if val != "НЕ УКАЗАНО" and val != "-" else '#ffcccc'
+            color = 'lightgreen' if val and val != "НЕ УКАЗАНО" and val != "-" else '#ffcccc'
             return f'background-color: {color}'
 
+        # Отрисовка спецификации
         if 'Адрес' in items_df.columns:
             st.dataframe(items_df.style.applymap(color_addr, subset=['Адрес']), use_container_width=True)
         else:
@@ -274,38 +326,51 @@ def show_order_details_modal(order_id):
         
         # Метрики
         m1, m2, m3 = st.columns(3)
-        m1.metric("Всего позиций", f"{row.get('Кол-во позиций', 0)}")
-        m2.metric("Общий объем", f"{row.get('Общий объем (м3)', 0)} м³")
-        m3.metric("КПД загрузки", f"{row.get('КПД загрузки', '0%')}")
+        m1.metric("Всего позиций", f"{len(items_df)}")
+        m2.metric("Общий объем", f"{db_row.get('total_volume', db_row.get('Общий объем (м3)', 0))} м³")
+        m3.metric("Сумма", f"{db_row.get('total_sum', db_row.get('Сумма заявки', 0))} ₽")
     else:
         st.warning("⚠️ Спецификация товаров пуста или не найдена.")
 
-    st.info(f"**📝 Сведения/Допуск:** {row.get('Описание', 'Нет описания')}")
+    st.info(f"**📝 Сведения/Допуск:** {db_row.get('description', db_row.get('Описание', 'Нет описания'))}")
 
+    # --- 3. ЗАКРЫТИЕ ---
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.session_state.active_view_modal = None
         st.rerun()
+        
 
 @st.dialog("🖨️ Печать документа", width="large")
 def show_print_modal(order_id):
-    row_data = st.session_state.main[st.session_state.main['id'] == order_id]
-    if row_data.empty:
-        st.error("Ошибка данных для печати")
-        return
-    row = row_data.iloc[0]
+    from database import supabase
     
-    # Подготовка таблицы
-    if order_id in st.session_state.items_registry:
-        raw_items = st.session_state.items_registry[order_id]
+    # --- 1. ЗАГРУЗКА АКТУАЛЬНЫХ ДАННЫХ ИЗ БД (ОБЯЗАТЕЛЬНО) ---
+    try:
+        table_name = "orders" if order_id.startswith("ORD") else "arrivals"
+        response = supabase.table(table_name).select("*").eq("id", order_id).execute()
+        
+        if not response.data:
+            st.error("Ошибка: Данные в базе не найдены")
+            return
+            
+        row = response.data[0]
+        # Извлекаем товары из JSONB поля
+        raw_items = pd.DataFrame(row.get('items_data', []))
+    except Exception as e:
+        st.error(f"Ошибка связи с БД: {e}")
+        return
+
+    # --- 2. ПОДГОТОВКА ТАБЛИЦЫ ТОВАРОВ ---
+    if not raw_items.empty:
         # Очистка от служебных колонок
         display_cols = [c for c in raw_items.columns if "Unnamed" not in str(c)]
         print_df = raw_items[display_cols].dropna(how='all').fillna("-")
     else:
         print_df = pd.DataFrame(columns=["Товар", "Кол-во", "Адрес"])
 
-    # Превращаем DataFrame в HTML
     items_html = print_df.to_html(index=False, border=1, classes='items-table')
 
+    # --- 3. ГЕНЕРАЦИЯ HTML (Используем ключи из БД) ---
     full_html = f"""
     <!DOCTYPE html>
     <html>
@@ -354,24 +419,24 @@ def show_print_modal(order_id):
 
             <table class="info-table">
                 <tr>
-                    <td><b>👤 Получатель</b><br>{row.get('Клиент', '---')}</td>
-                    <td><b>📍 Куда (Адрес)</b><br>{row.get('Адрес клиента', '---')}</td>
-                    <td><b>📞 Телефон</b><br>{row.get('Телефон', '---')}</td>
+                    <td><b>👤 Получатель</b><br>{row.get('client_name', '---')}</td>
+                    <td><b>📍 Куда (Адрес)</b><br>{row.get('delivery_address', '---')}</td>
+                    <td><b>📞 Телефон</b><br>{row.get('phone', '---')}</td>
                 </tr>
                 <tr>
-                    <td><b>🚛 Перевозчик</b><br>{row.get('Водитель', '---')} ({row.get('ТС (Госномер)', '---')})</td>
-                    <td><b>🏗️ Место отгрузки</b><br>{row.get('Адрес загрузки', '---')}</td>
-                    <td><b>📦 Статус заявки</b><br>{row.get('Статус', '---')}</td>
+                    <td><b>🚛 Перевозчик</b><br>{row.get('driver', '---')} ({row.get('vehicle', '---')})</td>
+                    <td><b>🏗️ Место отгрузки</b><br>{row.get('load_address', '---')}</td>
+                    <td><b>📦 Статус заявки</b><br>{row.get('status', '---')}</td>
                 </tr>
                 <tr>
-                    <td><b>📏 Общий объем</b><br>{row.get('Общий объем (м3)', '0')} м³</td>
-                    <td><b>📜 Сертификация</b><br>{row.get('Сертификат', '---')}</td>
-                    <td><b>📅 Дата док-та</b><br>{row.get('Дата создания')}</td>
+                    <td><b>📏 Общий объем</b><br>{row.get('total_volume', '0')} м³</td>
+                    <td><b>📜 Сертификация</b><br>{row.get('has_certificate', '---')}</td>
+                    <td><b>📅 Дата док-та</b><br>{row.get('created_at', '---')}</td>
                 </tr>
             </table>
 
             <div style="padding:10px; border:1px solid #eee; background:#f9f9f9; font-size:12px;">
-                <b>📑 Комментарий / Допуск:</b> {row.get('Описание', '---')}
+                <b>📑 Комментарий / Допуск:</b> {row.get('description', '---')}
             </div>
 
             <h3 style="border-left: 5px solid #2c3e50; padding-left: 10px; margin-top:30px;">СПЕЦИФИКАЦИЯ ТМЦ</h3>
@@ -382,12 +447,12 @@ def show_print_modal(order_id):
                     <div>
                         <p style="margin-bottom:40px;">Отгрузил (Склад):</p>
                         <div style="border-bottom: 1px solid #000; width: 200px;"></div>
-                        <p style="font-size:10px;">(ФИО, Подпись) / {row.get('Допуск', '_______')}</p>
+                        <p style="font-size:10px;">(ФИО, Подпись) / {row.get('approval_by', '_______')}</p>
                     </div>
                     <div style="text-align: right;">
                         <p style="margin-bottom:40px;">Принял (Водитель/Клиент):</p>
                         <div style="border-bottom: 1px solid #000; width: 200px; margin-left: auto;"></div>
-                        <p style="font-size:10px;">(ФИО, Подпись) / {row.get('Клиент', '_______')}</p>
+                        <p style="font-size:10px;">(ФИО, Подпись) / {row.get('client_name', '_______')}</p>
                     </div>
                 </div>
                 <p style="text-align: center; margin-top: 50px; font-size: 9px; color: #aaa;">
@@ -408,9 +473,18 @@ def show_print_modal(order_id):
         
 @st.dialog("⚙️ Приемка: Редактирование прихода", width="large")
 def edit_arrival_modal(entry_id):
+    from database import supabase
+    import numpy as np
+    import time
+    
     table_key = "arrivals"
-    # --- 1. ИНИЦИАЛИЗАЦИЯ (Загружаем данные из arrivals) ---
+    
+    # --- 1. ИНИЦИАЛИЗАЦИЯ ---
     if f"temp_row_{entry_id}" not in st.session_state:
+        if table_key not in st.session_state:
+            st.error("Таблица приходов не загружена")
+            return
+            
         df = st.session_state[table_key]
         idx_list = df.index[df['id'] == entry_id].tolist()
         if not idx_list:
@@ -419,10 +493,21 @@ def edit_arrival_modal(entry_id):
         
         st.session_state[f"temp_idx_{entry_id}"] = idx_list[0]
         st.session_state[f"temp_row_{entry_id}"] = df.iloc[idx_list[0]].to_dict()
-        st.session_state[f"temp_items_{entry_id}"] = st.session_state.items_registry.get(
-            entry_id, pd.DataFrame(columns=['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'])
+        
+        # Загрузка товаров из реестра
+        items_reg = st.session_state.items_registry.get(
+            entry_id, 
+            pd.DataFrame(columns=['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'])
         ).copy()
+        
+        # Проверка наличия нужных колонок для корректной работы editor
+        for col in ['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес']:
+            if col not in items_reg.columns:
+                items_reg[col] = 0 if col == 'Кол-во' else ""
+                
+        st.session_state[f"temp_items_{entry_id}"] = items_reg
 
+    # Ссылки на данные в текущей сессии
     row = st.session_state[f"temp_row_{entry_id}"]
     items_df = st.session_state[f"temp_items_{entry_id}"]
     idx = st.session_state[f"temp_idx_{entry_id}"]
@@ -440,143 +525,269 @@ def edit_arrival_modal(entry_id):
         status_list = ["ПРИЕМКА", "РАЗГРУЗКА", "ПРИНЯТО", "РАСХОЖДЕНИЕ"]
         curr_st = row.get('Статус', 'ПРИЕМКА')
         st_idx = status_list.index(curr_st) if curr_st in status_list else 0
+        
         row['Статус'] = r2_1.selectbox("Статус приемки", status_list, index=st_idx, key=f"ar_f4_{entry_id}")
         row['ТС (Госномер)'] = r2_2.text_input("Транспорт (номер)", value=row.get('ТС (Госномер)', ''), key=f"ar_f5_{entry_id}")
         row['Водитель'] = r2_3.text_input("Водитель", value=row.get('Водитель', ''), key=f"ar_f6_{entry_id}")
-        row['Сертификат'] = r2_4.selectbox("Документы в порядке", ["Да", "Нет"], index=(0 if row.get('Сертификат')=="Да" else 1), key=f"ar_f7_{entry_id}")
+        row['Сертификат'] = r2_4.selectbox("Документы в порядке", ["Да", "Нет"], 
+                                           index=(0 if row.get('Сертификат')=="Да" else 1), key=f"ar_f7_{entry_id}")
 
         st.divider()
         st.markdown("### 📦 Состав принимаемого груза")
+        # Редактор состава прихода
         updated_items = st.data_editor(items_df, use_container_width=True, num_rows="dynamic", key=f"ar_ed_{entry_id}")
         st.session_state[f"temp_items_{entry_id}"] = updated_items
 
         if st.button("💾 ЗАФИКСИРОВАТЬ ПРИЕМКУ", use_container_width=True, type="primary"):
-            # Сохраняем в Arrivals
-            for field, val in row.items():
-                st.session_state[table_key].at[idx, field] = val
+            # Расчет итогов
+            valid_vol = pd.to_numeric(updated_items['Объем (м3)'], errors='coerce').fillna(0)
+            total_vol = round(float(valid_vol.sum()), 3)
             
-            # Пересчет объемов
-            total_vol = pd.to_numeric(updated_items['Объем (м3)'], errors='coerce').sum()
-            st.session_state[table_key].at[idx, 'Кол-во позиций'] = len(updated_items)
-            st.session_state[table_key].at[idx, 'Общий объем (м3)'] = round(float(total_vol), 3)
-            
-            # СИНХРОНИЗАЦИЯ С MAIN (Профессиональный уровень)
-            if "main" in st.session_state:
-                main_df = st.session_state["main"]
-                if entry_id in main_df['id'].values:
-                    m_idx = main_df.index[main_df['id'] == entry_id].tolist()[0]
-                    for field, val in row.items():
-                        if field in main_df.columns:
-                            main_df.at[m_idx, field] = val
-                    main_df.at[m_idx, 'Общий объем (м3)'] = round(float(total_vol), 3)
+            # 1. ПОДГОТОВКА ДАННЫХ ДЛЯ SUPABASE (Таблица arrivals)
+            db_payload = {
+                "client_name": row['Клиент'],
+                "phone": row['Телефон'],
+                "load_address": row['Адрес загрузки'],
+                "status": row['Статус'],
+                "vehicle": row['ТС (Госномер)'],
+                "driver": row['Водитель'],
+                "has_certificate": row['Сертификат'],
+                "total_volume": total_vol,
+                "items_count": len(updated_items),
+                "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
+                "updated_at": datetime.now().isoformat()
+            }
 
-            st.session_state.items_registry[entry_id] = updated_items
-            st.success("✅ Данные приемки обновлены!")
-            time.sleep(1)
-            st.rerun()
+            try:
+                # 2. СОХРАНЕНИЕ В ОБЛАКО (Документ)
+                supabase.table(table_key).update(db_payload).eq("id", entry_id).execute()
+
+                # 3. ОБНОВЛЕНИЕ ИНВЕНТАРИЗАЦИИ (Таблица inventory)
+                # Если статус "ПРИНЯТО", фиксируем товары в ячейках
+                if row['Статус'] == "ПРИНЯТО":
+                    for _, item in updated_items.iterrows():
+                        if item.get('Адрес') and item['Адрес'] != "НЕ УКАЗАНО":
+                            inv_item = {
+                                "doc_id": entry_id,
+                                "item_name": item['Название товара'],
+                                "cell_address": item['Адрес'],
+                                "quantity": float(item.get('Кол-во', 0)),
+                                "warehouse_id": item['Адрес'].split('-')[0].replace('WH', '') if '-' in item['Адрес'] else "1"
+                            }
+                            supabase.table("inventory").upsert(inv_item, on_conflict="doc_id, item_name").execute()
+
+                # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ (DataFrame)
+                for field, val in row.items():
+                    if field in st.session_state[table_key].columns:
+                        st.session_state[table_key].at[idx, field] = val
+                
+                st.session_state[table_key].at[idx, 'Общий объем (м3)'] = total_vol
+                st.session_state[table_key].at[idx, 'Кол-во позиций'] = len(updated_items)
+                
+                # Синхронизация с Main
+                if "main" in st.session_state:
+                    m_df = st.session_state["main"]
+                    m_match = m_df.index[m_df['id'] == entry_id].tolist()
+                    if m_match:
+                        m_idx = m_match[0]
+                        m_df.at[m_idx, 'Статус'] = row['Статус']
+                        m_df.at[m_idx, 'Общий объем (м3)'] = total_vol
+
+                st.session_state.items_registry[entry_id] = updated_items
+                st.success(f"✅ Приемка {entry_id} успешно сохранена в БД!")
+                time.sleep(1)
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"🚨 Ошибка сохранения прихода: {e}")
 
     with tab_wh:
-        # Логика 3D-склада (идентична заявкам, но цель — распределить приход по ячейкам)
+        # Логика выбора ячеек (из config.py)
+        # Она обновляет st.session_state[f"temp_items_{entry_id}"], 
+        # который мы потом сохраняем кнопкой "Зафиксировать приемку"
         render_warehouse_logic(entry_id, updated_items)
         
 @st.dialog("🔍 Карточка Прихода", width="large")
 def show_arrival_details_modal(arrival_id):
-    df = st.session_state.arrivals
-    row_match = df[df['id'] == arrival_id]
-    
-    if row_match.empty:
-        st.error("Документ прихода не найден.")
-        return
+    from database import supabase
+    import pandas as pd
+
+    # --- 1. ЗАГРУЗКА АКТУАЛЬНЫХ ДАННЫХ ИЗ БД ---
+    try:
+        # Тянем данные напрямую из таблицы arrivals
+        response = supabase.table("arrivals").select("*").eq("id", arrival_id).execute()
         
-    row = row_match.iloc[0]
+        if not response.data:
+            st.error(f"Документ {arrival_id} не найден в базе данных.")
+            return
+            
+        db_row = response.data[0]
+        
+        # Извлекаем список товаров из JSONB колонки
+        items_list = db_row.get('items_data', [])
+        items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
+        
+    except Exception as e:
+        st.warning(f"⚠️ Ошибка связи с БД. Показываю данные из локального кэша. {e}")
+        # Фолбэк на локальный стейт, если база недоступна
+        df = st.session_state.arrivals
+        row_match = df[df['id'] == arrival_id]
+        if row_match.empty:
+            st.error("Документ не найден.")
+            return
+        db_row = row_match.iloc[0].to_dict()
+        items_df = st.session_state.items_registry.get(arrival_id, pd.DataFrame())
+
+    # --- 2. ОТОБРАЖЕНИЕ ДАННЫХ ---
     st.subheader(f"📥 Детальный обзор прихода: {arrival_id}")
     
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown(f"**🏢 Поставщик:** {row.get('Клиент', '---')}")
-        st.markdown(f"**📞 Контакт:** {row.get('Телефон', '---')}")
+        # Используем .get() с проверкой на английские и русские ключи (для надежности)
+        st.markdown(f"**🏢 Поставщик:** {db_row.get('client_name', db_row.get('Клиент', '---'))}")
+        st.markdown(f"**📞 Контакт:** {db_row.get('phone', db_row.get('Телефон', '---'))}")
     with c2:
-        st.markdown(f"**📦 Статус:** `{row.get('Статус', '---')}`")
-        st.markdown(f"**🏗️ Склад приемки:** {row.get('Адрес загрузки', '---')}")
+        st.markdown(f"**📦 Статус:** `{db_row.get('status', db_row.get('Статус', '---'))}`")
+        st.markdown(f"**🏗️ Склад приемки:** {db_row.get('load_address', db_row.get('Адрес загрузки', '---'))}")
     with c3:
-        st.markdown(f"**🚛 Транспорт:** {row.get('ТС (Госномер)', '---')}")
-        st.markdown(f"**👤 Водитель:** {row.get('Водитель', '---')}")
+        st.markdown(f"**🚛 Транспорт:** {db_row.get('vehicle', db_row.get('ТС (Госномер)', '---'))}")
+        st.markdown(f"**👤 Водитель:** {db_row.get('driver', db_row.get('Водитель', '---'))}")
 
     st.divider()
-    st.markdown("### 📋 Принятые позиции")
-    if arrival_id in st.session_state.items_registry:
-        items_df = st.session_state.items_registry[arrival_id]
-        st.dataframe(items_df, use_container_width=True)
-        
-        m1, m2 = st.columns(2)
-        m1.metric("Принято строк", f"{len(items_df)}")
-        m2.metric("Фактический объем", f"{row.get('Общий объем (м3)', 0)} м³")
     
+    # --- 3. ТАБЛИЦА ТОВАРОВ ---
+    st.markdown("### 📋 Принятые позиции")
+    if not items_df.empty:
+        # Стилизация: подсвечиваем наличие адреса хранения
+        def color_stock(val):
+            return 'background-color: #e6ffed' if val and val != "НЕ УКАЗАНО" else ''
+
+        if 'Адрес' in items_df.columns:
+            st.dataframe(items_df.style.applymap(color_stock, subset=['Адрес']), use_container_width=True)
+        else:
+            st.dataframe(items_df, use_container_width=True)
+            
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Принято строк", f"{len(items_df)}")
+        m2.metric("Общий объем", f"{db_row.get('total_volume', db_row.get('Общий объем (м3)', 0))} м³")
+        
+        # Добавляем индикатор инвентаризации
+        if db_row.get('status') == "ПРИНЯТО":
+             m3.success("✅ Размещено на складе")
+        else:
+             m3.warning("⏳ Ожидает размещения")
+    else:
+        st.warning("⚠️ Спецификация товаров пуста.")
+
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
-   
+        
 @st.dialog("🖨️ Печать приходного ордера", width="large")
 def show_arrival_print_modal(arrival_id):
-    row_data = st.session_state.arrivals[st.session_state.arrivals['id'] == arrival_id]
-    if row_data.empty:
-        st.error("Ошибка данных")
-        return
-    row = row_data.iloc[0]
-    
-    items_df = st.session_state.items_registry.get(arrival_id, pd.DataFrame(columns=["Товар", "Кол-во"]))
-    items_html = items_df.to_html(index=False, border=1, classes='items-table')
+    from database import supabase
+    import pandas as pd
 
+    # --- 1. ЗАГРУЗКА АКТУАЛЬНЫХ ДАННЫХ ИЗ БД ---
+    try:
+        response = supabase.table("arrivals").select("*").eq("id", arrival_id).execute()
+        
+        if not response.data:
+            st.error("Ошибка: Приход не найден в базе данных")
+            return
+            
+        row = response.data[0]
+        # Берем список товаров напрямую из JSONB поля
+        items_list = row.get('items_data', [])
+        items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame(columns=["Товар", "Кол-во", "Адрес"])
+    except Exception as e:
+        st.error(f"Ошибка связи с БД: {e}")
+        return
+
+    # --- 2. ПОДГОТОВКА ТАБЛИЦЫ ТОВАРОВ ---
+    # Очищаем таблицу от лишних колонок для печати
+    if not items_df.empty:
+        # Оставляем только важные колонки, если они есть
+        cols_to_show = [c for c in ['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'] if c in items_df.columns]
+        print_df = items_df[cols_to_show].fillna("-")
+    else:
+        print_df = pd.DataFrame(columns=["Товар", "Кол-во"])
+
+    items_html = print_df.to_html(index=False, border=1, classes='items-table')
+
+    # --- 3. ГЕНЕРАЦИЯ HTML ---
     full_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
     <style>
         @media print {{ .no-print {{ display: none !important; }} }}
-        body {{ font-family: sans-serif; padding: 20px; }}
-        .print-container {{ background: white; padding: 20px; border: 1px solid #ccc; }}
-        .header {{ border-bottom: 2px solid #000; display: flex; justify-content: space-between; }}
+        body {{ font-family: sans-serif; padding: 20px; color: #333; }}
+        .print-container {{ background: white; padding: 20px; border: 1px solid #ccc; max-width: 800px; margin: auto; }}
+        .header {{ border-bottom: 2px solid #000; display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; }}
         .info-table {{ width: 100%; margin-top: 20px; border-collapse: collapse; }}
-        .info-table td {{ border: 1px solid #eee; padding: 5px; }}
+        .info-table td {{ border: 1px solid #eee; padding: 8px; font-size: 14px; }}
         .items-table {{ width: 100%; margin-top: 20px; border-collapse: collapse; }}
-        .items-table th {{ background: #eee; padding: 10px; border: 1px solid #000; }}
-        .items-table td {{ padding: 10px; border: 1px solid #000; }}
+        .items-table th {{ background: #f2f2f2; padding: 10px; border: 1px solid #000; font-size: 13px; text-align: left; }}
+        .items-table td {{ padding: 10px; border: 1px solid #000; font-size: 13px; }}
+        .footer-sigs {{ margin-top:50px; display:flex; justify-content: space-between; font-weight: bold; }}
     </style>
     </head>
     <body>
-        <button class="no-print" onclick="window.print()" style="width:100%; padding:10px; background: #2E7D32; color:white; border:none; cursor:pointer;">ПЕЧАТАТЬ ПРИХОДНЫЙ ОРДЕР</button>
+        <button class="no-print" onclick="window.print()" style="width:100%; padding:12px; background: #2E7D32; color:white; border:none; cursor:pointer; font-weight:bold; margin-bottom: 10px;">
+            🖨️ ПЕЧАТАТЬ ПРИХОДНЫЙ ОРДЕР / СОХРАНИТЬ PDF
+        </button>
         <div class="print-container">
             <div class="header">
-                <h2>ПРИХОДНЫЙ ОРДЕР №{arrival_id}</h2>
-                <p>IMPERIA WMS | ПРИЕМКА</p>
+                <div style="text-align:left;">
+                    <h2 style="margin:0;">ПРИХОДНЫЙ ОРДЕР №{arrival_id}</h2>
+                    <small>Дата формирования: {datetime.now().strftime('%d.%m.%Y %H:%M')}</small>
+                </div>
+                <div style="text-align:right;">
+                    <p style="margin:0; font-weight:bold;">IMPERIA WMS</p>
+                    <p style="margin:0; font-size:12px;">УЧЕТ ПРИЕМКИ</p>
+                </div>
             </div>
             <table class="info-table">
                 <tr>
-                    <td><b>Отправитель (Поставщик):</b><br>{row.get('Клиент')}</td>
-                    <td><b>Склад приемки:</b><br>{row.get('Адрес загрузки')}</td>
+                    <td><b>Отправитель (Поставщик):</b><br>{row.get('client_name', row.get('Клиент', '---'))}</td>
+                    <td><b>Склад приемки:</b><br>{row.get('load_address', row.get('Адрес загрузки', '---'))}</td>
                 </tr>
                 <tr>
-                    <td><b>Транспорт:</b> {row.get('ТС (Госномер)')}</td>
-                    <td><b>Водитель:</b> {row.get('Водитель')}</td>
+                    <td><b>Транспорт:</b> {row.get('vehicle', row.get('ТС (Госномер)', '---'))}</td>
+                    <td><b>Водитель:</b> {row.get('driver', row.get('Водитель', '---'))}</td>
                 </tr>
             </table>
-            <h3>СПЕЦИФИКАЦИЯ ПРИНЯТОГО ТОВАРА</h3>
+            <h3 style="margin-top:30px; border-bottom: 1px solid #eee;">СПЕЦИФИКАЦИЯ ПРИНЯТОГО ТОВАРА</h3>
             {items_html}
-            <div style="margin-top:50px; display:flex; justify-content: space-between;">
-                <div>Сдал (Водитель): ___________</div>
-                <div>Принял (Кладовщик): ___________</div>
+            
+            <div class="footer-sigs">
+                <div>Сдал (Водитель): _________________</div>
+                <div>Принял (Кладовщик): _________________</div>
+            </div>
+            
+            <div style="margin-top:40px; text-align:center; font-size:10px; color:#999;">
+                Документ сгенерирован автоматически в системе IMPERIA WMS
             </div>
         </div>
     </body>
     </html>
     """
     components.html(full_html, height=800, scrolling=True)
-    
+
+    if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
+        st.session_state.active_print_modal = None
+        st.rerun()
+        
     
 @st.dialog("⚙️ Корректировка: Дополнение к документу", width="large")
 def edit_extra_modal(entry_id):
+    from database import supabase
+    import numpy as np
+    import time
+
     table_key = "extras"
     
-    # --- 1. ИНИЦИАЛИЗАЦИЯ (Сверка с EXTRA_COLUMNS) ---
+    # --- 1. ИНИЦИАЛИЗАЦИЯ ---
     if f"temp_row_{entry_id}" not in st.session_state:
         if table_key not in st.session_state:
             st.error("Таблица дополнений не инициализирована")
@@ -603,32 +814,34 @@ def edit_extra_modal(entry_id):
     tab_info, tab_wh = st.tabs(["📝 Детали (EXTRA_COLUMNS)", "🏗️ Размещение на складе"])
 
     with tab_info:
-        # Линия 1: Ответственные и связь
         st.markdown("##### 👤 Субъекты и Связи")
         c1, c2, c3 = st.columns(3)
         row['Кто одобрил'] = c1.text_input("Кто одобрил (ФИО/Контрагент)", value=row.get('Кто одобрил', ''), key=f"ex_v1_{entry_id}")
         row['Связь с ID'] = c2.text_input("Связь с ID (Родительский док)", value=row.get('Связь с ID', ''), key=f"ex_v2_{entry_id}")
         row['На чем'] = c3.text_input("На чем (Транспорт/Курьер)", value=row.get('На чем', ''), key=f"ex_v3_{entry_id}")
 
-        # Линия 2: Время и Место
         st.markdown("##### 📅 Время и Локация")
         r2_1, r2_2, r2_3 = st.columns(3)
-        row['Когда'] = r2_1.date_input("Когда (Дата события)", value=pd.to_datetime(row.get('Когда', datetime.now())).date(), key=f"ex_v4_{entry_id}").strftime("%Y-%m-%d")
+        # Обработка даты
+        try:
+            curr_date = pd.to_datetime(row.get('Когда', datetime.now())).date()
+        except:
+            curr_date = datetime.now().date()
+            
+        row['Когда'] = r2_1.date_input("Когда (Дата события)", value=curr_date, key=f"ex_v4_{entry_id}").strftime("%Y-%m-%d")
         row['Время'] = r2_2.text_input("Время", value=row.get('Время', datetime.now().strftime("%H:%M")), key=f"ex_v5_{entry_id}")
         row['Где'] = r2_3.text_input("Где (Точка/Склад)", value=row.get('Где', ''), key=f"ex_v6_{entry_id}")
 
-        # Линия 3: Суть и Причины
         st.markdown("##### 📄 Суть корректировки")
         r3_1, r3_2, r3_3 = st.columns([2, 1, 1])
         row['Что именно'] = r3_1.text_input("Что именно (Краткая суть)", value=row.get('Что именно', ''), key=f"ex_v7_{entry_id}")
-        row['Статус'] = r3_2.selectbox("Статус", ["СОГЛАСОВАНО", "В РАБОТЕ", "ЗАВЕРШЕНО", "ОТМЕНЕНО"], 
-                                       index=0 if row.get('Статус')=="СОГЛАСОВАНО" else 1, key=f"ex_v8_{entry_id}")
         
-        try: curr_sum = float(row.get('Сумма заявки', 0.0))
-        except: curr_sum = 0.0
-        row['Сумма заявки'] = r3_3.number_input("Сумма заявки", value=curr_sum, key=f"ex_v9_{entry_id}")
+        status_opts = ["СОГЛАСОВАНО", "В РАБОТЕ", "ЗАВЕРШЕНО", "ОТМЕНЕНО"]
+        curr_status = row.get('Статус', "СОГЛАСОВАНО")
+        st_idx = status_opts.index(curr_status) if curr_status in status_opts else 0
+        row['Статус'] = r3_2.selectbox("Статус", status_opts, index=st_idx, key=f"ex_v8_{entry_id}")
+        row['Сумма заявки'] = r3_3.number_input("Сумма заявки", value=float(row.get('Сумма заявки', 0.0)), key=f"ex_v9_{entry_id}")
 
-        # Линия 4: Причина (крупно)
         row['Почему (Причина)'] = st.text_area("Почему (Причина корректировки)", value=row.get('Почему (Причина)', ''), height=70, key=f"ex_v10_{entry_id}")
 
         st.divider()
@@ -637,159 +850,274 @@ def edit_extra_modal(entry_id):
         st.session_state[f"temp_items_{entry_id}"] = updated_items
 
         if st.button("💾 СОХРАНИТЬ ВСЕ ДАННЫЕ", use_container_width=True, type="primary"):
-            # Авто-расчет количества
-            row['Кол-во'] = len(updated_items)
-            
-            # Сохранение в таблицу extras
-            for field, val in row.items():
-                if field in st.session_state[table_key].columns:
-                    st.session_state[table_key].at[idx, field] = val
+            # 1. ПОДГОТОВКА PAYLOAD ДЛЯ SUPABASE
+            # Маппинг на колонки вашей таблицы extras в БД
+            db_payload = {
+                "approved_by": row['Кто одобрил'],
+                "parent_id": row['Связь с ID'],
+                "transport": row['На чем'],
+                "event_date": row['Когда'],
+                "event_time": row['Время'],
+                "location": row['Где'],
+                "subject": row['Что именно'],
+                "status": row['Статус'],
+                "amount": float(row['Сумма заявки']),
+                "reason": row['Почему (Причина)'],
+                "items_count": len(updated_items),
+                "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
+                "updated_at": datetime.now().isoformat()
+            }
 
-            # Синхронизация с MAIN (используем только те поля, что есть в Main)
-            if "main" in st.session_state:
-                m_df = st.session_state["main"]
-                m_idx_list = m_df.index[m_df['id'] == entry_id].tolist()
-                if m_idx_list:
-                    m_idx = m_idx_list[0]
-                    for field, val in row.items():
-                        if field in m_df.columns:
-                            m_df.at[m_idx, field] = val
+            try:
+                # 2. СОХРАНЕНИЕ В ОБЛАКО (Таблица extras)
+                supabase.table(table_key).update(db_payload).eq("id", entry_id).execute()
 
-            st.session_state.items_registry[entry_id] = updated_items
-            st.success("✅ Все ячейки дополнения обновлены!")
-            time.sleep(1)
-            st.rerun()
+                # 3. СИНХРОНИЗАЦИЯ СКЛАДСКИХ ОСТАТКОВ (inventory)
+                # Если корректировка завершена, обновляем ячейки
+                if row['Статус'] == "ЗАВЕРШЕНО":
+                    for _, item in updated_items.iterrows():
+                        if item.get('Адрес') and item['Адрес'] != "НЕ УКАЗАНО":
+                            inv_payload = {
+                                "doc_id": entry_id,
+                                "item_name": item['Название товара'],
+                                "cell_address": item['Адрес'],
+                                "quantity": float(item.get('Кол-во', 0)),
+                                "warehouse_id": item['Адрес'].split('-')[0].replace('WH', '') if '-' in item['Адрес'] else "1"
+                            }
+                            supabase.table("inventory").upsert(inv_payload, on_conflict="doc_id, item_name").execute()
+
+                # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ
+                target_df = st.session_state[table_key]
+                for field, val in row.items():
+                    if field in target_df.columns:
+                        target_df.at[idx, field] = val
+                
+                # Синхронизация с MAIN
+                if "main" in st.session_state:
+                    m_df = st.session_state["main"]
+                    m_idx_list = m_df.index[m_df['id'] == entry_id].tolist()
+                    if m_idx_list:
+                        m_idx = m_idx_list[0]
+                        m_df.at[m_idx, 'Статус'] = row['Статус']
+                        if 'Сумма заявки' in m_df.columns:
+                            m_df.at[m_idx, 'Сумма заявки'] = row['Сумма заявки']
+
+                st.session_state.items_registry[entry_id] = updated_items
+                st.success(f"✅ Корректировка {entry_id} синхронизирована с БД!")
+                time.sleep(1)
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"🚨 Ошибка сохранения корректировки: {e}")
 
     with tab_wh:
-        # Универсальная логика склада
+        # Универсальная логика визуализации склада
         render_warehouse_logic(entry_id, updated_items)
         
 @st.dialog("🔍 Просмотр дополнения", width="large")
 def show_extra_details_modal(extra_id):
-    if "extras" not in st.session_state:
-        st.error("База данных extras недоступна")
-        return
+    from database import supabase
+    import pandas as pd
+
+    # --- 1. ЗАГРУЗКА АКТУАЛЬНЫХ ДАННЫХ ИЗ БД (SUPABASE) ---
+    try:
+        # Прямой запрос к таблице extras
+        response = supabase.table("extras").select("*").eq("id", extra_id).execute()
         
-    df = st.session_state.extras
-    row_match = df[df['id'] == extra_id]
-    
-    if row_match.empty:
-        st.error("Запись не найдена.")
-        return
+        if not response.data:
+            st.error(f"Запись {extra_id} не найдена в базе данных.")
+            return
+            
+        db_row = response.data[0]
         
-    row = row_match.iloc[0]
+        # Извлекаем состав товаров из JSONB поля
+        items_list = db_row.get('items_data', [])
+        items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
+        
+    except Exception as e:
+        st.warning(f"⚠️ Ошибка подключения к БД. Использую локальный кэш. {e}")
+        # Фолбэк на session_state
+        if "extras" not in st.session_state:
+            st.error("Данные недоступны.")
+            return
+        df = st.session_state.extras
+        row_match = df[df['id'] == extra_id]
+        if row_match.empty:
+            st.error("Запись не найдена.")
+            return
+        db_row = row_match.iloc[0].to_dict()
+        items_df = st.session_state.items_registry.get(extra_id, pd.DataFrame())
+
+    # --- 2. ОТОБРАЖЕНИЕ ДАННЫХ ---
     st.subheader(f"📑 Детальный просмотр корректировки: {extra_id}")
-    
-    # Сетка данных строго по EXTRA_COLUMNS
     st.markdown("---")
+    
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown(f"**👤 Кто одобрил:**\n{row.get('Кто одобрил', '---')}")
-        st.markdown(f"**🔗 Связь с ID:**\n`{row.get('Связь с ID', 'НЕТ')}`")
-        st.markdown(f"**📈 Статус:**\n`{row.get('Статус', '---')}`")
+        # Используем .get() с поддержкой имен колонок из БД (snake_case) и UI (Кириллица)
+        st.markdown(f"**👤 Кто одобрил:**\n{db_row.get('approved_by', db_row.get('Кто одобрил', '---'))}")
+        st.markdown(f"**🔗 Связь с ID:**\n`{db_row.get('parent_id', db_row.get('Связь с ID', 'НЕТ'))}`")
+        st.markdown(f"**📈 Статус:**\n`{db_row.get('status', db_row.get('Статус', '---'))}`")
 
     with col2:
-        st.markdown(f"**🎯 Что именно:**\n{row.get('Что именно', '---')}")
-        st.markdown(f"**📅 Дата события:**\n{row.get('Когда', '---')}")
-        st.markdown(f"**🕒 Время:**\n{row.get('Время', '---')}")
+        st.markdown(f"**🎯 Что именно:**\n{db_row.get('subject', db_row.get('Что именно', '---'))}")
+        st.markdown(f"**📅 Дата события:**\n{db_row.get('event_date', db_row.get('Когда', '---'))}")
+        st.markdown(f"**🕒 Время:**\n{db_row.get('event_time', db_row.get('Время', '---'))}")
 
     with col3:
-        st.markdown(f"**🚚 На чем (Транспорт):**\n{row.get('На чем', '---')}")
-        st.markdown(f"**📍 Где (Локация):**\n{row.get('Где', '---')}")
-        st.markdown(f"**💰 Сумма заявки:**\n{row.get('Сумма заявки', 0.0):,.2f}")
+        st.markdown(f"**🚚 На чем (Транспорт):**\n{db_row.get('transport', db_row.get('На чем', '---'))}")
+        st.markdown(f"**📍 Где (Локация):**\n{db_row.get('location', db_row.get('Где', '---'))}")
+        
+        try:
+            val_sum = float(db_row.get('amount', db_row.get('Сумма заявки', 0.0)))
+        except:
+            val_sum = 0.0
+        st.markdown(f"**💰 Сумма заявки:**\n{val_sum:,.2f}")
 
-    st.warning(f"**❓ Причина (Почему):** {row.get('Почему (Причина)', 'Не указана')}")
+    # Причина выделена цветом
+    st.warning(f"**❓ Причина (Почему):** {db_row.get('reason', db_row.get('Почему (Причина)', 'Не указана'))}")
 
     st.divider()
-    st.markdown(f"### 📦 Состав позиций (Всего: {row.get('Кол-во', 0)})")
-    if extra_id in st.session_state.items_registry:
-        st.dataframe(st.session_state.items_registry[extra_id], use_container_width=True)
+    
+    # --- 3. ТАБЛИЦА ТОВАРОВ ---
+    count_pos = db_row.get('items_count', len(items_df))
+    st.markdown(f"### 📦 Состав позиций (Всего: {count_pos})")
+    
+    if not items_df.empty:
+        st.dataframe(items_df, use_container_width=True)
     else:
         st.info("Спецификация товаров пуста.")
 
-    # Дополнительные системные данные
-    st.caption(f"Дата создания записи: {row.get('Дата создания', '---')}")
+    # Системные данные (даты из БД)
+    st.caption(f"Создано в системе: {db_row.get('created_at', '---')} | Последнее обновление: {db_row.get('updated_at', '---')}")
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
-
+        
 @st.dialog("🖨️ Печать приложения", width="large")
 def show_extra_print_modal(extra_id):
-    row_data = st.session_state.extras[st.session_state.extras['id'] == extra_id]
-    if row_data.empty:
-        st.error("Ошибка данных")
-        return
-    row = row_data.iloc[0]
-    
-    items_df = st.session_state.items_registry.get(extra_id, pd.DataFrame(columns=["Товар", "Кол-во"]))
-    items_html = items_df.to_html(index=False, border=1, classes='items-table')
+    from database import supabase
+    import pandas as pd
 
+    # --- 1. ПОЛУЧЕНИЕ ДАННЫХ ИЗ ОБЛАКА ---
+    try:
+        response = supabase.table("extras").select("*").eq("id", extra_id).execute()
+        
+        if not response.data:
+            st.error("Запись не найдена в БД.")
+            return
+            
+        row = response.data[0]
+        # Загружаем товары напрямую из JSONB
+        items_list = row.get('items_data', [])
+        items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame(columns=["Товар", "Кол-во"])
+    except Exception as e:
+        st.error(f"Ошибка связи с базой данных: {e}")
+        return
+
+    # --- 2. ПОДГОТОВКА ТАБЛИЦЫ ТОВАРОВ ---
+    if not items_df.empty:
+        # Оставляем только нужные для печати колонки
+        cols = [c for c in ['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'] if c in items_df.columns]
+        print_df = items_df[cols].fillna("-")
+    else:
+        print_df = pd.DataFrame(columns=["Товар", "Кол-во"])
+
+    items_html = print_df.to_html(index=False, border=1, classes='items-table')
+
+    # --- 3. ГЕНЕРАЦИЯ HTML ---
     full_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
     <style>
         @media print {{ .no-print {{ display: none !important; }} }}
-        body {{ font-family: 'Segoe UI', sans-serif; padding: 30px; line-height: 1.6; }}
-        .print-card {{ border: 2px solid #333; padding: 20px; border-radius: 10px; }}
-        .doc-header {{ text-align: center; border-bottom: 2px solid #333; margin-bottom: 20px; }}
+        body {{ font-family: 'Segoe UI', sans-serif; padding: 30px; line-height: 1.6; color: #333; }}
+        .print-card {{ border: 2px solid #333; padding: 25px; border-radius: 10px; max-width: 850px; margin: auto; }}
+        .doc-header {{ text-align: center; border-bottom: 2px solid #333; margin-bottom: 20px; padding-bottom: 10px; }}
         .info-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }}
-        .items-table {{ width: 100%; border-collapse: collapse; }}
-        .items-table th, .items-table td {{ border: 1px solid #333; padding: 8px; text-align: left; }}
+        .items-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+        .items-table th, .items-table td {{ border: 1px solid #333; padding: 10px; text-align: left; font-size: 13px; }}
         .items-table th {{ background-color: #f2f2f2; }}
-        .footer {{ margin-top: 50px; font-style: italic; }}
+        .footer {{ margin-top: 50px; font-style: italic; font-size: 12px; }}
+        .signature-section {{ display: flex; justify-content: space-between; margin-top: 40px; font-weight: bold; }}
     </style>
     </head>
     <body>
-        <button class="no-print" onclick="window.print()" style="width:100%; padding:15px; background:#fb8c00; color:white; border:none; border-radius:5px; font-weight:bold; cursor:pointer; margin-bottom:20px;">🖨️ ПЕЧАТЬ ПРИЛОЖЕНИЯ К ДОКУМЕНТУ</button>
+        <button class="no-print" onclick="window.print()" style="width:100%; padding:15px; background:#fb8c00; color:white; border:none; border-radius:5px; font-weight:bold; cursor:pointer; margin-bottom:20px;">
+            🖨️ ОТПРАВИТЬ НА ПЕЧАТЬ / СОХРАНИТЬ В PDF
+        </button>
         <div class="print-card">
             <div class="doc-header">
-                <h1>ДОПОЛНЕНИЕ №{extra_id}</h1>
-                <p>К основному документу №{row.get('Parent_ID', '_______')}</p>
+                <h1 style="margin:0;">ПРИЛОЖЕНИЕ К ДОКУМЕНТУ №{extra_id}</h1>
+                <p>К основному документу: <b>{row.get('parent_id', row.get('Связь с ID', '_______'))}</b></p>
             </div>
             <div class="info-grid">
                 <div>
-                    <b>Тип операции:</b> {row.get('Тип')}<br>
-                    <b>Контрагент:</b> {row.get('Клиент')}
+                    <b>Суть корректировки:</b> {row.get('subject', row.get('Что именно', '---'))}<br>
+                    <b>Контрагент/Одобрил:</b> {row.get('approved_by', row.get('Кто одобрил', '---'))}
                 </div>
                 <div style="text-align: right;">
-                    <b>Дата корректировки:</b> {datetime.now().strftime('%d.%m.%Y')}<br>
-                    <b>Статус:</b> {row.get('Статус')}
+                    <b>Дата корректировки:</b> {row.get('event_date', row.get('Когда', '---'))}<br>
+                    <b>Статус:</b> {row.get('status', row.get('Статус', '---'))}
                 </div>
             </div>
+            
+            <div style="background: #f9f9f9; padding: 10px; border-left: 4px solid #fb8c00; margin-bottom: 20px;">
+                <b>Причина:</b> {row.get('reason', row.get('Почему (Причина)', 'Не указана'))}
+            </div>
+
             <h3>ПЕРЕЧЕНЬ ИЗМЕНЕНИЙ / ДОПОЛНИТЕЛЬНЫХ ПОЗИЦИЙ</h3>
             {items_html}
+
             <div class="footer">
-                <p>Данное дополнение является неотъемлемой частью основного договора/накладной.</p>
-                <div style="display: flex; justify-content: space-between; margin-top: 40px;">
-                    <div>Менеджер: _________________</div>
+                <p>Данное дополнение является неотъемлемой частью основного складского документа. Сведения актуальны на момент печати.</p>
+                <div class="signature-section">
+                    <div>Ответственное лицо: _________________</div>
                     <div>Контрагент: _________________</div>
                 </div>
+                <p style="text-align:center; margin-top:30px; color:#aaa;">IMPERIA WMS | Система управления складом</p>
             </div>
         </div>
     </body>
     </html>
     """
     components.html(full_html, height=850, scrolling=True)
+
+    if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
+        st.session_state.active_print_modal = None
+        st.rerun()
+        
     
 @st.dialog("🚨 Актирование и Редактирование брака", width="large")
 def edit_defect_modal(entry_id):
+    from database import supabase
+    import numpy as np
+    import time
+    
     table_key = "defects"
     
-    # --- 1. ИНИЦИАЛИЗАЦИЯ (Синхронизация с DEFECT_COLUMNS) ---
+    # --- 1. ИНИЦИАЛИЗАЦИЯ (Загрузка данных) ---
     if f"temp_row_{entry_id}" not in st.session_state:
+        if table_key not in st.session_state:
+            st.error("Таблица актов брака не найдена")
+            return
+            
         df = st.session_state[table_key]
         idx_list = df.index[df['id'] == entry_id].tolist()
         if not idx_list:
-            st.error("Акт брака не найден в базе")
+            st.error("Акт брака не найден")
             return
         
         st.session_state[f"temp_idx_{entry_id}"] = idx_list[0]
         st.session_state[f"temp_row_{entry_id}"] = df.iloc[idx_list[0]].to_dict()
         
-        # Загружаем товары или создаем пустую структуру, если их нет
-        items = st.session_state.items_registry.get(entry_id, pd.DataFrame(columns=['Товар', 'Кол-во', 'Описание дефекта']))
+        # Загружаем товары из реестра или создаем структуру
+        items = st.session_state.items_registry.get(
+            entry_id, 
+            pd.DataFrame(columns=['Товар', 'Кол-во', 'Описание дефекта'])
+        )
         st.session_state[f"temp_items_{entry_id}"] = items.copy()
 
     row = st.session_state[f"temp_row_{entry_id}"]
@@ -802,154 +1130,291 @@ def edit_defect_modal(entry_id):
 
     with tab_main:
         c1, c2, c3 = st.columns(3)
-        # Соответствие DEFECT_COLUMNS
         row['Товар'] = c1.text_input("Основной товар", value=row.get('Товар', ''), key=f"d_f1_{entry_id}")
         row['Кол-во брака'] = c2.number_input("Кол-во (общ)", value=int(row.get('Кол-во брака', 0)), key=f"d_f2_{entry_id}")
         row['Связь с документом'] = c3.text_input("Связь с ID (Заявка)", value=row.get('Связь с документом', ''), key=f"d_f3_{entry_id}")
 
         r2_1, r2_2, r2_3 = st.columns(3)
-        row['Тип дефекта'] = r2_1.selectbox("Тип дефекта", ["Бой", "Порча упаковки", "Некомплект", "Производственный брак"], key=f"d_f4_{entry_id}")
-        row['Виновник'] = r2_2.selectbox("Виновник", ["Перевозчик", "Склад", "Поставщик", "Не установлен"], key=f"d_f5_{entry_id}")
-        row['Статус'] = r2_3.selectbox("Статус", ["ОБНАРУЖЕНО", "В ЭКСПЕРТИЗЕ", "ПОДТВЕРЖДЕНО", "СПИСАНО"], key=f"d_f6_{entry_id}")
+        defect_types = ["Бой", "Порча упаковки", "Некомплект", "Производственный брак"]
+        culprit_types = ["Перевозчик", "Склад", "Поставщик", "Не установлен"]
+        status_types = ["ОБНАРУЖЕНО", "В ЭКСПЕРТИЗЕ", "ПОДТВЕРЖДЕНО", "СПИСАНО"]
+
+        row['Тип дефекта'] = r2_1.selectbox("Тип дефекта", defect_types, 
+                                            index=defect_types.index(row.get('Тип дефекта')) if row.get('Тип дефекта') in defect_types else 0, key=f"d_f4_{entry_id}")
+        row['Виновник'] = r2_2.selectbox("Виновник", culprit_types, 
+                                          index=culprit_types.index(row.get('Виновник')) if row.get('Виновник') in culprit_types else 0, key=f"d_f5_{entry_id}")
+        row['Статус'] = r2_3.selectbox("Статус", status_types, 
+                                        index=status_types.index(row.get('Статус')) if row.get('Статус') in status_types else 0, key=f"d_f6_{entry_id}")
 
         row['Решение'] = st.text_area("Принятое решение", value=row.get('Решение', ''), height=70, key=f"d_f7_{entry_id}")
 
         st.divider()
         st.markdown("##### 📦 Спецификация поврежденных позиций")
-        # Редактор товаров - именно отсюда берется инфо для таблицы просмотра
         updated_items = st.data_editor(items_df, use_container_width=True, num_rows="dynamic", key=f"d_ed_{entry_id}")
         st.session_state[f"temp_items_{entry_id}"] = updated_items
 
     with tab_photo:
         st.markdown("##### 📷 Доказательства повреждений")
         if row.get('Фото'):
-            st.info(f"Текущее фото: {row['Фото']}")
-        new_defect_photo = st.file_uploader("Загрузить фото брака", type=['jpg', 'png', 'jpeg'], key=f"d_ph_{entry_id}")
+            st.image(f"https://your-supabase-url.com/storage/v1/object/public/defects/{row['Фото']}", caption="Текущее фото")
+        
+        new_defect_photo = st.file_uploader("Загрузить новое фото брака", type=['jpg', 'png', 'jpeg'], key=f"d_ph_{entry_id}")
         if new_defect_photo:
-            row['Фото'] = f"defect_{entry_id}.jpg" # Имя файла для сохранения
+            # Логика загрузки в Storage будет здесь
+            row['Фото'] = f"defect_{entry_id}.jpg"
 
     with tab_geo:
         st.markdown("##### 📍 Место в зоне карантина")
         row['Адрес хранения'] = st.text_input("Ячейка брака (Зона Карантин)", value=row.get('Адрес хранения', 'Z-BRAK-01'), key=f"d_adr_{entry_id}")
+        # Визуализация склада для зоны карантина
         render_warehouse_logic(entry_id, updated_items)
 
-    # КНОПКА СОХРАНЕНИЯ
+    # --- 2. КНОПКА СОХРАНЕНИЯ ---
     if st.button("🚨 СОХРАНИТЬ ИЗМЕНЕНИЯ В АКТЕ", use_container_width=True, type="primary"):
-        target_df = st.session_state[table_key]
-        
-        # Проставляем дату, если её нет
-        if not row.get('Дата создания'):
-            row['Дата создания'] = datetime.now().strftime("%d.%m.%Y")
+        # Подготовка данных для БД
+        db_payload = {
+            "main_item": row['Товар'],
+            "total_defective": int(row['Кол-во брака']),
+            "related_doc_id": row['Связь с документом'],
+            "defect_type": row['Тип дефекта'],
+            "culprit": row['Виновник'],
+            "status": row['Статус'],
+            "decision": row['Решение'],
+            "photo_url": row.get('Фото'),
+            "quarantine_address": row['Адрес хранения'],
+            "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
+            "updated_at": datetime.now().isoformat()
+        }
 
-        # Записываем всё в DataFrame
-        for field, val in row.items():
-            if field in target_df.columns:
-                target_df.at[idx, field] = val
-        
-        # ОБЯЗАТЕЛЬНО: Синхронизируем товары, чтобы они не были EMPTY
-        st.session_state.items_registry[entry_id] = updated_items
-        
-        st.success("✅ Акт брака успешно обновлен!")
-        time.sleep(1)
-        st.rerun()
+        try:
+            # 1. Обновляем основную запись брака
+            supabase.table(table_key).update(db_payload).eq("id", entry_id).execute()
+
+            # 2. Если статус "ПОДТВЕРЖДЕНО", фиксируем товар в инвентаризации (Карантин)
+            if row['Статус'] == "ПОДТВЕРЖДЕНО":
+                for _, item in updated_items.iterrows():
+                    inv_payload = {
+                        "doc_id": entry_id,
+                        "item_name": item['Товар'],
+                        "cell_address": row['Адрес хранения'], # Все в карантинную ячейку
+                        "quantity": float(item['Кол-во']),
+                        "is_defective": True
+                    }
+                    supabase.table("inventory").upsert(inv_payload, on_conflict="doc_id, item_name").execute()
+
+            # 3. Синхронизируем локальный DataFrame
+            target_df = st.session_state[table_key]
+            for field, val in row.items():
+                if field in target_df.columns:
+                    target_df.at[idx, field] = val
+            
+            st.session_state.items_registry[entry_id] = updated_items
+            
+            st.success(f"✅ Акт №{entry_id} синхронизирован с облаком!")
+            time.sleep(1)
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"🚨 Ошибка сохранения акта брака: {e}")
         
 @st.dialog("🔍 Просмотр Акта брака", width="large")
 def show_defect_details_modal(defect_id):
-    df = st.session_state.defects
-    row_match = df[df['id'] == defect_id]
-    
-    if row_match.empty:
-        st.error("Акт не найден")
-        return
+    from database import supabase
+    import pandas as pd
+
+    # --- 1. ЗАГРУЗКА ДАННЫХ ИЗ ОБЛАКА ---
+    try:
+        response = supabase.table("defects").select("*").eq("id", defect_id).execute()
         
-    row = row_match.iloc[0]
+        if not response.data:
+            st.error(f"Акт №{defect_id} не найден в базе данных.")
+            return
+            
+        db_row = response.data[0]
+        
+        # Загружаем спецификацию из JSONB колонки
+        items_list = db_row.get('items_data', [])
+        items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame()
+        
+    except Exception as e:
+        st.warning(f"⚠️ Ошибка связи с БД. Показываю кэш. {e}")
+        # Фолбэк на локальное состояние
+        df = st.session_state.defects
+        row_match = df[df['id'] == defect_id]
+        if row_match.empty: return
+        db_row = row_match.iloc[0].to_dict()
+        items_df = st.session_state.items_registry.get(defect_id, pd.DataFrame())
+
+    # --- 2. ЗАГОЛОВОК И МЕТРИКИ ---
     st.error(f"### 📑 АКТ ДЕФЕКТОВКИ №{defect_id}")
     
     c1, c2, c3 = st.columns(3)
-    c1.metric("Статус", row.get('Статус', 'Н/Д'))
-    c2.metric("Виновник", row.get('Виновник', 'Н/Д'))
-    c3.metric("Тип", row.get('Тип дефекта', 'Н/Д'))
+    # Используем метрики для мгновенного считывания статуса инцидента
+    c1.metric("Статус", db_row.get('status', db_row.get('Статус', 'Н/Д')))
+    c2.metric("Виновник", db_row.get('culprit', db_row.get('Виновник', 'Н/Д')))
+    c3.metric("Тип дефекта", db_row.get('defect_type', db_row.get('Тип дефекта', 'Н/Д')))
 
     st.markdown("---")
+    
+    # --- 3. ДЕТАЛЬНАЯ ИНФОРМАЦИЯ ---
     col_a, col_b = st.columns(2)
     with col_a:
-        st.markdown(f"**📦 Основной товар:** {row.get('Товар')}")
-        st.markdown(f"**🔢 Кол-во брака:** {row.get('Кол-во брака')}")
-        st.markdown(f"**🔗 Основание (ID):** {row.get('Связь с документом')}")
-    with col_b:
-        st.markdown(f"**📍 Адрес хранения:** `{row.get('Адрес хранения')}`")
-        st.markdown(f"**📅 Создан:** {row.get('Дата создания')}")
-        st.markdown(f"**⚖️ Решение:** {row.get('Решение', 'Не принято')}")
-
-    st.divider()
-    st.markdown("#### 📦 Состав акта")
+        st.markdown(f"**📦 Основной товар:** {db_row.get('main_item', db_row.get('Товар', '---'))}")
+        st.markdown(f"**🔢 Кол-во брака (ед.):** `{db_row.get('total_defective', db_row.get('Кол-во брака', 0))}`")
+        st.markdown(f"**🔗 Основание (ID документа):** `{db_row.get('related_doc_id', db_row.get('Связь с документом', '---'))}`")
     
-    # ИСПРАВЛЕНИЕ: Проверяем наличие товаров в реестре
-    if defect_id in st.session_state.items_registry:
-        items = st.session_state.items_registry[defect_id]
-        if not items.empty:
-            st.dataframe(items, use_container_width=True)
-        else:
-            st.warning("В спецификации товаров нет данных.")
+    with col_b:
+        st.markdown(f"**📍 Адрес хранения:** `{db_row.get('quarantine_address', db_row.get('Адрес хранения', '---'))}`")
+        st.markdown(f"**📅 Создан:** {db_row.get('created_at', db_row.get('Дата создания', '---'))}")
+        # Выделяем решение жирным шрифтом
+        st.info(f"**⚖️ Решение:** {db_row.get('decision', db_row.get('Решение', 'Рассматривается'))}")
+
+    # --- 4. СПЕЦИФИКАЦИЯ ТОВАРОВ ---
+    st.divider()
+    st.markdown("#### 📦 Спецификация поврежденных позиций")
+    
+    if not items_df.empty:
+        # Применяем стилизацию: подсвечиваем строки, если есть описание дефекта
+        st.dataframe(items_df, use_container_width=True)
+        
+        # Мини-сводка под таблицей
+        m1, m2 = st.columns(2)
+        m1.caption(f"Всего позиций в акте: {len(items_df)}")
+        if 'Кол-во' in items_df.columns:
+             m2.caption(f"Суммарное количество единиц: {items_df['Кол-во'].sum()}")
     else:
-        st.info("Реестр товаров для этого акта еще не сформирован.")
+        st.warning("⚠️ Детальная спецификация товаров отсутствует.")
+
+    # --- 5. ВИЗУАЛИЗАЦИЯ (ФОТО) ---
+    if db_row.get('photo_url'):
+        st.markdown("---")
+        st.markdown("#### 📷 Фотофиксация брака")
+        # Здесь предполагается ссылка на Storage Supabase или другое облако
+        st.image(db_row['photo_url'], use_container_width=True, caption=f"Фото к акту №{defect_id}")
 
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
         
 @st.dialog("🖨️ Печать Акта о браке", width="large")
 def show_defect_print_modal(defect_id):
-    row = st.session_state.defects[st.session_state.defects['id'] == defect_id].iloc[0]
-    items_df = st.session_state.items_registry.get(defect_id, pd.DataFrame())
-    
-    # Генерируем красивую HTML таблицу
-    items_html = items_df.to_html(index=False, border=1) if not items_df.empty else "Нет данных о товарах"
+    from database import supabase
+    import pandas as pd
 
+    # --- 1. ЗАГРУЗКА ДАННЫХ ИЗ ОБЛАКА ---
+    try:
+        response = supabase.table("defects").select("*").eq("id", defect_id).execute()
+        
+        if not response.data:
+            st.error("Ошибка: Акт не найден в базе данных")
+            return
+            
+        row = response.data[0]
+        # Загружаем товары из JSONB поля
+        items_list = row.get('items_data', [])
+        items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Ошибка связи с БД: {e}")
+        return
+
+    # --- 2. ПОДГОТОВКА ТАБЛИЦЫ ТОВАРОВ ---
+    if not items_df.empty:
+        # Чистим колонки для печати
+        cols_to_print = [c for c in ['Товар', 'Кол-во', 'Описание дефекта'] if c in items_df.columns]
+        items_html = items_df[cols_to_print].to_html(index=False, border=1, classes='data-table')
+    else:
+        items_html = "<p style='text-align:center;'>Спецификация товаров не заполнена</p>"
+
+    # --- 3. ГЕНЕРАЦИЯ HTML ---
     full_html = f"""
+    <!DOCTYPE html>
     <html>
     <head>
         <style>
-            body {{ font-family: 'Segoe UI', Arial; padding: 20px; }}
-            .act-border {{ border: 4px double #d32f2f; padding: 20px; }}
-            .header {{ text-align: center; color: #d32f2f; text-transform: uppercase; }}
-            .info-table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
-            .info-table td {{ padding: 8px; border-bottom: 1px solid #eee; }}
-            .data-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-            .data-table th {{ background: #f8f8f8; padding: 10px; border: 1px solid #333; }}
+            body {{ font-family: 'Segoe UI', Arial, sans-serif; padding: 20px; color: #333; }}
+            .act-border {{ border: 3px double #d32f2f; padding: 30px; background: #fff; }}
+            .header {{ text-align: center; border-bottom: 2px solid #d32f2f; margin-bottom: 20px; padding-bottom: 10px; }}
+            .header h1 {{ color: #d32f2f; margin: 0; font-size: 24px; }}
+            .header p {{ margin: 5px 0; font-size: 12px; font-weight: bold; }}
+            
+            .info-table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 14px; }}
+            .info-table td {{ padding: 10px; border-bottom: 1px solid #eee; }}
+            .info-table b {{ color: #555; }}
+            
+            .data-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }}
+            .data-table th {{ background: #f8f8f8; padding: 12px; border: 1px solid #333; text-align: left; }}
             .data-table td {{ padding: 10px; border: 1px solid #333; }}
-            .footer {{ margin-top: 40px; display: flex; justify-content: space-between; }}
-            .stamp {{ border: 2px solid #0000FF; color: #0000FF; width: 150px; height: 60px; 
-                      text-align: center; border-radius: 50%; opacity: 0.5; font-size: 10px; padding-top: 15px; }}
-            @media print {{ .no-print {{ display: none; }} }}
+            
+            .decision-box {{ background: #fff4f4; border: 1px solid #d32f2f; padding: 15px; margin-top: 20px; }}
+            
+            .footer {{ margin-top: 60px; display: flex; justify-content: space-between; align-items: center; }}
+            .signature-line {{ border-top: 1px solid #000; width: 200px; margin-top: 40px; text-align: center; font-size: 10px; }}
+            
+            .stamp {{ border: 3px solid #0000FF; color: #0000FF; width: 140px; height: 140px; 
+                        text-align: center; border-radius: 50%; opacity: 0.4; font-size: 11px; 
+                        display: flex; align-items: center; justify-content: center;
+                        transform: rotate(-15deg); font-weight: bold; border-style: double; }}
+            
+            @media print {{ .no-print {{ display: none !important; }} .act-border {{ border: 2px solid #d32f2f; }} }}
         </style>
     </head>
     <body>
-        <button class="no-print" onclick="window.print()" style="width:100%; padding:15px; background:#d32f2f; color:white; border:none; margin-bottom:20px;">ПЕЧАТАТЬ АКТ №{defect_id}</button>
+        <button class="no-print" onclick="window.print()" 
+                style="width:100%; padding:15px; background:#d32f2f; color:white; border:none; cursor:pointer; font-weight:bold; border-radius:4px; margin-bottom:20px;">
+            🖨️ ПЕЧАТАТЬ АКТ БРАКА / СОХРАНИТЬ В PDF
+        </button>
+        
         <div class="act-border">
             <div class="header">
-                <h1>Акт о выявленных дефектах №{defect_id}</h1>
-                <p>IMPERIA WMS | ОТДЕЛ КОНТРОЛЯ КАЧЕСТВА</p>
+                <h1>АКТ О ВЫЯВЛЕННЫХ ДЕФЕКТАХ №{defect_id}</h1>
+                <p>IMPERIA WMS | СЛУЖБА КОНТРОЛЯ КАЧЕСТВА (QC)</p>
             </div>
+            
             <table class="info-table">
-                <tr><td><b>Дата составления:</b> {row.get('Дата создания')}</td><td><b>Статус:</b> {row.get('Статус')}</td></tr>
-                <tr><td><b>Виновная сторона:</b> {row.get('Виновник')}</td><td><b>Тип дефекта:</b> {row.get('Тип дефекта')}</td></tr>
-                <tr><td><b>Товар:</b> {row.get('Товар')}</td><td><b>Адрес хранения:</b> {row.get('Адрес хранения')}</td></tr>
-                <tr><td colspan="2"><b>Связь с документом основания:</b> {row.get('Связь с документом')}</td></tr>
-                <tr><td colspan="2"><b>Итоговое решение комиссии:</b> {row.get('Решение')}</td></tr>
+                <tr>
+                    <td><b>Дата акта:</b> {row.get('updated_at', row.get('Дата создания', '---'))[:10]}</td>
+                    <td><b>Текущий статус:</b> <span style="color:#d32f2f">{row.get('status', row.get('Статус', '---'))}</span></td>
+                </tr>
+                <tr>
+                    <td><b>Виновная сторона:</b> {row.get('culprit', row.get('Виновник', '---'))}</td>
+                    <td><b>Характер брака:</b> {row.get('defect_type', row.get('Тип дефекта', '---'))}</td>
+                </tr>
+                <tr>
+                    <td><b>Объект (Товар):</b> {row.get('main_item', row.get('Товар', '---'))}</td>
+                    <td><b>Зона хранения:</b> {row.get('quarantine_address', row.get('Адрес хранения', '---'))}</td>
+                </tr>
+                <tr>
+                    <td colspan="2"><b>Документ-основание:</b> {row.get('related_doc_id', row.get('Связь с документом', '---'))}</td>
+                </tr>
             </table>
             
-            <h3>Спецификация поврежденного имущества:</h3>
-            <div class="data-table">
-                {items_html}
+            <div class="decision-box">
+                <b>РЕШЕНИЕ КОМИССИИ:</b><br>
+                {row.get('decision', row.get('Решение', 'На стадии рассмотрения экспертной группой.'))}
             </div>
+            
+            <h3>Спецификация поврежденного имущества:</h3>
+            {items_html}
 
             <div class="footer">
-                <div>Сдал (Водитель/Поставщик): ___________</div>
-                <div>Принял (Кладовщик): ___________</div>
-                <div class="stamp">ОТДЕЛ ПРИЕМКИ<br>БРАК ВЫЯВЛЕН</div>
+                <div>
+                    <div class="signature-line">Сдал (Представитель / Водитель)</div>
+                    <div class="signature-line">Принял (Инспектор приемки)</div>
+                </div>
+                
+                <div class="stamp">
+                    КОНТРОЛЬ<br>КАЧЕСТВА<br>БРАК ПРИНЯТ
+                </div>
+            </div>
+            
+            <div style="margin-top:20px; font-size:10px; color:#888; text-align:center;">
+                Электронная подпись ID: {defect_id}-{row.get('status', 'NEW')} | Сгенерировано в системе IMPERIA WMS
             </div>
         </div>
     </body>
     </html>
     """
-    st.components.v1.html(full_html, height=800, scrolling=True)
+
+    st.components.v1.html(full_html, height=850, scrolling=True)
+    
+    if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
+        st.rerun()
