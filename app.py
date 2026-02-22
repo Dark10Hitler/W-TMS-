@@ -30,6 +30,7 @@ import requests
 from streamlit_autorefresh import st_autorefresh
 from database import supabase
 from geopy.distance import geodesic
+import json
 
 TABLES_CONFIG = {
     "main": MAIN_COLUMNS,
@@ -257,77 +258,63 @@ def get_vehicle_status_color(status):
     }
     return colors.get(status, "blue")
 
-import pandas as pd
-import json
-
-import pandas as pd
-import json
-
 def get_full_inventory_df():
-    # Загружаем документы из соответствующих таблиц
     arrivals = load_data_from_supabase("arrivals")
     orders = load_data_from_supabase("orders")
-    
     all_items = []
 
-    # --- ОБРАБОТКА ПРИХОДОВ ---
+    # --- 1. ПРИХОДЫ (Поступление товара) ---
     if arrivals is not None and not arrivals.empty:
         for _, row in arrivals.iterrows():
-            # Извлекаем JSON-данные из колонки items_data
-            items = row.get('items_data', [])
+            # Забираем данные из колонки items_data
+            raw_data = row.get('items_data', [])
             
-            # Десериализация, если данные пришли в виде строки
-            if isinstance(items, str):
+            # Если это строка (JSON), превращаем в список
+            if isinstance(raw_data, str):
                 try:
-                    items = json.loads(items)
-                except:
-                    items = []
+                    import json
+                    raw_data = json.loads(raw_data)
+                except: continue
             
-            if isinstance(items, list):
-                for item in items:
+            if isinstance(raw_data, list):
+                for item in raw_data:
+                    # ВАЖНО: Ключи должны совпадать с колонками вашего DataFrame 'parsed_items_df'
                     all_items.append({
                         "id": row.get('id'),
-                        "Название товара": item.get('Название') or item.get('name') or "Товар без имени",
+                        "Название товара": item.get('Наименование') or item.get('Название') or item.get('name') or "Без имени",
                         "Количество": float(item.get('Количество') or item.get('qty') or 0),
-                        "Адрес": item.get('Адрес') or "НЕ НАЗНАЧЕНО",
+                        "Адрес": item.get('Адрес') or item.get('location') or "НЕ НАЗНАЧЕНО",
                         "Тип": "📦 ПРИХОД",
-                        "Контрагент": row.get('vendor_name', 'Не указан'),
+                        "Контрагент": row.get('vendor_name', 'Н/Д'),
                         "ID Документа": row.get('doc_number', 'Н/Д'),
                         "Дата": row.get('created_at')
                     })
 
-    # --- ОБРАБОТКА ЗАКАЗОВ ---
+    # --- 2. ЗАКАЗЫ (Расход товара) ---
     if orders is not None and not orders.empty:
         for _, row in orders.iterrows():
-            items = row.get('items_data', [])
-            if isinstance(items, str):
+            raw_data = row.get('items_data', [])
+            
+            if isinstance(raw_data, str):
                 try:
-                    items = json.loads(items)
-                except:
-                    items = []
+                    import json
+                    raw_data = json.loads(raw_data)
+                except: continue
                 
-            if isinstance(items, list):
-                for item in items:
+            if isinstance(raw_data, list):
+                for item in raw_data:
                     all_items.append({
                         "id": row.get('id'),
-                        "Название товара": item.get('Название') or item.get('name') or "Товар без имени",
+                        "Название товара": item.get('Наименование') or item.get('Название') or item.get('name') or "Без имени",
                         "Количество": float(item.get('Количество') or item.get('qty') or 0),
                         "Адрес": "🚚 В ЗАКАЗЕ",
                         "Тип": "📤 РАСХОД",
-                        "Контрагент": row.get('client_name', 'Не указан'),
+                        "Контрагент": row.get('client_name', 'Н/Д'),
                         "ID Документа": row.get('id', 'Н/Д'),
                         "Дата": row.get('created_at')
                     })
 
-    # Превращаем список в DataFrame
-    df = pd.DataFrame(all_items)
-    
-    # Если DF не пустой, сортируем по дате (свежие сверху)
-    if not df.empty and 'Дата' in df.columns:
-        df['Дата'] = pd.to_datetime(df['Дата'])
-        df = df.sort_values(by='Дата', ascending=False)
-        
-    return df
+    return pd.DataFrame(all_items)
  
 def get_saved_location(product_name):
     """Ищет рекомендованный адрес товара в БД Supabase"""
@@ -1693,6 +1680,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
