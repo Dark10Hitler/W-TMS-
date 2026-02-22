@@ -558,28 +558,48 @@ def create_defect_modal():
 
     # --- 1. СБОР ДАННЫХ ИЗ ЕДИНОЙ БАЗЫ (32 ТОВАРА) ---
     def get_internal_inventory():
-        all_items = []
-        # Проверяем, есть ли приходы в памяти
-        if "arrivals" in st.session_state and not st.session_state.arrivals.empty:
-            df_arr = st.session_state.arrivals.copy()
-            for _, row in df_arr.iterrows():
-                # Берем items_data. Если там строка (из-за загрузчика), парсим её
+    all_items = []
+    import ast
+
+    # Список таблиц, из которых тянем товары
+    sources = [
+        {"key": "arrivals", "label": "Приход"},
+        {"key": "orders", "label": "Заявка"}
+    ]
+
+    for source in sources:
+        table_key = source["key"]
+        if table_key in st.session_state and not st.session_state[table_key].empty:
+            df_table = st.session_state[table_key].copy()
+            
+            for _, row in df_table.iterrows():
                 raw_data = row.get('items_data', [])
+                
+                # Обработка "застрокованных" данных (если загрузчик превратил их в текст)
                 if isinstance(raw_data, str):
-                    try: raw_data = ast.literal_eval(raw_data)
-                    except: raw_data = []
+                    try:
+                        raw_data = ast.literal_eval(raw_data)
+                    except:
+                        continue
                 
                 if isinstance(raw_data, list):
                     for item in raw_data:
-                        # Собираем плоский список для выбора
+                        # УМНЫЙ ПОИСК ИМЕНИ: проверяем все возможные ключи
+                        name = (item.get('Товар') or 
+                                item.get('Наименование') or 
+                                item.get('item') or 
+                                item.get('Название') or 
+                                "Без названия")
+                        
+                        # Собираем данные в общий список
                         all_items.append({
-                            'Название товара': item.get('Товар', 'Без названия'),
+                            'Название товара': name,
                             'ID Документа': str(row.get('id', '---')),
+                            'Тип': source["label"],
                             'Адрес': row.get('Адрес хранения', row.get('location', 'Склад'))
                         })
-        return pd.DataFrame(all_items)
-
-    inventory_df = get_internal_inventory()
+    
+    return pd.DataFrame(all_items)
     
     # ПРОВЕРКА: Если пусто - пишем причину для дебага
     if inventory_df.empty:
@@ -950,6 +970,7 @@ def edit_vehicle_modal():
             st.success("Данные ТС успешно обновлены!")
             time.sleep(1)
             st.rerun()
+
 
 
 
