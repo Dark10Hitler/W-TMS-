@@ -876,7 +876,12 @@ elif selected == "Аналитика":
     # 1. Загрузка данных
     devices, _ = get_detailed_traccar_data()
     v_name = st.selectbox("🔍 Выберите ТС для глубокого анализа", options=[d['name'] for d in devices.values()])
-    v_id = [id for id, d in devices.items() if d['name'] == v_name][0]
+    v_id_list = [id for id, d in devices.items() if d['name'] == v_name]
+    if v_id_list:
+        v_id = v_id_list[0]
+    else:
+        st.warning("⚠️ Устройство не найдено в Traccar")
+        st.stop() # Останавливаем выполнение этой части кода, чтобы не было ошибки ниже
 
     col_t1, col_t2 = st.columns(2)
     start_date = col_t1.date_input("Начало анализа", datetime.now() - timedelta(days=1))
@@ -1327,4 +1332,5 @@ elif st.session_state.get("active_modal"):
     elif m_type: # Если есть какой-то другой тип для общей функции
 
         create_modal(m_type)
+
 
