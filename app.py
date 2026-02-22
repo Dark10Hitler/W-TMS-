@@ -446,12 +446,6 @@ def show_item_details_modal():
                             st.plotly_chart(fig, use_container_width=True)
                         except:
                             st.info("Карта склада недоступна")
-                
-                # Кнопка переместить товар
-                if st.button("🔄 ПЕРЕМЕСТИТЬ ТОВАР", type="primary", use_container_width=True):
-                    st.session_state.editing_id = item.get('id')
-                    st.session_state.active_modal = "inventory_edit"
-                    st.rerun()
             
             with tab3:
                 st.markdown("""
@@ -1857,6 +1851,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
