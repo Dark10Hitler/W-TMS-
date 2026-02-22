@@ -1444,14 +1444,13 @@ elif selected == "База Данных":
     with st.spinner("Синхронизация товарных позиций..."):
         inventory_df = get_full_inventory_df() 
     
-    # Проверка на пустой DataFrame (учитываем возможный None)
+    # Проверка на пустой DataFrame
     if inventory_df is None or (isinstance(inventory_df, pd.DataFrame) and inventory_df.empty):
         st.info("📦 В документах (Приходы/Заказы) пока нет товаров. Сначала создайте приход в разделе 'Приемка'.")
     else:
         # Панель аналитики
         c1, c2, c3 = st.columns(3)
         
-        # Безопасный расчет метрик
         total_in = inventory_df[inventory_df['Тип'] == "📦 ПРИХОД"]['Количество'].sum() if 'Количество' in inventory_df.columns else 0
         unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО']) if 'Адрес' in inventory_df.columns else 0
         
@@ -1493,42 +1492,115 @@ elif selected == "База Данных":
         sel_row = grid_res.get('selected_rows')
         
         if sel_row is not None and len(sel_row) > 0:
-            # Унификация: AgGrid может вернуть список или DataFrame
             item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
-                
-            st.divider()
-            col_txt, col_map = st.columns([1, 1])
+            doc_id = item.get('id')
+            item_name = item.get('Название товара')
+            current_addr = str(item.get('Адрес', 'НЕ НАЗНАЧЕНО'))
             
-            with col_txt:
-                st.subheader(f"🛠️ Товар: {item.get('Название товара', 'Н/Д')}")
-                st.markdown(f"""
-                <div style="background: #1d222b; padding: 20px; border-radius: 12px; border: 1px solid #3d444d; line-height: 1.6;">
-                    📍 <b>Зона хранения:</b> <code style="color: #58a6ff; font-size: 1.1em;">{item.get('Адрес', 'Н/Д')}</code><br>
-                    📊 <b>Кол-во:</b> {item.get('Количество', 0)} шт.<br>
-                    📄 <b>Документ:</b> {item.get('Тип', 'Н/Д')} № {item.get('ID Документа', 'Н/Д')}<br>
-                    📅 <b>Дата операции:</b> {item.get('Дата', 'Н/Д')}
+            st.divider()
+            
+            # Основная информация - метрики
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Количество", f"{item.get('Количество', 0)} шт")
+            
+            with col2:
+                st.metric("Тип", item.get('Тип', 'Н/Д'))
+            
+            with col3:
+                st.metric("Контрагент", item.get('Контрагент', 'Н/Д')[:15])
+            
+            with col4:
+                st.metric("Дата", str(item.get('Дата', 'Н/Д'))[:10])
+            
+            st.divider()
+            
+            # Детальная информация + Выбор адреса
+            col_info, col_location = st.columns([1, 1.2])
+            
+            with col_info:
+                st.markdown("""
+                <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #58a6ff;">
+                    <b>📋 Информация по документу:</b>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                st.write("")
-                # Используем width='stretch' вместо use_container_width
-                if st.button("🔄 РЕДАКТИРОВАТЬ ПОЗИЦИЮ / ПЕРЕМЕСТИТЬ", type="primary", width="stretch"):
-                    st.session_state.editing_id = item.get('id')
-                    st.session_state.active_modal = "inventory_edit"
-                    st.rerun()
-
-            with col_map:
-                addr = str(item.get('Адрес', ''))
-                if "-" in addr and addr not in ["НЕ НАЗНАЧЕНО", "🚚 В ЗАКАЗЕ"]:
+                st.markdown(f"""
+- **ID Товара:** `{item.get('id', 'Н/Д')}`
+- **Номер документа:** {item.get('ID Документа', 'Н/Д')}
+- **Контрагент:** {item.get('Контрагент', 'Н/Д')}
+- **Дата операции:** {item.get('Дата', 'Н/Д')}
+- **Кол-во:** {item.get('Количество', 0)} шт
+                """)
+            
+            with col_location:
+                st.markdown("""
+                <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #2ecc71;">
+                    <b>🏪 Расположение на складе:</b>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Выбор склада
+                wh_id = st.selectbox(
+                    "🏪 Склад:",
+                    list(WAREHOUSE_MAP.keys()),
+                    key=f"wh_{doc_id}"
+                )
+                
+                # Генерация всех ячеек для выбранного склада
+                conf = WAREHOUSE_MAP[str(wh_id)]
+                all_cells = []
+                for r in conf['rows']:
+                    all_cells.append(f"WH{wh_id}-{r}")
+                    for s in range(1, conf.get('sections', 1) + 1):
+                        for t in conf.get('tiers', ['A']):
+                            all_cells.append(f"WH{wh_id}-{r}-S{s}-{t}")
+                
+                all_cells = sorted(list(set(all_cells)))
+                
+                # Выбор ячейки
+                default_idx = 0
+                if current_addr != "НЕ НАЗНАЧЕНО" and current_addr in all_cells:
+                    default_idx = all_cells.index(current_addr)
+                
+                selected_cell = st.selectbox(
+                    "📍 Ячейка:",
+                    options=all_cells,
+                    index=default_idx,
+                    key=f"cell_{doc_id}"
+                )
+                
+                # Показываем карту
+                try:
+                    fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
+                    st.plotly_chart(fig, use_container_width=True, height=300)
+                except:
+                    st.info("📍 Карта доступна только для некоторых складов")
+                
+                # Кнопка сохранения
+                if st.button("💾 СОХРАНИТЬ АДРЕС", use_container_width=True, type="primary", key=f"save_{doc_id}"):
                     try:
-                        wh_id = addr.split('-')[0].replace("WH", "")
-                        st.caption(f"🗺️ Визуализация ячейки {addr}")
-                        fig = get_warehouse_figure(wh_id, highlighted_cell=addr)
-                        st.plotly_chart(fig, width="stretch")
-                    except Exception:
-                        st.warning(f"Карта недоступна для этого адреса")
-                else:
-                    st.info("ℹ️ Визуализация доступна только для товаров с назначенным адресом склада.")
+                        inv_payload = {
+                            "doc_id": doc_id,
+                            "item_name": item_name,
+                            "cell_address": selected_cell,
+                            "quantity": float(item.get('Количество', 0)),
+                            "warehouse_id": str(wh_id),
+                            "updated_at": datetime.now().isoformat()
+                        }
+                        
+                        supabase.table("inventory").upsert(
+                            inv_payload, 
+                            on_conflict="doc_id,item_name"
+                        ).execute()
+                        
+                        st.success(f"✅ Адрес обновлен: {selected_cell}")
+                        time.sleep(1)
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Ошибка: {e}")
 
 elif selected == "Карта": show_map()
 elif selected == "Личный кабинет": show_profile()
@@ -1699,6 +1771,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
