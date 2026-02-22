@@ -29,6 +29,7 @@ from streamlit_folium import st_folium
 import requests
 from streamlit_autorefresh import st_autorefresh
 from database import supabase
+from geopy.distance import geodesic
 
 # Добавь это в начало после импортов
 def sync_all_from_supabase():
@@ -744,10 +745,16 @@ def show_dashboard():
         # Считаем за последние 24 часа
         st.metric("Документов сегодня", len(df_main))
         
+    # /mount/src/w-tms-/app.py:748
     with cp2:
-        waiting_count = len(df_main[df_main['Статус'].str.contains("ОЖИДАНИЕ|НОВЫЙ", na=False)])
-        waiting_pct = (waiting_count / len(df_main) * 100) if len(df_main) > 0 else 0
-        st.metric("Очередь на обработку", f"{waiting_pct:.1f}%", help="Процент документов в статусе Ожидание или Новый")
+    # Проверяем, есть ли вообще колонка 'Статус'
+        if 'Статус' in df_main.columns:
+            waiting_count = len(df_main[df_main['Статус'].fillna('').str.contains("ОЖИДАНИЕ")])
+            waiting_pct = (waiting_count / len(df_main) * 100) if len(df_main) > 0 else 0
+            st.metric("Очередь на обработку", f"{waiting_pct:.1f}%")
+        else:
+            st.warning("⚠️ Колонка 'Статус' не найдена в данных")
+            st.metric("Очередь на обработку", "0%")
 
     with cp3:
         # КПД загрузки (средний по всем записям main)
@@ -756,11 +763,6 @@ def show_dashboard():
             avg_load = pd.to_numeric(df_main["КПД загрузки"].astype(str).str.replace('%', ''), errors='coerce').mean()
             st.metric("Ср. загрузка ТС", f"{avg_load:.1f}%" if not pd.isna(avg_load) else "0%")
             
-from geopy.distance import geodesic
-import folium
-from streamlit_folium import st_folium
-from streamlit_autorefresh import st_autorefresh
-
 def show_map():
     st.markdown("## 🛰️ Оперативный штаб: Мониторинг Fleet")
     
@@ -1660,3 +1662,4 @@ elif st.session_state.get("active_modal"):
     else:
         # Резервный вызов общей функции
         create_modal(m_type)
+
