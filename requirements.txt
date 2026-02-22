@@ -12,4 +12,3 @@ streamlit-aggrid
 requests
 streamlit-autorefresh
 openpyxl
-utils
