@@ -29,15 +29,7 @@ from streamlit_folium import st_folium
 import requests
 from streamlit_autorefresh import st_autorefresh
 from supabase import create_client, Client
-from utils import supabase
-
-@st.cache_resource
-def init_connection():
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["key"]
-    return create_client(url, key)
-
-supabase = init_connection()
+from database import supabase
 
 def save_to_supabase(table_name, data_dict):
     try:
@@ -1332,5 +1324,6 @@ elif st.session_state.get("active_modal"):
     elif m_type: # Если есть какой-то другой тип для общей функции
 
         create_modal(m_type)
+
 
 
