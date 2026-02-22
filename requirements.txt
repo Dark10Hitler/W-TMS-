@@ -1,0 +1,15 @@
+streamlit
+pandas
+numpy
+supabase
+st-pyatichastie  # Если используешь специфические компоненты, но лучше стандарт:
+streamlit-option-menu
+streamlit-folium
+folium
+plotly
+seaborn
+matplotlib
+streamlit-aggrid
+requests
+streamlit-autorefresh
+openpyxl  # Обязательно для чтения Excel (uploaded_file)
