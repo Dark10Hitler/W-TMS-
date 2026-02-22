@@ -261,62 +261,115 @@ def get_vehicle_status_color(status):
 def get_full_inventory_df():
     all_items = []
     try:
-        # Пытаемся взять данные из таблицы main, раз вы говорите, что там 5 позиций
-        # Если ваша основная таблица называется иначе, замените "main" на правильное имя
-        raw_docs = load_data_from_supabase("arrivals") 
-        
-        if raw_docs is None or raw_docs.empty:
-            # Запасной вариант: пробуем таблицу main напрямую через supabase клиент
+        # ===== ПРИХОДЫ (ARRIVALS) =====
+        try:
+            # Прямой запрос без промежуточной функции
             response = supabase.table("arrivals").select("*").execute()
-            raw_docs = pd.DataFrame(response.data)
+            arrivals_data = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+        except Exception as e:
+            st.warning(f"⚠️ Ошибка загрузки приходов: {e}")
+            arrivals_data = pd.DataFrame()
 
-        if not raw_docs.empty:
-            for _, row in raw_docs.iterrows():
-                # Проверяем колонку items_data
+        if not arrivals_data.empty:
+            st.write(f"DEBUG: Загружено приходов: {len(arrivals_data)}")  # ОТЛАДКА
+            
+            for _, row in arrivals_data.iterrows():
                 data = row.get('items_data')
                 
-                # Десериализация
+                # ===== КРИТИЧНО: Десериализация JSON =====
                 if isinstance(data, str):
                     try:
                         import json
                         data = json.loads(data)
-                    except: continue
+                    except json.JSONDecodeError:
+                        st.warning(f"⚠️ Ошибка парсинга JSON для arrival {row.get('id')}")
+                        continue
                 
-                if isinstance(data, list):
-                    for item in data:
-                        name = item.get('Название товара') or item.get('Наименование') or "Без имени"
+                # Если это JSONB из Supabase, он может быть уже распарсен
+                if not isinstance(data, list):
+                    st.warning(f"⚠️ items_data не является списком: {type(data)}")
+                    continue
+                
+                # Обработка каждого товара в накладной
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
                         
-                        # Пропускаем техническую строку итогов
-                        if str(name).upper() == "TOTAL":
-                            continue
-                            
-                        # Берем количество с учетом опечатки
-                        qty = item.get('Количесво товаров') or item.get('Количество') or 0
-                        
-                        all_items.append({
-                            "id": row.get('id'),
-                            "Название товара": name,
-                            "Количество": float(qty) if qty else 0,
-                            "Адрес": item.get('Адрес') or "НЕ НАЗНАЧЕНО",
-                            "Тип": "📦 ПРИХОД",
-                            "Контрагент": row.get('vendor_name', 'Н/Д'),
-                            "ID Документа": row.get('doc_number', 'Н/Д'),
-                            "Дата": row.get('created_at')
-                        })
+                    name = item.get('Название товара') or item.get('Наименование') or "Без имени"
+                    
+                    # Пропускаем техническую строку итогов
+                    if str(name).upper() in ["TOTAL", "ИТОГО"]:
+                        continue
+                    
+                    qty = item.get('Количесво товаров') or item.get('Количество') or 0
+                    
+                    all_items.append({
+                        "id": row.get('id'),
+                        "Название товара": str(name),
+                        "Количество": float(qty) if qty else 0,
+                        "Адрес": str(item.get('Адрес') or "НЕ НАЗНАЧЕНО"),
+                        "Тип": "📦 ПРИХОД",
+                        "Контрагент": str(row.get('vendor_name', 'Н/Д')),
+                        "ID Документа": str(row.get('doc_number', 'Н/Д')),
+                        "Дата": row.get('created_at')
+                    })
         
-        # То же самое для заказов (если они нужны в общем списке)
-        orders_data = load_data_from_supabase("orders")
-        if orders_data is not None and not orders_data.empty:
-             for _, row in orders_data.iterrows():
-                # ... (логика аналогична приходам)
-                pass
+        # ===== ЗАКАЗЫ (ORDERS) =====
+        try:
+            response = supabase.table("orders").select("*").execute()
+            orders_data = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+        except Exception as e:
+            st.warning(f"⚠️ Ошибка загрузки заказов: {e}")
+            orders_data = pd.DataFrame()
+
+        if not orders_data.empty:
+            st.write(f"DEBUG: Загружено заказов: {len(orders_data)}")  # ОТЛАДКА
+            
+            for _, row in orders_data.iterrows():
+                data = row.get('items_data')
+                
+                if isinstance(data, str):
+                    try:
+                        import json
+                        data = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                
+                if not isinstance(data, list):
+                    continue
+                
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                        
+                    name = item.get('Название товара') or item.get('Наименование') or "Без имени"
+                    
+                    if str(name).upper() in ["TOTAL", "ИТОГО"]:
+                        continue
+                    
+                    qty = item.get('Количесво товаров') or item.get('Количество') or 0
+                    
+                    all_items.append({
+                        "id": row.get('id'),
+                        "Название товара": str(name),
+                        "Количество": float(qty) if qty else 0,
+                        "Адрес": str(item.get('Адрес') or "НЕ НАЗНАЧЕНО"),
+                        "Тип": "🚚 ЗАКАЗ",
+                        "Контрагент": str(row.get('client_name', 'Н/Д')),
+                        "ID Документа": str(row.get('id', 'Н/Д')),
+                        "Дата": row.get('created_at')
+                    })
+        
+        st.write(f"DEBUG: Всего товаров найдено: {len(all_items)}")  # ОТЛАДКА
 
     except Exception as e:
-        st.error(f"Критическая ошибка парсинга: {e}")
+        st.error(f"❌ Критическая ошибка парсинга: {e}")
+        import traceback
+        st.error(traceback.format_exc())
         return pd.DataFrame()
 
-    return pd.DataFrame(all_items)
- 
+    return pd.DataFrame(all_items) if all_items else pd.DataFrame()
+    
 def get_saved_location(product_name):
     """Ищет рекомендованный адрес товара в БД Supabase"""
     try:
@@ -1646,6 +1699,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
