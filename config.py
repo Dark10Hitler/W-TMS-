@@ -1153,50 +1153,47 @@ def show_extra_print_modal(extra_id):
 @st.dialog("🚨 Актирование и Редактирование брака", width="large")
 def edit_defect_modal(entry_id):
     from database import supabase
-    import numpy as np
     import pandas as pd
+    import numpy as np
     from datetime import datetime
+    import ast
     import time
-    
-    table_key = "defects"
 
-    # --- 1. ФУНКЦИЯ ЗАГРУЗКИ ВСЕХ ТОВАРОВ ИЗ ПРИХОДОВ ---
-    def get_all_warehouse_items():
-        try:
-            # Вытягиваем все товары из всех приходов
-            res = supabase.table("arrivals").select("items_data").execute()
-            all_items = []
-            for row in res.data:
-                items = row.get('items_data', [])
-                if isinstance(items, list):
-                    all_items.extend(items)
-            
-            if not all_items:
-                return pd.DataFrame(columns=['Товар', 'Кол-во', 'Описание дефекта'])
-            
-            # Создаем DataFrame и схлопываем дубликаты, суммируя общее кол-во
-            df_all = pd.DataFrame(all_items)
-            # Приводим кол-во к числу
-            df_all['Кол-во'] = pd.to_numeric(df_all['Кол-во'], errors='coerce').fillna(0)
-            
-            # Группируем, чтобы получить те самые 16 уникальных позиций с общим остатком 32
-            df_summary = df_all.groupby('Товар', as_index=False)['Кол-во'].sum()
-            df_summary['Описание дефекта'] = "" # Добавляем пустое поле для описания
-            return df_summary
-        except Exception as e:
-            st.error(f"Ошибка сбора товаров: {e}")
+    # --- 1. ФУНКЦИЯ СБОРА ВСЕХ 32 ТОВАРОВ ИЗ ПРИХОДОВ ---
+    def fetch_inventory_for_defect():
+        all_items = []
+        if "arrivals" in st.session_state and not st.session_state.arrivals.empty:
+            for _, row_arr in st.session_state.arrivals.iterrows():
+                raw_data = row_arr.get('items_data', [])
+                # Если данные — строка из-за старого загрузчика, парсим её
+                if isinstance(raw_data, str):
+                    try: raw_data = ast.literal_eval(raw_data)
+                    except: raw_data = []
+                
+                if isinstance(raw_data, list):
+                    all_items.extend(raw_data)
+        
+        if not all_items:
             return pd.DataFrame(columns=['Товар', 'Кол-во', 'Описание дефекта'])
+        
+        df_res = pd.DataFrame(all_items)
+        # Приводим к единому стандарту колонку Товар
+        if 'Товар' not in df_res.columns and 'item' in df_res.columns:
+            df_res = df_res.rename(columns={'item': 'Товар'})
+            
+        if 'Товар' in df_res.columns:
+            df_res['Кол-во'] = pd.to_numeric(df_res['Кол-во'], errors='coerce').fillna(0)
+            # Группируем 16 позиций в общую сумму 32 единицы
+            summary = df_res.groupby('Товар', as_index=False)['Кол-во'].sum()
+            summary['Описание дефекта'] = ""
+            return summary
+        return pd.DataFrame(columns=['Товар', 'Кол-во', 'Описание дефекта'])
 
-    # --- 2. ИНИЦИАЛИЗАЦИЯ (Загрузка данных из БД) ---
+    # --- 2. ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
     if f"temp_row_{entry_id}" not in st.session_state:
-        try:
-            response = supabase.table(table_key).select("*").eq("id", entry_id).execute()
-            if not response.data:
-                st.error("Запись не найдена"); return
-            
-            db_row = response.data[0]
-            
-            # Сохраняем основные данные
+        res = supabase.table("defects").select("*").eq("id", entry_id).execute()
+        if res.data:
+            db_row = res.data[0]
             st.session_state[f"temp_row_{entry_id}"] = {
                 'Товар': db_row.get('main_item', 'СВОДНЫЙ АКТ'),
                 'Кол-во брака': db_row.get('total_defective', 0),
@@ -1205,62 +1202,67 @@ def edit_defect_modal(entry_id):
                 'Виновник': db_row.get('culprit', 'Не установлен'),
                 'Статус': db_row.get('status', 'ОБНАРУЖЕНО'),
                 'Решение': db_row.get('decision', ''),
-                'Адрес хранения': db_row.get('quarantine_address', 'Z-BRAK-01'),
+                'Адрес хранения': db_row.get('quarantine_address', 'ZONE-BRAK'),
                 'Фото': db_row.get('photo_url', '')
             }
             
-            # --- ЛОГИКА АВТОЗАПОЛНЕНИЯ ТОВАРОВ ---
-            items_raw = db_row.get('items_data', [])
-            if isinstance(items_raw, list) and len(items_raw) > 0:
-                # Если в акте уже есть сохраненные товары — берем их
-                st.session_state[f"temp_items_{entry_id}"] = pd.DataFrame(items_raw)
-            else:
-                # ЕСЛИ ТОВАРОВ НЕТ (новый акт) — ПОДТЯГИВАЕМ ВСЕ 32 ЕДИНИЦЫ ИЗ БАЗЫ
-                with st.spinner("📦 Подгружаем все 32 товара из Единой Базы..."):
-                    st.session_state[f"temp_items_{entry_id}"] = get_all_warehouse_items()
+            # Проверяем наличие товаров в самом акте
+            items_in_act = db_row.get('items_data', [])
+            if isinstance(items_in_act, str):
+                try: items_in_act = ast.literal_eval(items_in_act)
+                except: items_in_act = []
             
-            # Индекс для локального обновления (AgGrid)
-            if table_key in st.session_state:
-                df_local = st.session_state[table_key]
-                idx_l = df_local.index[df_local['id'] == entry_id].tolist()
-                st.session_state[f"temp_idx_{entry_id}"] = idx_l[0] if idx_l else None
-                
-        except Exception as e:
-            st.error(f"Ошибка загрузки: {e}"); return
+            if isinstance(items_in_act, list) and len(items_in_act) > 0:
+                st.session_state[f"temp_items_{entry_id}"] = pd.DataFrame(items_in_act)
+            else:
+                # Если акт пустой — подгружаем всю базу (те самые 32 шт)
+                st.session_state[f"temp_items_{entry_id}"] = fetch_inventory_for_defect()
 
+    # Ссылки на сессию
     row = st.session_state[f"temp_row_{entry_id}"]
     items_df = st.session_state[f"temp_items_{entry_id}"]
 
-    st.error(f"### 🚨 Редактирование Акта №{entry_id}")
-    
-    # Поля ввода (оставляем как было)
-    c1, c2, c3 = st.columns(3)
-    row['Товар'] = c1.text_input("Основной заголовок", value=row['Товар'], key=f"d_f1_{entry_id}")
-    row['Кол-во брака'] = c2.number_input("Итого брака (общ)", value=int(row['Кол-во брака']), key=f"d_f2_{entry_id}")
-    row['Связь с документом'] = c3.text_input("Связь с ID", value=row['Связь с документом'], key=f"d_f3_{entry_id}")
+    st.error(f"### 🚨 РЕДАКТИРОВАНИЕ АКТА №{entry_id}")
 
-    st.divider()
-    st.markdown(f"##### 📦 Список доступных товаров ({len(items_df)} позиций)")
+    # --- 3. ИНТЕРФЕЙС С ТВОИМИ ПОЛЯМИ ---
+    c1, c2, c3 = st.columns(3)
+    row['Товар'] = c1.text_input("Товар (Заголовок)", value=row['Товар'])
+    row['Связь с документом'] = c2.text_input("Связь с документом", value=row['Связь с документом'])
+    row['Адрес хранения'] = c3.text_input("Адрес хранения", value=row['Адрес хранения'])
+
+    r2_1, r2_2, r2_3 = st.columns(3)
+    defect_list = ["Бой", "Порча", "Брак производителя", "Некомплект"]
+    row['Тип дефекта'] = r2_1.selectbox("Тип дефекта", defect_list, index=defect_list.index(row['Тип дефекта']) if row['Тип дефекта'] in defect_list else 0)
     
-    # Редактор, где УЖЕ ПРЕДЗАПОЛНЕНЫ все 32 товара
+    culprit_list = ["Склад", "Перевозчик", "Поставщик", "Не установлен"]
+    row['Виновник'] = r2_2.selectbox("Виновник", culprit_list, index=culprit_list.index(row['Виновник']) if row['Виновник'] in culprit_list else 0)
+    
+    status_list = ["ОБНАРУЖЕНО", "В ЭКСПЕРТИЗЕ", "ПОДТВЕРЖДЕНО", "СПИСАНО"]
+    row['Статус'] = r2_3.selectbox("Статус", status_list, index=status_list.index(row['Статус']) if row['Статус'] in status_list else 0)
+
+    row['Решение'] = st.text_area("Решение", value=row['Решение'])
+    row['Фото'] = st.text_input("Ссылка на фото (URL)", value=row['Фото'])
+
+    st.write(f"**Спецификация (доступно {len(items_df)} поз.):**")
+    
+    # Редактируем таблицу (32 товара будут тут)
     updated_items = st.data_editor(
-        items_df, 
-        width="stretch", 
-        num_rows="dynamic", 
-        key=f"d_ed_{entry_id}",
+        items_df,
+        use_container_width=True,
+        num_rows="dynamic",
+        key=f"editor_{entry_id}",
         column_config={
-            "Товар": st.column_config.TextColumn("Товар", disabled=True), # Запрещаем менять название, чтобы не портить базу
-            "Кол-во": st.column_config.NumberColumn("Кол-во брака", min_value=0),
-            "Описание дефекта": st.column_config.TextColumn("Что именно повреждено?", width="large")
+            "Товар": st.column_config.TextColumn("Наименование", width="large"),
+            "Кол-во": st.column_config.NumberColumn("Кол-во БРАКА", min_value=0)
         }
     )
-    st.session_state[f"temp_items_{entry_id}"] = updated_items
 
-    # КНОПКА СОХРАНЕНИЯ (Твой Payload)
-    if st.button("🚨 ЗАФИКСИРОВАТЬ БРАК", use_container_width=True, type="primary"):
-        # Фильтруем: сохраняем только те строки, где кол-во брака > 0
-        final_items = updated_items[updated_items['Кол-во'] > 0]
+    # --- 4. ТВОЙ ПОЛНЫЙ DB_PAYLOAD ПРИ СОХРАНЕНИИ ---
+    if st.button("🚨 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
+        # Фильтруем только то, где указали количество брака
+        final_items = updated_items[updated_items['Кол-во'] > 0].copy()
         
+        # ТВОЙ СЛОВАРЬ ОДИН-В-ОДИН
         db_payload = {
             "main_item": row['Товар'],
             "total_defective": int(final_items['Кол-во'].sum()), # Считаем сумму по таблице
@@ -1276,12 +1278,12 @@ def edit_defect_modal(entry_id):
         }
 
         try:
-            supabase.table(table_key).update(db_payload).eq("id", entry_id).execute()
-            st.success("✅ Все выбранные товары занесены в акт брака!")
+            supabase.table("defects").update(db_payload).eq("id", entry_id).execute()
+            st.success("Акт успешно обновлен!")
             time.sleep(1)
             st.rerun()
         except Exception as e:
-            st.error(f"Ошибка: {e}")
+            st.error(f"Ошибка сохранения: {e}")
         
 @st.dialog("🔍 Просмотр Акта брака", width="large")
 def show_defect_details_modal(defect_id):
@@ -1530,6 +1532,7 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ ОКНО ПЕЧАТИ", use_container_width=True):
         st.rerun()
+
 
 
 
