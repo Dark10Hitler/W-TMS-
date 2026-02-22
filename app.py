@@ -1761,7 +1761,7 @@ if "current_page" not in st.session_state:
     st.session_state.current_page = selected
 
 if st.session_state.current_page != selected:
-    # Очищаем все состояния модалок, чтобы "призраки" старых окон не всплывали на новой странице
+    # Очищаем состояния, чтобы окна не "всплывали" на других вкладках
     keys_to_reset = [
         "active_modal", "active_edit_modal", "active_view_modal", 
         "active_print_modal", "editing_id"
@@ -1772,53 +1772,72 @@ if st.session_state.current_page != selected:
     st.session_state.current_page = selected
     st.rerun()
 
-# --- 3. ГЛАВНЫЙ ДИСПЕТЧЕР МОДАЛОК (ПРИОРИТЕТЫ) ---
+# --- 3. ГЛАВНЫЙ ДИСПЕТЧЕР МОДАЛОК ---
 
-# ПРИОРИТЕТ 1: РЕДАКТИРОВАНИЕ
+# ПРИОРИТЕТ 1: РЕДАКТИРОВАНИЕ (ИЗМЕНИТЬ)
 if st.session_state.get("active_edit_modal"):
     target = st.session_state.active_edit_modal
     edit_id = st.session_state.get("editing_id")
     
-    if edit_id is not None:
+    if edit_id:
         if target == "drivers":
             edit_driver_modal(edit_id)
         elif target == "vehicles":
             edit_vehicle_modal(edit_id)
         else:
-            # Универсальная модалка для заказов/приходов и т.д.
+            # Универсальная модалка для orders, arrivals, extras, defects
+            # Она сама поймет таблицу по аргументу target
             edit_order_modal(edit_id, target)
     else:
         st.error("Ошибка: ID для редактирования не найден")
         st.session_state.active_edit_modal = None
 
-# ПРИОРИТЕТ 2: ПРОСМОТР И ПЕЧАТЬ
+# ПРИОРИТЕТ 2: ПРОСМОТР (ДЕТАЛИ)
 elif st.session_state.get("active_view_modal"):
-    show_print_modal(st.session_state.active_view_modal)
+    view_id = st.session_state.active_view_modal
+    
+    # Определяем, какую именно модалку просмотра открыть по префиксу ID или логике
+    if str(view_id).startswith("ORD"):
+        show_order_details_modal(view_id)
+    elif str(view_id).startswith("ARR") or str(view_id).startswith("IN"):
+        show_arrival_details_modal(view_id)
+    elif str(view_id).startswith("DEF"):
+        show_defect_details_modal(view_id)
+    elif str(view_id).startswith("EXT"):
+        show_extra_details_modal(view_id)
+    else:
+        # Если префиксов нет, используем общую (можно настроить под себя)
+        show_order_details_modal(view_id)
 
+# ПРИОРИТЕТ 3: ПЕЧАТЬ
 elif st.session_state.get("active_print_modal"):
-    # Обычно это одно и то же, но разделение позволяет делать разные стили печати
-    show_print_modal(st.session_state.active_print_modal)
+    print_id = st.session_state.active_print_modal
+    # Вызываем именно модалку печати, а не просмотра!
+    if str(print_id).startswith("ARR"):
+        show_arrival_print_modal(print_id)
+    else:
+        show_print_modal(print_id)
 
-# ПРИОРИТЕТ 3: СОЗДАНИЕ НОВЫХ ЗАПИСЕЙ
-# ПРИОРИТЕТ 3: СОЗДАНИЕ НОВЫХ ЗАПИСЕЙ
+# ПРИОРИТЕТ 4: СОЗДАНИЕ НОВЫХ ЗАПИСЕЙ
 elif st.session_state.get("active_modal"):
     m_type = st.session_state.active_modal
     
-    # ВАЖНО: Сбрасываем ключ СРАЗУ, чтобы при реране диалог не открывался второй раз
+    # Сбрасываем флаг сразу (важно для диалогов Streamlit)
     st.session_state.active_modal = None 
     
-    if m_type == "drivers_new":
-        create_driver_modal()
-    elif m_type == "vehicle_new":
-        create_vehicle_modal()
+    if m_type in ["orders", "orders_new"]:
+        create_order_modal()
+    elif m_type == "arrivals":
+        create_arrival_modal()
     elif m_type == "extras":
         create_extras_modal()
     elif m_type == "defects":
         create_defect_modal()
-    elif m_type == "arrivals":
-        create_arrival_modal() # Теперь это вызовется один раз
-    elif m_type == "orders_new":
-        create_order_modal()
+    elif m_type == "drivers_new":
+        create_driver_modal()
+    elif m_type == "vehicle_new":
+        create_vehicle_modal()
+
 
 
 
