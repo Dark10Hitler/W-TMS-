@@ -32,19 +32,6 @@ from database import supabase
 from geopy.distance import geodesic
 import json
 
-# В самом начале вашего файла app.py
-try:
-    from config import (
-        create_order_modal, 
-        create_arrival_modal, 
-        create_extras_modal, 
-        create_defect_modal,
-        create_driver_modal,
-        create_vehicle_modal,
-    )
-except ImportError as e:
-    st.error(f"Не удалось импортировать функции из config.py: {e}")
-
 TABLES_CONFIG = {
     "main": MAIN_COLUMNS,
     "orders": ORDER_COLUMNS,
@@ -1763,7 +1750,8 @@ TABLES_TO_LOAD = {
 
 for state_key, db_table in TABLES_TO_LOAD.items():
     if state_key not in st.session_state or st.session_state[state_key] is None:
-        with st.spinner(f'Загрузка {state_key}...'):
+        with st.spinner(f'Синхронизация {state_key}...'):
+            # Предполагается, что функция load_data_from_supabase определена выше
             data = load_data_from_supabase(db_table)
             st.session_state[state_key] = data if data is not None else pd.DataFrame()
 
@@ -1773,49 +1761,66 @@ if "current_page" not in st.session_state:
 
 if st.session_state.current_page != selected:
     keys_to_reset = ["active_modal", "active_edit_modal", "active_view_modal", "active_print_modal", "editing_id"]
-    for key in keys_to_reset: st.session_state[key] = None
+    for key in keys_to_reset: 
+        st.session_state[key] = None
     st.session_state.current_page = selected
     st.rerun()
 
-# --- 3. ГЛАВНЫЙ ДИСПЕТЧЕР (С ИСПРАВЛЕНИЕМ NAMEERROR) ---
+# --- 3. ГЛАВНЫЙ ДИСПЕТЧЕР (БЕЗ ОШИБОК ИМЕНИ) ---
 
-# Редактирование
+# ПРИОРИТЕТ 1: РЕДАКТИРОВАНИЕ
 if st.session_state.get("active_edit_modal"):
     target = st.session_state.active_edit_modal
     eid = st.session_state.get("editing_id")
+    
     if eid:
         if target == "drivers": edit_driver_modal(eid)
         elif target == "vehicles": edit_vehicle_modal(eid)
         else: edit_order_modal(eid, target)
-    st.session_state.active_edit_modal = None # Обязательно сбрасываем
+    
+    # Сброс, чтобы модалка не открывалась по кругу
+    st.session_state.active_edit_modal = None 
 
-# Просмотр
+# ПРИОРИТЕТ 2: ПРОСМОТР
 elif st.session_state.get("active_view_modal"):
     vid = st.session_state.active_view_modal
+    
     if str(vid).startswith("ORD"): show_order_details_modal(vid)
     elif str(vid).startswith("ARR") or str(vid).startswith("IN"): show_arrival_details_modal(vid)
     elif str(vid).startswith("DEF"): show_defect_details_modal(vid)
     elif str(vid).startswith("EXT"): show_extra_details_modal(vid)
+    
     st.session_state.active_view_modal = None
 
-# Печать
+# ПРИОРИТЕТ 3: ПЕЧАТЬ
 elif st.session_state.get("active_print_modal"):
     pid = st.session_state.active_print_modal
+    
     if str(pid).startswith("ARR"): show_arrival_print_modal(pid)
+    elif str(pid).startswith("DEF"): show_defect_print_modal(pid)
+    elif str(pid).startswith("EXT"): show_extra_print_modal(pid)
     else: show_print_modal(pid)
+    
     st.session_state.active_print_modal = None
 
-# Создание (Исправлено совпадение имен)
+# ПРИОРИТЕТ 4: СОЗДАНИЕ (ИСПРАВЛЕНО НА create_modal)
 elif st.session_state.get("active_modal"):
     m_type = st.session_state.active_modal
     st.session_state.active_modal = None
     
-    if m_type in ["orders", "orders_new"]: create_order_modal()
-    elif m_type == "arrivals": create_arrival_modal()
-    elif m_type == "extras": create_extras_modal()
-    elif m_type == "defects": create_defect_modal()
-    elif m_type == "drivers_new": create_driver_modal()
-    elif m_type == "vehicle_new": create_vehicle_modal()
+    if m_type in ["orders", "orders_new"]: 
+        create_modal()  # Вызываем именно то имя, которое импортировано!
+    elif m_type == "arrivals": 
+        create_arrival_modal()
+    elif m_type == "extras": 
+        create_extras_modal()
+    elif m_type == "defects": 
+        create_defect_modal()
+    elif m_type == "drivers_new": 
+        create_driver_modal()
+    elif m_type == "vehicle_new": 
+        create_vehicle_modal()
+
 
 
 
