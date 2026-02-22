@@ -47,6 +47,7 @@ def get_full_inventory_df():
 
 @st.dialog("📝 Создание новой заявки / документа", width="large")
 def create_modal(table_key):
+    from database import supabase
     # Получаем структуру колонок
     columns = TABLE_STRUCT.get(table_key, ORDER_COLUMNS) 
     st.subheader(f"📦 Регистрация нового документа: {table_key.upper()}")
@@ -848,4 +849,5 @@ def edit_vehicle_modal():
             time.sleep(1)
 
             st.rerun()
+
 
