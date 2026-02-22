@@ -258,62 +258,76 @@ def get_vehicle_status_color(status):
     }
     return colors.get(status, "blue")
 
+import pandas as pd
+import json
+
 def get_full_inventory_df():
-    arrivals = load_data_from_supabase("arrivals")
-    orders = load_data_from_supabase("orders")
+    # Инициализируем пустой список и пустой DF на старте
     all_items = []
+    
+    try:
+        arrivals = load_data_from_supabase("arrivals")
+        orders = load_data_from_supabase("orders")
 
-    # --- 1. ПРИХОДЫ (Поступление товара) ---
-    if arrivals is not None and not arrivals.empty:
-        for _, row in arrivals.iterrows():
-            # Забираем данные из колонки items_data
-            raw_data = row.get('items_data', [])
-            
-            # Если это строка (JSON), превращаем в список
-            if isinstance(raw_data, str):
-                try:
-                    import json
-                    raw_data = json.loads(raw_data)
-                except: continue
-            
-            if isinstance(raw_data, list):
-                for item in raw_data:
-                    # ВАЖНО: Ключи должны совпадать с колонками вашего DataFrame 'parsed_items_df'
-                    all_items.append({
-                        "id": row.get('id'),
-                        "Название товара": item.get('Наименование') or item.get('Название') or item.get('name') or "Без имени",
-                        "Количество": float(item.get('Количество') or item.get('qty') or 0),
-                        "Адрес": item.get('Адрес') or item.get('location') or "НЕ НАЗНАЧЕНО",
-                        "Тип": "📦 ПРИХОД",
-                        "Контрагент": row.get('vendor_name', 'Н/Д'),
-                        "ID Документа": row.get('doc_number', 'Н/Д'),
-                        "Дата": row.get('created_at')
-                    })
-
-    # --- 2. ЗАКАЗЫ (Расход товара) ---
-    if orders is not None and not orders.empty:
-        for _, row in orders.iterrows():
-            raw_data = row.get('items_data', [])
-            
-            if isinstance(raw_data, str):
-                try:
-                    import json
-                    raw_data = json.loads(raw_data)
-                except: continue
+        # --- ОБРАБОТКА ПРИХОДОВ ---
+        if arrivals is not None and not arrivals.empty:
+            for _, row in arrivals.iterrows():
+                # ВАЖНО: Проверьте, что в БД колонка именно 'items_data'
+                raw_data = row.get('items_data')
                 
-            if isinstance(raw_data, list):
-                for item in raw_data:
-                    all_items.append({
-                        "id": row.get('id'),
-                        "Название товара": item.get('Наименование') or item.get('Название') or item.get('name') or "Без имени",
-                        "Количество": float(item.get('Количество') or item.get('qty') or 0),
-                        "Адрес": "🚚 В ЗАКАЗЕ",
-                        "Тип": "📤 РАСХОД",
-                        "Контрагент": row.get('client_name', 'Н/Д'),
-                        "ID Документа": row.get('id', 'Н/Д'),
-                        "Дата": row.get('created_at')
-                    })
+                # Если в ячейке пусто (None/Null)
+                if not raw_data:
+                    continue
+                
+                # Если это строка (текстовый JSON), парсим его
+                if isinstance(raw_data, str):
+                    try:
+                        raw_data = json.loads(raw_data)
+                    except Exception:
+                        continue
+                
+                # Теперь работаем со списком товаров
+                if isinstance(raw_data, list):
+                    for item in raw_data:
+                        all_items.append({
+                            "id": row.get('id'),
+                            "Название товара": item.get('Наименование') or item.get('Название') or item.get('name') or "Без имени",
+                            "Количество": float(item.get('Количество') or item.get('qty') or 0),
+                            "Адрес": item.get('Адрес') or "НЕ НАЗНАЧЕНО",
+                            "Тип": "📦 ПРИХОД",
+                            "Контрагент": row.get('vendor_name', 'Н/Д'),
+                            "ID Документа": row.get('doc_number', 'Н/Д'),
+                            "Дата": row.get('created_at')
+                        })
 
+        # --- ОБРАБОТКА ЗАКАЗОВ ---
+        if orders is not None and not orders.empty:
+            for _, row in orders.iterrows():
+                raw_data = row.get('items_data')
+                if not raw_data: continue
+                
+                if isinstance(raw_data, str):
+                    try: raw_data = json.loads(raw_data)
+                    except: continue
+                    
+                if isinstance(raw_data, list):
+                    for item in raw_data:
+                        all_items.append({
+                            "id": row.get('id'),
+                            "Название товара": item.get('Наименование') or item.get('Название') or item.get('name') or "Без имени",
+                            "Количество": float(item.get('Количество') or item.get('qty') or 0),
+                            "Адрес": "🚚 В ЗАКАЗЕ",
+                            "Тип": "📤 РАСХОД",
+                            "Контрагент": row.get('client_name', 'Н/Д'),
+                            "ID Документа": row.get('id', 'Н/Д'),
+                            "Дата": row.get('created_at')
+                        })
+
+    except Exception as e:
+        st.error(f"Ошибка при сборке базы товаров: {e}")
+        return pd.DataFrame() # Возвращаем пустой DF при любой системной ошибке
+
+    # Гарантируем возврат DataFrame, даже если all_items пуст
     st.write("DEBUG: Найдено товаров в Arrivals:", len(all_items))
  
 def get_saved_location(product_name):
@@ -1385,6 +1399,10 @@ elif selected == "Аналитика":
             
 # Замени этот блок в разделе РОУТИНГ:
 elif selected == "База Данных":
+    test_df = load_data_from_supabase("arrivals")
+    if not test_df.empty:
+        st.write("Проверка первой записи из БД:")
+        st.write(test_df['items_data'].iloc[0]) # Посмотрим на сырой JSON
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
     with st.spinner("Синхронизация товарных позиций..."):
@@ -1680,6 +1698,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
