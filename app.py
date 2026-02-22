@@ -370,8 +370,12 @@ def get_full_inventory_df():
 
     return pd.DataFrame(all_items) if all_items else pd.DataFrame()
 
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+
 def show_item_details_modal():
-    """Модальное окно с подробностями товара"""
+    """Модальное окно с подробностями товара и возможностью редактирования"""
     
     if "viewing_item" not in st.session_state:
         st.session_state.viewing_item = None
@@ -429,9 +433,22 @@ def show_item_details_modal():
             
             with tab2:
                 addr = str(item.get('Адрес', ''))
+                doc_id = item.get('id')
+                item_name = item.get('Название товара')
                 
                 if addr == "НЕ НАЗНАЧЕНО":
                     st.warning("⚠️ Товар ещё не размещен на складе")
+                    st.info("👉 Нажмите кнопку ниже, чтобы назначить адрес ячейки")
+                    
+                    if st.button("📍 НАЗНАЧИТЬ ЯЧЕЙКУ", type="primary", use_container_width=True, key="assign_cell"):
+                        st.session_state.modal_state = "assign_cell"
+                        st.session_state.item_for_assignment = {
+                            "doc_id": doc_id,
+                            "item_name": item_name,
+                            "quantity": item.get('Количество', 0)
+                        }
+                        st.rerun()
+                
                 elif addr == "🚚 В ЗАКАЗЕ":
                     st.info("🚚 Товар находится в активном заказе")
                 else:
@@ -440,12 +457,23 @@ def show_item_details_modal():
                     # Показываем карту если возможно
                     if "-" in addr:
                         try:
-                            from your_module import get_warehouse_figure  # Замените на ваш импорт
                             wh_id = addr.split('-')[0].replace("WH", "")
+                            from your_warehouse_module import get_warehouse_figure
                             fig = get_warehouse_figure(wh_id, highlighted_cell=addr)
                             st.plotly_chart(fig, use_container_width=True)
-                        except:
-                            st.info("Карта склада недоступна")
+                        except Exception as e:
+                            st.info("📍 Карта склада недоступна")
+                    
+                    # Кнопка переместить товар
+                    if st.button("🔄 ПЕРЕМЕСТИТЬ НА ДРУГУЮ ЯЧЕЙКУ", type="secondary", use_container_width=True, key="move_cell"):
+                        st.session_state.modal_state = "move_cell"
+                        st.session_state.item_for_assignment = {
+                            "doc_id": doc_id,
+                            "item_name": item_name,
+                            "quantity": item.get('Количество', 0),
+                            "current_address": addr
+                        }
+                        st.rerun()
             
             with tab3:
                 st.markdown("""
@@ -456,14 +484,159 @@ def show_item_details_modal():
                 """, unsafe_allow_html=True)
 
 
-# Модификация основной функции таблицы
+def show_cell_assignment_modal():
+    """Модаль для назначения/перемещения товара в ячейку склада"""
+    
+    if "item_for_assignment" not in st.session_state:
+        return
+    
+    item_data = st.session_state.item_for_assignment
+    doc_id = item_data.get('doc_id')
+    item_name = item_data.get('item_name')
+    quantity = item_data.get('quantity', 0)
+    current_address = item_data.get('current_address', 'НЕ НАЗНАЧЕНО')
+    
+    with st.container(border=True):
+        col_h, col_x = st.columns([0.9, 0.1])
+        
+        with col_h:
+            action = "🔄 ПЕРЕМЕЩЕНИЕ" if current_address != "НЕ НАЗНАЧЕНО" else "📍 НАЗНАЧЕНИЕ ЯЧЕЙКИ"
+            st.markdown(f"### {action} товара `{item_name}`")
+        
+        with col_x:
+            if st.button("❌", key="close_assignment"):
+                st.session_state.modal_state = None
+                st.session_state.item_for_assignment = None
+                st.rerun()
+        
+        st.divider()
+        
+        # Информация о товаре
+        col_info1, col_info2 = st.columns(2)
+        with col_info1:
+            st.info(f"**Товар:** {item_name}\n**Кол-во:** {quantity} шт")
+        with col_info2:
+            if current_address != "НЕ НАЗНАЧЕНО":
+                st.warning(f"**Текущая ячейка:** {current_address}")
+        
+        st.divider()
+        
+        # Выбор склада и ячейки
+        from database import WAREHOUSE_MAP  # Замените на ваш импорт
+        
+        col_sel, col_viz = st.columns([1, 1.5])
+        
+        with col_sel:
+            st.subheader("⚙️ Параметры размещения")
+            
+            # Выбор склада
+            wh_list = list(WAREHOUSE_MAP.keys())
+            wh_id = st.selectbox("🏪 Выберите склад:", wh_list, key=f"wh_assign_{doc_id}")
+            
+            # Генерация ячеек для выбранного склада
+            conf = WAREHOUSE_MAP[str(wh_id)]
+            all_cells = []
+            
+            for r in conf['rows']:
+                all_cells.append(f"WH{wh_id}-{r}")
+                for s in range(1, conf.get('sections', 1) + 1):
+                    for t in conf.get('tiers', ['A']):
+                        all_cells.append(f"WH{wh_id}-{r}-S{s}-{t}")
+            
+            all_cells = sorted(list(set(all_cells)))
+            
+            # Выбор ячейки
+            selected_cell = st.selectbox(
+                "📍 Выберите ячейку:",
+                options=all_cells,
+                key=f"cell_assign_{doc_id}"
+            )
+            
+            # Дополнительные параметры
+            st.markdown("##### 📝 Примечание (опционально)")
+            note = st.text_area("Комментарий к размещению", key=f"note_{doc_id}", height=80)
+            
+            st.divider()
+            
+            # Кнопки действия
+            col_btn1, col_btn2 = st.columns(2)
+            
+            with col_btn1:
+                if st.button("✅ ПОДТВЕРДИТЬ", type="primary", use_container_width=True, key=f"confirm_{doc_id}"):
+                    save_cell_assignment(doc_id, item_name, selected_cell, quantity, note, current_address)
+            
+            with col_btn2:
+                if st.button("❌ ОТМЕНИТЬ", use_container_width=True, key=f"cancel_{doc_id}"):
+                    st.session_state.modal_state = None
+                    st.session_state.item_for_assignment = None
+                    st.rerun()
+        
+        with col_viz:
+            st.subheader("🗺️ Карта склада")
+            try:
+                from your_warehouse_module import get_warehouse_figure  # Замените на ваш импорт
+                fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
+                st.plotly_chart(fig, use_container_width=True, key=f"viz_{doc_id}")
+            except Exception as e:
+                st.warning(f"Карта недоступна: {e}")
+
+
+def save_cell_assignment(doc_id, item_name, cell_address, quantity, note="", current_address=""):
+    """Сохранение назначения ячейки в БД и локальное обновление"""
+    
+    from database import supabase
+    import time
+    
+    try:
+        # Данные для таблицы inventory
+        inv_payload = {
+            "doc_id": doc_id,
+            "item_name": item_name,
+            "cell_address": cell_address,
+            "quantity": float(quantity),
+            "warehouse_id": cell_address.split('-')[0].replace('WH', '') if '-' in cell_address else "1",
+            "notes": note,
+            "assigned_at": datetime.now().isoformat()
+        }
+        
+        # UPSERT - обновляет запись если товар уже был в другой ячейке
+        supabase.table("inventory").upsert(inv_payload, on_conflict="doc_id,item_name").execute()
+        
+        # Обновляем локальное состояние в главной таблице
+        if "inventory_df_cache" in st.session_state:
+            mask = (st.session_state.inventory_df_cache['id'] == doc_id) & \
+                   (st.session_state.inventory_df_cache['Название товара'] == item_name)
+            
+            if mask.any():
+                st.session_state.inventory_df_cache.loc[mask, 'Адрес'] = cell_address
+                st.session_state.viewing_item['Адрес'] = cell_address
+        
+        # Уведомление об успехе
+        st.success(f"✅ Товар '{item_name}' размещен в ячейке {cell_address}!")
+        
+        # Закрываем модаль
+        st.session_state.modal_state = None
+        st.session_state.item_for_assignment = None
+        
+        time.sleep(1)
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"❌ Ошибка при сохранении: {e}")
+
+
 def show_inventory_database():
-    """Обновленная функция вкладки База Данных с двойным кликом"""
+    """Обновленная функция вкладки База Данных с полным функционалом"""
     
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
+    # Инициализация состояния модали
+    if "modal_state" not in st.session_state:
+        st.session_state.modal_state = None
+    
     with st.spinner("Синхронизация товарных позиций..."):
         inventory_df = get_full_inventory_df() 
+        st.session_state.inventory_df_cache = inventory_df  # Кешируем для обновления
     
     if inventory_df is None or (isinstance(inventory_df, pd.DataFrame) and inventory_df.empty):
         st.info("📦 В документах (Приходы/Заказы) пока нет товаров. Сначала создайте приход в разделе 'Приемка'.")
@@ -506,21 +679,25 @@ def show_inventory_database():
             height=500,
             theme='alpine',
             allow_unsafe_jscode=True,
-            update_on=['selectionChanged', 'cellClicked'],  # Добавляем cellClicked
+            update_on=['selectionChanged'],
             key="global_inventory_grid"
         )
 
-        # Обработка выбора строки (одинарный клик)
+        # Обработка выбора строки
         sel_row = grid_res.get('selected_rows')
         
         if sel_row is not None and len(sel_row) > 0:
             item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
-            # Сохраняем выбранный товар в сессию
             st.session_state.viewing_item = item.to_dict() if isinstance(item, pd.Series) else item
         
         # Отображаем модальное окно с подробностями
         st.divider()
-        show_item_details_modal()
+        
+        # Показываем нужную модаль в зависимости от состояния
+        if st.session_state.modal_state == "assign_cell" or st.session_state.modal_state == "move_cell":
+            show_cell_assignment_modal()
+        else:
+            show_item_details_modal()
         
 def get_saved_location(product_name):
     """Ищет рекомендованный адрес товара в БД Supabase"""
@@ -1851,6 +2028,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
