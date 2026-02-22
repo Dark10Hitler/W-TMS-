@@ -261,53 +261,54 @@ import pandas as pd
 import json
 
 def get_full_inventory_df():
-    # 1. Загружаем родительские документы
-    # Можно добавить фильтр по статусу, например, только "Принято"
+    # Загружаем документы
     arrivals = load_data_from_supabase("arrivals")
     orders = load_data_from_supabase("orders")
     
     all_items = []
 
-    # 2. Обработка ПРИХОДОВ (Добавляем товары на склад)
-    if not arrivals.empty:
+    # Обработка товаров из ПРИХОДОВ
+    if arrivals is not None and not arrivals.empty:
         for _, row in arrivals.iterrows():
             items = row.get('items_data', [])
-            # Если данные пришли строкой, парсим в JSON
+            # Если данные в базе лежат как строка, превращаем в список
             if isinstance(items, str):
                 try: items = json.loads(items)
                 except: items = []
             
-            for item in items:
-                all_items.append({
-                    "id": row.get('id'), # ID документа
-                    "Название товара": item.get('Название', 'Н/Д'),
-                    "Количество": item.get('Количество', 0),
-                    "Тип": "ПРИХОД",
-                    "Клиент/Контрагент": row.get('vendor_name'),
-                    "Адрес": item.get('Адрес', 'НЕ НАЗНАЧЕНО'),
-                    "ID Документа": row.get('doc_number'),
-                    "Дата": row.get('created_at')
-                })
+            if isinstance(items, list):
+                for item in items:
+                    all_items.append({
+                        "id": row.get('id'), # Внутренний ID документа для связи
+                        "Название товара": item.get('Название') or item.get('name') or "Без названия",
+                        "Количество": item.get('Количество') or item.get('qty') or 0,
+                        "Адрес": item.get('Адрес') or "НЕ НАЗНАЧЕНО",
+                        "Тип": "📦 ПРИХОД",
+                        "Контрагент": row.get('vendor_name', 'Н/Д'),
+                        "ID Документа": row.get('doc_number', row.get('id')),
+                        "Дата": row.get('created_at')
+                    })
 
-    # 3. Обработка ЗАКАЗОВ (Товары на отгрузку)
-    if not orders.empty:
+    # Обработка товаров из ЗАКАЗОВ
+    if orders is not None and not orders.empty:
         for _, row in orders.iterrows():
             items = row.get('items_data', [])
             if isinstance(items, str):
                 try: items = json.loads(items)
                 except: items = []
                 
-            for item in items:
-                all_items.append({
-                    "id": row.get('id'),
-                    "Название товара": item.get('Название', 'Н/Д'),
-                    "Количество": item.get('Количество', 0),
-                    "Тип": "РАСХОД",
-                    "Клиент/Контрагент": row.get('client_name'),
-                    "Адрес": item.get('Адрес', 'СКЛАД'), 
-                    "ID Документа": row.get('id'),
-                    "Дата": row.get('created_at')
-                })
+            if isinstance(items, list):
+                for item in items:
+                    all_items.append({
+                        "id": row.get('id'),
+                        "Название товара": item.get('Название') or item.get('name') or "Без названия",
+                        "Количество": item.get('Количество') or item.get('qty') or 0,
+                        "Адрес": "🚚 В ЗАКАЗЕ",
+                        "Тип": "📤 РАСХОД",
+                        "Контрагент": row.get('client_name', 'Н/Д'),
+                        "ID Документа": row.get('id'),
+                        "Дата": row.get('created_at')
+                    })
 
     return pd.DataFrame(all_items)
  
@@ -1382,107 +1383,90 @@ elif selected == "Аналитика":
 elif selected == "База Данных":
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
-    # 1. ЗАГРУЗКА ДАННЫХ ИЗ БД (Supabase)
-    # Мы используем spinner, так как сборка инвентаря может занять время
-    with st.spinner("Синхронизация с остатками на складе..."):
-        # Функция должна тянуть актуальный срез из БД (таблицы stocks или inventory)
+    with st.spinner("Распаковка товаров из документов..."):
         inventory_df = get_full_inventory_df() 
     
     if inventory_df.empty:
-        st.info("📦 В системе пока нет загруженных товаров.")
+        st.info("📦 В документах (Приходы/Заказы) пока нет товаров. Сначала создайте приход.")
     else:
-        # Информационная панель
-        c1, c2 = st.columns(2)
-        total_items = len(inventory_df)
-        
-        # Проверяем наличие колонки 'Адрес', чтобы избежать ошибок
-        if 'Адрес' not in inventory_df.columns:
-            inventory_df['Адрес'] = 'НЕ НАЗНАЧЕНО'
-            
+        # Панель метрик
+        c1, c2, c3 = st.columns(3)
+        total_qty = inventory_df[inventory_df['Тип'] == "📦 ПРИХОД"]['Количество'].sum()
         unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО'])
         
-        c1.metric("Всего позиций в базе", total_items)
-        c2.metric("Ожидают размещения", unassigned, 
-                  delta=f"{unassigned} без адреса", 
-                  delta_color="inverse")
+        c1.metric("Товаров на складе", int(total_qty))
+        c2.metric("Позиций без адреса", unassigned, delta_color="inverse")
+        c3.metric("Всего строк в базе", len(inventory_df))
 
-        # 2. НАСТРОЙКА AG-GRID
+        # Настройка Ag-Grid
         gb = GridOptionsBuilder.from_dataframe(inventory_df)
         gb.configure_default_column(resizable=True, filterable=True, sortable=True, floatingFilter=True)
         gb.configure_selection(selection_mode="single", use_checkbox=True)
         
-        # JS-код для динамической подсветки ячеек
+        # Стилизация адреса
         cellsytle_jscode = JsCode("""
         function(params) {
-            if (params.value === 'НЕ НАЗНАЧЕНО' || params.value === null) {
+            if (params.value === 'НЕ НАЗНАЧЕНО') {
                 return {'color': 'white', 'backgroundColor': '#E74C3C', 'fontWeight': 'bold'};
+            } else if (params.value === '🚚 В ЗАКАЗЕ') {
+                return {'color': 'white', 'backgroundColor': '#3498DB'};
             } else {
                 return {'color': '#2ECC71', 'fontWeight': 'bold'};
             }
         };
         """)
-        
         gb.configure_column("Адрес", cellStyle=cellsytle_jscode, pinned='left', width=180)
         
+        # Отображение таблицы (Исправлено под новые стандарты 2026)
         grid_res = AgGrid(
             inventory_df,
             gridOptions=gb.build(),
             height=450,
             theme='alpine',
             allow_unsafe_jscode=True,
-            # Исправляем GridUpdateMode (убираем DeprecationWarning)
-            update_on=['selectionChanged'], 
+            update_on=['selectionChanged'], # Убираем DeprecationWarning
             key="global_inventory_grid"
         )
 
-        # 3. БЛОК УПРАВЛЕНИЯ (Исправленный под новую версию AgGrid)
-        sel_row = grid_res.get('selected_rows', [])
+        # Выбор товара
+        sel_row = grid_res.get('selected_rows')
         
-        if len(sel_row) > 0:
-            # В новых версиях это список словарей
-            item = sel_row[0] 
-            
+        # Проверка выбора (AgGrid возвращает список словарей в новых версиях)
+        if sel_row is not None and len(sel_row) > 0:
+            item = sel_row[0]
             st.divider()
+            
             col_txt, col_map = st.columns([1, 1])
             
             with col_txt:
                 st.subheader(f"🛠️ Управление: {item['Название товара']}")
                 st.markdown(f"""
                 <div style="background: #161b22; padding: 15px; border-radius: 10px; border: 1px solid #30363d;">
-                    <b>Текущие данные в базе:</b><br>
-                    📍 <b>Адрес:</b> <code>{item['Адрес']}</code><br>
-                    📄 <b>Документ:</b> <code>{item.get('ID Документа', 'Н/Д')}</code><br>
-                    🤝 <b>Контрагент:</b> {item.get('Клиент/Контрагент', 'Не указан')}
+                    📍 <b>Текущий адрес:</b> <code>{item['Адрес']}</code><br>
+                    📄 <b>Источник:</b> {item['Тип']} № <code>{item['ID Документа']}</code><br>
+                    🤝 <b>Контрагент:</b> {item['Контрагент']}
                 </div>
                 """, unsafe_allow_html=True)
                 
-                st.write("") # Отступ
-                
-                # Кнопка переводит в режим редактирования основной записи в БД
+                st.write("")
+                # Исправляем use_container_width на width="stretch"
                 if st.button("🔄 ИЗМЕНИТЬ ДАННЫЕ / НАЗНАЧИТЬ СКЛАД", type="primary", width="stretch"):
                     st.session_state.editing_id = item.get('id')
                     st.session_state.active_modal = "inventory_edit"
                     st.rerun()
 
             with col_map:
-                # 4. 3D ВИЗУАЛИЗАЦИЯ (Интеграция с логикой склада)
                 addr = str(item['Адрес'])
                 if "-" in addr and addr != "НЕ НАЗНАЧЕНО":
                     try:
-                        # Парсим адрес формата WH1-A-12
-                        wh_parts = addr.split('-')
-                        wh_id = wh_parts[0].replace("WH", "")
-                        
+                        wh_id = addr.split('-')[0].replace("WH", "")
                         st.caption(f"📍 Позиция на схеме склада {wh_id}")
                         fig = get_warehouse_figure(wh_id, highlighted_cell=addr)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                     except Exception as e:
-                        st.error(f"Ошибка отрисовки карты: {e}")
+                        st.error(f"Ошибка карты: {e}")
                 else:
-                    st.warning("⚠️ Товар еще не размещен. Назначьте адрес в меню редактирования.")
-                    # Кнопка быстрой печати этикетки (как доп. функционал)
-                    if st.button("🖨️ Печать складской бирки"):
-                        st.toast("Этикетка отправлена на печать...")
+                    st.warning("⚠️ Товар не размещен или находится в пути.")
 
 elif selected == "Карта": show_map()
 elif selected == "Личный кабинет": show_profile()
@@ -1687,6 +1671,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
