@@ -262,9 +262,7 @@ import pandas as pd
 import json
 
 def get_full_inventory_df():
-    # Инициализируем пустой список и пустой DF на старте
     all_items = []
-    
     try:
         arrivals = load_data_from_supabase("arrivals")
         orders = load_data_from_supabase("orders")
@@ -272,27 +270,30 @@ def get_full_inventory_df():
         # --- ОБРАБОТКА ПРИХОДОВ ---
         if arrivals is not None and not arrivals.empty:
             for _, row in arrivals.iterrows():
-                # ВАЖНО: Проверьте, что в БД колонка именно 'items_data'
                 raw_data = row.get('items_data')
+                if not raw_data: continue
                 
-                # Если в ячейке пусто (None/Null)
-                if not raw_data:
-                    continue
-                
-                # Если это строка (текстовый JSON), парсим его
+                # Парсим JSON, если это строка
                 if isinstance(raw_data, str):
-                    try:
-                        raw_data = json.loads(raw_data)
-                    except Exception:
-                        continue
+                    try: raw_data = json.loads(raw_data)
+                    except: continue
                 
-                # Теперь работаем со списком товаров
                 if isinstance(raw_data, list):
                     for item in raw_data:
+                        # Получаем название товара
+                        name = item.get('Название товара') or item.get('Наименование') or "Без имени"
+                        
+                        # Пропускаем строку итогов
+                        if name == "TOTAL":
+                            continue
+                            
+                        # Получаем количество (учитываем опечатку 'Количесво')
+                        qty = item.get('Количесво товаров') or item.get('Количество') or 0
+                        
                         all_items.append({
                             "id": row.get('id'),
-                            "Название товара": item.get('Наименование') or item.get('Название') or item.get('name') or "Без имени",
-                            "Количество": float(item.get('Количество') or item.get('qty') or 0),
+                            "Название товара": name,
+                            "Количество": float(qty) if qty else 0,
                             "Адрес": item.get('Адрес') or "НЕ НАЗНАЧЕНО",
                             "Тип": "📦 ПРИХОД",
                             "Контрагент": row.get('vendor_name', 'Н/Д'),
@@ -300,22 +301,23 @@ def get_full_inventory_df():
                             "Дата": row.get('created_at')
                         })
 
-        # --- ОБРАБОТКА ЗАКАЗОВ ---
+        # --- ОБРАБОТКА ЗАКАЗОВ (аналогично) ---
         if orders is not None and not orders.empty:
             for _, row in orders.iterrows():
                 raw_data = row.get('items_data')
                 if not raw_data: continue
-                
                 if isinstance(raw_data, str):
                     try: raw_data = json.loads(raw_data)
                     except: continue
-                    
                 if isinstance(raw_data, list):
                     for item in raw_data:
+                        name = item.get('Название товара') or item.get('Наименование') or "Без имени"
+                        if name == "TOTAL": continue
+                        qty = item.get('Количесво товаров') or item.get('Количество') or 0
                         all_items.append({
                             "id": row.get('id'),
-                            "Название товара": item.get('Наименование') or item.get('Название') or item.get('name') or "Без имени",
-                            "Количество": float(item.get('Количество') or item.get('qty') or 0),
+                            "Название товара": name,
+                            "Количество": float(qty) if qty else 0,
                             "Адрес": "🚚 В ЗАКАЗЕ",
                             "Тип": "📤 РАСХОД",
                             "Контрагент": row.get('client_name', 'Н/Д'),
@@ -324,11 +326,10 @@ def get_full_inventory_df():
                         })
 
     except Exception as e:
-        st.error(f"Ошибка при сборке базы товаров: {e}")
-        return pd.DataFrame() # Возвращаем пустой DF при любой системной ошибке
+        st.error(f"Ошибка парсинга: {e}")
+        return pd.DataFrame()
 
-    # Гарантируем возврат DataFrame, даже если all_items пуст
-    st.write("DEBUG: Найдено товаров в Arrivals:", len(all_items))
+    return pd.DataFrame(all_items)
  
 def get_saved_location(product_name):
     """Ищет рекомендованный адрес товара в БД Supabase"""
@@ -1399,24 +1400,21 @@ elif selected == "Аналитика":
             
 # Замени этот блок в разделе РОУТИНГ:
 elif selected == "База Данных":
-    test_df = load_data_from_supabase("arrivals")
-    if not test_df.empty:
-        st.write("Проверка первой записи из БД:")
-        st.write(test_df['items_data'].iloc[0]) # Посмотрим на сырой JSON
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
     with st.spinner("Синхронизация товарных позиций..."):
         inventory_df = get_full_inventory_df() 
     
-    if inventory_df.empty:
+    # Проверка на пустой DataFrame (учитываем возможный None)
+    if inventory_df is None or (isinstance(inventory_df, pd.DataFrame) and inventory_df.empty):
         st.info("📦 В документах (Приходы/Заказы) пока нет товаров. Сначала создайте приход в разделе 'Приемка'.")
     else:
         # Панель аналитики
         c1, c2, c3 = st.columns(3)
         
-        # Считаем только приходы для остатка
-        total_in = inventory_df[inventory_df['Тип'] == "📦 ПРИХОД"]['Количество'].sum()
-        unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО'])
+        # Безопасный расчет метрик
+        total_in = inventory_df[inventory_df['Тип'] == "📦 ПРИХОД"]['Количество'].sum() if 'Количество' in inventory_df.columns else 0
+        unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО']) if 'Адрес' in inventory_df.columns else 0
         
         c1.metric("Всего поступило (ед.)", f"{int(total_in)} шт")
         c2.metric("Требуют размещения", unassigned, delta=f"{unassigned} поз.", delta_color="inverse")
@@ -1427,7 +1425,7 @@ elif selected == "База Данных":
         gb.configure_default_column(resizable=True, filterable=True, sortable=True, floatingFilter=True)
         gb.configure_selection(selection_mode="single", use_checkbox=True)
         
-        # Интеллектуальная подсветка адресов
+        # Стилизация ячеек (Адрес)
         cellsytle_jscode = JsCode("""
         function(params) {
             if (params.value === 'НЕ НАЗНАЧЕНО') {
@@ -1441,7 +1439,7 @@ elif selected == "База Данных":
         """)
         gb.configure_column("Адрес", cellStyle=cellsytle_jscode, pinned='left', width=180)
         
-        # Рендеринг таблицы
+        # Отображение таблицы
         grid_res = AgGrid(
             inventory_df,
             gridOptions=gb.build(),
@@ -1456,45 +1454,45 @@ elif selected == "База Данных":
         sel_row = grid_res.get('selected_rows')
         
         if sel_row is not None and len(sel_row) > 0:
-            # Извлекаем данные (учитываем, что AgGrid может возвращать список или DataFrame)
-            if isinstance(sel_row, pd.DataFrame):
-                item = sel_row.iloc[0]
-            else:
-                item = sel_row[0]
+            # Унификация: AgGrid может вернуть список или DataFrame
+            item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
                 
             st.divider()
             col_txt, col_map = st.columns([1, 1])
             
             with col_txt:
-                st.subheader(f"🛠️ Товар: {item['Название товара']}")
+                st.subheader(f"🛠️ Товар: {item.get('Название товара', 'Н/Д')}")
                 st.markdown(f"""
                 <div style="background: #1d222b; padding: 20px; border-radius: 12px; border: 1px solid #3d444d; line-height: 1.6;">
-                    📍 <b>Зона хранения:</b> <code style="color: #58a6ff; font-size: 1.1em;">{item['Адрес']}</code><br>
-                    📊 <b>Кол-во:</b> {item['Количество']} шт.<br>
-                    📄 <b>Документ:</b> {item['Тип']} № {item['ID Документа']}<br>
-                    📅 <b>Дата операции:</b> {item['Дата']}
+                    📍 <b>Зона хранения:</b> <code style="color: #58a6ff; font-size: 1.1em;">{item.get('Адрес', 'Н/Д')}</code><br>
+                    📊 <b>Кол-во:</b> {item.get('Количество', 0)} шт.<br>
+                    📄 <b>Документ:</b> {item.get('Тип', 'Н/Д')} № {item.get('ID Документа', 'Н/Д')}<br>
+                    📅 <b>Дата операции:</b> {item.get('Дата', 'Н/Д')}
                 </div>
                 """, unsafe_allow_html=True)
                 
                 st.write("")
+                # Используем width='stretch' вместо use_container_width
                 if st.button("🔄 РЕДАКТИРОВАТЬ ПОЗИЦИЮ / ПЕРЕМЕСТИТЬ", type="primary", width="stretch"):
                     st.session_state.editing_id = item.get('id')
                     st.session_state.active_modal = "inventory_edit"
                     st.rerun()
 
             with col_map:
-                addr = str(item['Адрес'])
+                addr = str(item.get('Адрес', ''))
                 if "-" in addr and addr not in ["НЕ НАЗНАЧЕНО", "🚚 В ЗАКАЗЕ"]:
                     try:
                         wh_id = addr.split('-')[0].replace("WH", "")
                         st.caption(f"🗺️ Визуализация ячейки {addr}")
                         fig = get_warehouse_figure(wh_id, highlighted_cell=addr)
                         st.plotly_chart(fig, width="stretch")
-                    except Exception as e:
+                    except Exception:
                         st.warning(f"Карта недоступна для этого адреса")
                 else:
-                    st.info("ℹ️ Визуализация доступна только для товаров с назначенным адресом склада (формат WH1-A-01).")
+                    st.info("ℹ️ Визуализация доступна только для товаров с назначенным адресом склада.")
 
+elif selected == "Карта": show_map()
+elif selected == "Личный кабинет": show_profile()
 elif selected == "Карта": show_map()
 elif selected == "Личный кабинет": show_profile()
 elif selected == "Настройки":
@@ -1507,25 +1505,22 @@ elif selected == "Настройки":
         "💾 База данных"
     ])
 
-    # --- ВКЛАДКА 1: СКЛАД (Топология) ---
     with tab1:
         st.subheader("📍 Конфигурация зон хранения")
         col_map, col_cfg = st.columns([2, 1])
         
-        # Тянем актуальную топологию из БД (таблица warehouse_config)
         with col_map:
             wh_to_show = st.selectbox("Выберите склад для просмотра", list(WAREHOUSE_MAP.keys()))
             fig = get_warehouse_figure(wh_to_show)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         
         with col_cfg:
             st.markdown("**Добавить новую зону**")
             new_zone = st.text_input("Название зоны", placeholder="Напр: Зона C")
             row_count = st.number_input("Кол-во рядов", 1, 50, 5)
             
-            if st.button("💾 Сохранить топологию", use_container_width=True, type="primary"):
+            if st.button("💾 Сохранить топологию", width="stretch", type="primary"):
                 try:
-                    # Записываем конфигурацию в Supabase
                     supabase.table("warehouse_config").insert({
                         "warehouse": wh_to_show,
                         "zone_name": new_zone,
@@ -1537,61 +1532,30 @@ elif selected == "Настройки":
                 except Exception as e:
                     st.error(f"Ошибка сохранения: {e}")
 
-    # --- ВКЛАДКА 2: КОМАНДА (Сотрудники) ---
     with tab2:
         st.subheader("👤 Управление доступом")
-        
-        # Загружаем список всех сотрудников из БД
         users_data = supabase.table("profiles").select("*").execute()
         df_users = pd.DataFrame(users_data.data)
         
         if not df_users.empty:
-            st.dataframe(df_users[['Параметр', 'Значение']], use_container_width=True, hide_index=True)
+            st.dataframe(df_users, width="stretch", hide_index=True)
         
-        if st.button("➕ Зарегистрировать нового сотрудника"):
+        if st.button("➕ Зарегистрировать нового сотрудника", width="stretch"):
             st.session_state.active_modal = "user_new"
             st.rerun()
 
-    # --- ВКЛАДКА 3: СПРАВОЧНИКИ (Словари БД) ---
-    with tab3:
-        st.subheader("📖 Системные классификаторы")
-        c1, c2 = st.columns(2)
-        
-        with c1:
-            st.write("**📝 Типы брака**")
-            # В идеале эти типы должны лежать в таблице 'settings'
-            defect_data = supabase.table("settings").select("*").eq("type", "defect_types").execute()
-            current_types = [item['value'] for item in defect_data.data]
-            
-            new_defect = st.text_input("Новый тип брака", key="new_def")
-            if st.button("➕ Добавить тип", use_container_width=True):
-                supabase.table("settings").insert({"type": "defect_types", "value": new_defect}).execute()
-                st.rerun()
-            
-            st.multiselect("Текущие типы в БД", current_types, default=current_types)
-        
-        with c2:
-            st.write("**📦 Статусы логистики**")
-            # Статусы обычно жестко заданы, но их можно выводить из БД
-            st.info("ОЖИДАНИЕ • В ПУТИ • ДОСТАВЛЕНО • БРАК • ОТМЕНА")
-            st.caption("Изменение системных статусов ограничено правами Администратора")
-
-    # --- ВКЛАДКА 4: СИСТЕМА (Обслуживание) ---
     with tab4:
         st.subheader("🛠️ Обслуживание системы")
-        
         c1, c2, c3 = st.columns(3)
         
         with c1:
             st.markdown("📦 **Экспорт данных**")
-            # Генерация Excel из всех таблиц БД
-            if st.button("📊 Сформировать отчет XLSX", use_container_width=True):
-                # Здесь вызывается функция сборки всех st.session_state в один Excel
+            if st.button("📊 Сформировать отчет XLSX", width="stretch"):
                 st.toast("Сборка данных из БД...")
             
         with c2:
             st.markdown("⚠️ **Оптимизация**")
-            if st.button("🔥 Сбросить кеш сессии", use_container_width=True):
+            if st.button("🔥 Сбросить кеш сессии", width="stretch"):
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
                 st.success("Кеш очищен")
@@ -1599,20 +1563,18 @@ elif selected == "Настройки":
                 
         with c3:
             st.markdown("🔴 **Опасная зона**")
-            # Кнопка удаления с двойным подтверждением
-            if st.button("🧨 УДАЛИТЬ ВСЕ ДАННЫЕ", use_container_width=True, type="secondary"):
+            if st.button("🧨 УДАЛИТЬ ВСЕ ДАННЫЕ", width="stretch", type="secondary"):
                 st.session_state.confirm_delete_all = True
             
             if st.session_state.get('confirm_delete_all'):
-                st.error("ВНИМАНИЕ! Это удалит все записи из Supabase!")
+                st.error("ВНИМАНИЕ! Удаление всех записей!")
                 col_yes, col_no = st.columns(2)
-                if col_yes.button("ДА, УДАЛИТЬ", type="primary"):
-                    # Логика очистки таблиц в Supabase
+                if col_yes.button("ДА, УДАЛИТЬ", type="primary", width="stretch"):
                     supabase.table("main").delete().neq("id", 0).execute() 
                     st.success("База данных очищена")
                     st.session_state.confirm_delete_all = False
                     st.rerun()
-                if col_no.button("ОТМЕНА"):
+                if col_no.button("ОТМЕНА", width="stretch"):
                     st.session_state.confirm_delete_all = False
                     st.rerun()
 
@@ -1698,6 +1660,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
