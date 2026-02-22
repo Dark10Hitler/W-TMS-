@@ -63,6 +63,11 @@ def load_data_from_supabase(table_name):
         if df.empty:
             return pd.DataFrame(columns=TABLE_STRUCT.get(table_name, []))
 
+        # ПРЕДОТВРАЩАЕМ ОШИБКУ ХЕШИРОВАНИЯ (DICT -> STR)
+        for col in df.columns:
+            if df[col].apply(lambda x: isinstance(x, dict) or isinstance(x, list)).any():
+                df[col] = df[col].apply(lambda x: str(x) if x is not None else x)
+
         # 3. Полный маппинг (Database -> UI)
         # Важно: добавлены соответствия для всех типов таблиц
         RENAME_MAP = {
@@ -1663,6 +1668,7 @@ elif st.session_state.get("active_modal"):
     else:
         # Резервный вызов общей функции
         create_modal(m_type)
+
 
 
 
