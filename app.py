@@ -257,35 +257,59 @@ def get_vehicle_status_color(status):
     }
     return colors.get(status, "blue")
 
+import pandas as pd
+import json
+
 def get_full_inventory_df():
-    """Собирает данные из реестра всех активных документов для вкладки 'Складской учет'"""
+    # 1. Загружаем родительские документы
+    # Можно добавить фильтр по статусу, например, только "Принято"
+    arrivals = load_data_from_supabase("arrivals")
+    orders = load_data_from_supabase("orders")
+    
     all_items = []
-    
-    # Список таблиц, из которых мы тянем товары (Приходы и Заявки)
-    sources = ['main', 'arrivals', 'defects']
-    
-    for table_key in sources:
-        if table_key in st.session_state:
-            df = st.session_state[table_key]
-            for _, row in df.iterrows():
-                doc_id = row['id']
+
+    # 2. Обработка ПРИХОДОВ (Добавляем товары на склад)
+    if not arrivals.empty:
+        for _, row in arrivals.iterrows():
+            items = row.get('items_data', [])
+            # Если данные пришли строкой, парсим в JSON
+            if isinstance(items, str):
+                try: items = json.loads(items)
+                except: items = []
+            
+            for item in items:
+                all_items.append({
+                    "id": row.get('id'), # ID документа
+                    "Название товара": item.get('Название', 'Н/Д'),
+                    "Количество": item.get('Количество', 0),
+                    "Тип": "ПРИХОД",
+                    "Клиент/Контрагент": row.get('vendor_name'),
+                    "Адрес": item.get('Адрес', 'НЕ НАЗНАЧЕНО'),
+                    "ID Документа": row.get('doc_number'),
+                    "Дата": row.get('created_at')
+                })
+
+    # 3. Обработка ЗАКАЗОВ (Товары на отгрузку)
+    if not orders.empty:
+        for _, row in orders.iterrows():
+            items = row.get('items_data', [])
+            if isinstance(items, str):
+                try: items = json.loads(items)
+                except: items = []
                 
-                if doc_id in st.session_state.items_registry:
-                    items_df = st.session_state.items_registry[doc_id].copy()
-                    
-                    # Очистка от мусора
-                    if 'Название товара' in items_df.columns:
-                        items_df = items_df[items_df['Название товара'].str.upper() != 'TOTAL']
-                    
-                    # Обогащение данными
-                    items_df['ID Документа'] = doc_id
-                    items_df['Источник'] = table_key.upper()
-                    items_df['Статус'] = row.get('Статус', '-')
-                    items_df['Контрагент'] = row.get('Клиент', row.get('Поставщик', '-'))
-                    
-                    all_items.append(items_df)
-    
-    return pd.concat(all_items, ignore_index=True) if all_items else pd.DataFrame()
+            for item in items:
+                all_items.append({
+                    "id": row.get('id'),
+                    "Название товара": item.get('Название', 'Н/Д'),
+                    "Количество": item.get('Количество', 0),
+                    "Тип": "РАСХОД",
+                    "Клиент/Контрагент": row.get('client_name'),
+                    "Адрес": item.get('Адрес', 'СКЛАД'), 
+                    "ID Документа": row.get('id'),
+                    "Дата": row.get('created_at')
+                })
+
+    return pd.DataFrame(all_items)
  
 def get_saved_location(product_name):
     """Ищет рекомендованный адрес товара в БД Supabase"""
@@ -1400,23 +1424,23 @@ elif selected == "База Данных":
         
         gb.configure_column("Адрес", cellStyle=cellsytle_jscode, pinned='left', width=180)
         
-        # Отображаем таблицу
         grid_res = AgGrid(
             inventory_df,
             gridOptions=gb.build(),
             height=450,
             theme='alpine',
             allow_unsafe_jscode=True,
-            update_mode=GridUpdateMode.SELECTION_CHANGED,
+            # Исправляем GridUpdateMode (убираем DeprecationWarning)
+            update_on=['selectionChanged'], 
             key="global_inventory_grid"
         )
 
-        # 3. БЛОК УПРАВЛЕНИЯ ВЫБРАННЫМ ТОВАРОМ
-        sel_row = grid_res.selected_rows
+        # 3. БЛОК УПРАВЛЕНИЯ (Исправленный под новую версию AgGrid)
+        sel_row = grid_res.get('selected_rows', [])
         
-        if sel_row is not None and not (isinstance(sel_row, pd.DataFrame) and sel_row.empty) and len(sel_row) > 0:
-            # Унификация получения данных строки (зависит от версии AgGrid)
-            item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
+        if len(sel_row) > 0:
+            # В новых версиях это список словарей
+            item = sel_row[0] 
             
             st.divider()
             col_txt, col_map = st.columns([1, 1])
@@ -1435,9 +1459,8 @@ elif selected == "База Данных":
                 st.write("") # Отступ
                 
                 # Кнопка переводит в режим редактирования основной записи в БД
-                if st.button("🔄 ИЗМЕНИТЬ ДАННЫЕ / НАЗНАЧИТЬ СКЛАД", type="primary", use_container_width=True):
-                    # Сохраняем ID для функции редактирования
-                    st.session_state.editing_id = item.get('id') # Важно использовать первичный ключ БД
+                if st.button("🔄 ИЗМЕНИТЬ ДАННЫЕ / НАЗНАЧИТЬ СКЛАД", type="primary", width="stretch"):
+                    st.session_state.editing_id = item.get('id')
                     st.session_state.active_modal = "inventory_edit"
                     st.rerun()
 
@@ -1664,6 +1687,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
