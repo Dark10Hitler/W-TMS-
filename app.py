@@ -30,6 +30,43 @@ import requests
 from streamlit_autorefresh import st_autorefresh
 from database import supabase
 
+def load_data_from_supabase(table_name):
+    try:
+        # Запрашиваем все данные из таблицы
+        response = supabase.table(table_name).select("*").order("created_at", desc=True).execute()
+        
+        # Превращаем список словарей в Pandas DataFrame
+        df = pd.DataFrame(response.data)
+        
+        if not df.empty:
+            # Магия: Supabase отдал нам английские ключи (client_name), 
+            # а твой интерфейс ждет русские ("Клиент"). 
+            # Нужно переименовать их обратно для AgGrid.
+            rename_map = {
+                "id": "id",
+                "status": "Статус",
+                "client_name": "Клиент",
+                "items_count": "Кол-во позиций",
+                "total_volume": "Общий объем (м3)",
+                "total_sum": "Сумма заявки",
+                "loading_efficiency": "КПД загрузки",
+                "client_address": "Адрес клиента",
+                "phone": "Телефон",
+                "created_at": "Дата создания",
+                "description": "Описание"
+                # Добавь остальные колонки по аналогии
+            }
+            df = df.rename(columns=rename_map)
+            
+            # Добавляем технические колонки для кнопок AgGrid, которых нет в базе
+            if "📝 Ред." not in df.columns: df["📝 Ред."] = "⚙️"
+            if "🔍 Просмотр" not in df.columns: df["🔍 Просмотр"] = "👀 Посмотреть"
+            
+        return df
+    except Exception as e:
+        st.error(f"Ошибка загрузки данных {table_name}: {e}")
+        return pd.DataFrame()
+
 def save_to_supabase(table_name, data_dict):
     try:
         # .insert() принимает обычный словарь Python
@@ -1273,6 +1310,16 @@ elif selected == "Настройки":
             if st.button("🧨 УДАЛИТЬ ВСЕ ДАННЫЕ", use_container_width=True):
                 st.error("Вы уверены? Это действие необратимо!")
 
+# Вместо st.session_state.orders = pd.DataFrame(columns=ORDER_COLUMNS)
+if 'orders' not in st.session_state or st.session_state.orders.empty:
+    with st.spinner('Загрузка заявок из облака...'):
+        st.session_state.orders = load_data_from_supabase("orders")
+
+if 'main' not in st.session_state or st.session_state.main.empty:
+    with st.spinner('Синхронизация реестра...'):
+        # Используем твой VIEW, который ты создал в SQL
+        st.session_state.main = load_data_from_supabase("main_registry")
+
 if "current_page" not in st.session_state:
     st.session_state.current_page = selected
 
@@ -1323,6 +1370,7 @@ elif st.session_state.get("active_modal"):
     elif m_type: # Если есть какой-то другой тип для общей функции
 
         create_modal(m_type)
+
 
 
 
