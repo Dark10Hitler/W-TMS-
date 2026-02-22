@@ -57,19 +57,28 @@ def load_data_from_supabase(table_name):
         # 1. Запрос к Supabase
         response = supabase.table(table_name).select("*").order("created_at", desc=True).execute()
         
-        # 2. Превращаем в DataFrame
-        df = pd.DataFrame(response.data)
+        # 2. ПРОВЕРКА ДАННЫХ (Исправление ошибки конструктора)
+        # Проверяем, что response.data существует и является списком
+        raw_data = response.data
+        if raw_data is None or not isinstance(raw_data, list):
+            st.warning(f"⚠️ Данные для {table_name} не получены или имеют неверный формат.")
+            return pd.DataFrame(columns=TABLE_STRUCT.get(table_name, []))
+            
+        # Теперь безопасно создаем DataFrame
+        df = pd.DataFrame(raw_data)
         
+        # Если в базе 0 записей, создаем пустой DF с нужными колонками
         if df.empty:
             return pd.DataFrame(columns=TABLE_STRUCT.get(table_name, []))
 
-        # ПРЕДОТВРАЩАЕМ ОШИБКУ ХЕШИРОВАНИЯ (DICT -> STR)
+        # --- КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ ДЛЯ JSON/DICT ---
+        # Чтобы не было ошибок хеширования и проблем с AgGrid
         for col in df.columns:
-            if df[col].apply(lambda x: isinstance(x, dict) or isinstance(x, list)).any():
-                df[col] = df[col].apply(lambda x: str(x) if x is not None else x)
+            # Проверяем, есть ли в колонке словари или списки
+            if df[col].apply(lambda x: isinstance(x, (dict, list))).any():
+                df[col] = df[col].apply(lambda x: str(x) if x is not None else None)
 
-        # 3. Полный маппинг (Database -> UI)
-        # Важно: добавлены соответствия для всех типов таблиц
+        # 3. Маппинг (как у вас был)
         RENAME_MAP = {
             "id": "id",
             "status": "Статус",
@@ -93,28 +102,14 @@ def load_data_from_supabase(table_name):
             "items_data": "items_data" # Системное поле
         }
         
-        # Переименовываем только те колонки, которые реально пришли из БД
         current_rename = {k: v for k, v in RENAME_MAP.items() if k in df.columns}
         df = df.rename(columns=current_rename)
-
-        # 4. РАСПАКОВКА ТОВАРОВ В ITEMS_REGISTRY
-        # Это "сердце" системы: переносим JSON из ячейки БД в глобальный словарь
-        for _, row in df.iterrows():
-            entry_id = row['id']
-            if 'items_data' in row and row['items_data'] is not None:
-                # Конвертируем список словарей из БД в DataFrame для UI
-                items_list = row['items_data']
-                st.session_state.items_registry[entry_id] = pd.DataFrame(items_list)
-
-        # 5. Добавляем технические колонки для AgGrid
-        if "📝 Ред." not in df.columns: df["📝 Ред."] = "⚙️"
-        if "🔍 Просмотр" not in df.columns: df["🔍 Просмотр"] = "👀"
-        if "🖨️ Печать" not in df.columns: df["🖨️ Печать"] = "🖨️"
-            
-        return df
         
+        return df
+
     except Exception as e:
-        st.error(f"🚨 Критическая ошибка загрузки {table_name}: {e}")
+        st.error(f"🚨 Критическая ошибка загрузки {table_name}: {str(e)}")
+        # Возвращаем пустой DF, чтобы приложение не "падало" полностью
         return pd.DataFrame()
 
 # --- ГЛОБАЛЬНАЯ СИНХРОНИЗАЦИЯ ---
@@ -1668,6 +1663,7 @@ elif st.session_state.get("active_modal"):
     else:
         # Резервный вызов общей функции
         create_modal(m_type)
+
 
 
 
