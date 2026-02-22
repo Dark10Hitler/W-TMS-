@@ -167,10 +167,12 @@ def create_modal(table_key):
         efficiency = (total_vol / v_max_vol) * 100 if v_max_vol > 0 else 0
 
         # Конвертация таблицы товаров в JSON для базы данных
+        # Конвертация таблицы товаров в JSON для базы данных
         items_json = []
         if not parsed_items_df.empty:
-            # Превращаем DataFrame в список словарей, заменяя NaN на None (Supabase не любит NaN)
-            items_json = parsed_items_df.where(pd.notnull(parsed_items_df), None).to_dict(orient='records')
+    # Очистка: заменяем NaN на None, чтобы JSON не ругался
+            clean_df = parsed_items_df.replace({np.nan: None})
+            items_json = clean_df.to_dict(orient='records')
 
         # 2. ФОРМИРОВАНИЕ PAYLOAD ДЛЯ SUPABASE (СТРОГО ПО SQL)
         # Мы не передаем created_at и created_time, база подставит их сама (DEFAULT CURRENT_DATE)
@@ -849,6 +851,7 @@ def edit_vehicle_modal():
             time.sleep(1)
 
             st.rerun()
+
 
 
 
