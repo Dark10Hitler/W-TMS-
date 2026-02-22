@@ -18,6 +18,7 @@ from config_topology import get_warehouse_figure
 import pandas as pd
 import streamlit as st
 import time
+from database import supabase
 
 
 def get_cell_occupancy():
@@ -1418,3 +1419,4 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
+
