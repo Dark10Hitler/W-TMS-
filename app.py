@@ -260,57 +260,74 @@ def get_vehicle_status_color(status):
 import pandas as pd
 import json
 
+import pandas as pd
+import json
+
 def get_full_inventory_df():
-    # Загружаем документы
+    # Загружаем документы из соответствующих таблиц
     arrivals = load_data_from_supabase("arrivals")
     orders = load_data_from_supabase("orders")
     
     all_items = []
 
-    # Обработка товаров из ПРИХОДОВ
+    # --- ОБРАБОТКА ПРИХОДОВ ---
     if arrivals is not None and not arrivals.empty:
         for _, row in arrivals.iterrows():
+            # Извлекаем JSON-данные из колонки items_data
             items = row.get('items_data', [])
-            # Если данные в базе лежат как строка, превращаем в список
+            
+            # Десериализация, если данные пришли в виде строки
             if isinstance(items, str):
-                try: items = json.loads(items)
-                except: items = []
+                try:
+                    items = json.loads(items)
+                except:
+                    items = []
             
             if isinstance(items, list):
                 for item in items:
                     all_items.append({
-                        "id": row.get('id'), # Внутренний ID документа для связи
-                        "Название товара": item.get('Название') or item.get('name') or "Без названия",
-                        "Количество": item.get('Количество') or item.get('qty') or 0,
+                        "id": row.get('id'),
+                        "Название товара": item.get('Название') or item.get('name') or "Товар без имени",
+                        "Количество": float(item.get('Количество') or item.get('qty') or 0),
                         "Адрес": item.get('Адрес') or "НЕ НАЗНАЧЕНО",
                         "Тип": "📦 ПРИХОД",
-                        "Контрагент": row.get('vendor_name', 'Н/Д'),
-                        "ID Документа": row.get('doc_number', row.get('id')),
+                        "Контрагент": row.get('vendor_name', 'Не указан'),
+                        "ID Документа": row.get('doc_number', 'Н/Д'),
                         "Дата": row.get('created_at')
                     })
 
-    # Обработка товаров из ЗАКАЗОВ
+    # --- ОБРАБОТКА ЗАКАЗОВ ---
     if orders is not None and not orders.empty:
         for _, row in orders.iterrows():
             items = row.get('items_data', [])
             if isinstance(items, str):
-                try: items = json.loads(items)
-                except: items = []
+                try:
+                    items = json.loads(items)
+                except:
+                    items = []
                 
             if isinstance(items, list):
                 for item in items:
                     all_items.append({
                         "id": row.get('id'),
-                        "Название товара": item.get('Название') or item.get('name') or "Без названия",
-                        "Количество": item.get('Количество') or item.get('qty') or 0,
+                        "Название товара": item.get('Название') or item.get('name') or "Товар без имени",
+                        "Количество": float(item.get('Количество') or item.get('qty') or 0),
                         "Адрес": "🚚 В ЗАКАЗЕ",
                         "Тип": "📤 РАСХОД",
-                        "Контрагент": row.get('client_name', 'Н/Д'),
-                        "ID Документа": row.get('id'),
+                        "Контрагент": row.get('client_name', 'Не указан'),
+                        "ID Документа": row.get('id', 'Н/Д'),
                         "Дата": row.get('created_at')
                     })
 
-    return pd.DataFrame(all_items)
+    # Превращаем список в DataFrame
+    df = pd.DataFrame(all_items)
+    
+    # Если DF не пустой, сортируем по дате (свежие сверху)
+    if not df.empty and 'Дата' in df.columns:
+        df['Дата'] = pd.to_datetime(df['Дата'])
+        df = df.sort_values(by='Дата', ascending=False)
+        
+    return df
  
 def get_saved_location(product_name):
     """Ищет рекомендованный адрес товара в БД Supabase"""
@@ -1383,27 +1400,29 @@ elif selected == "Аналитика":
 elif selected == "База Данных":
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
-    with st.spinner("Распаковка товаров из документов..."):
+    with st.spinner("Синхронизация товарных позиций..."):
         inventory_df = get_full_inventory_df() 
     
     if inventory_df.empty:
-        st.info("📦 В документах (Приходы/Заказы) пока нет товаров. Сначала создайте приход.")
+        st.info("📦 В документах (Приходы/Заказы) пока нет товаров. Сначала создайте приход в разделе 'Приемка'.")
     else:
-        # Панель метрик
+        # Панель аналитики
         c1, c2, c3 = st.columns(3)
-        total_qty = inventory_df[inventory_df['Тип'] == "📦 ПРИХОД"]['Количество'].sum()
+        
+        # Считаем только приходы для остатка
+        total_in = inventory_df[inventory_df['Тип'] == "📦 ПРИХОД"]['Количество'].sum()
         unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО'])
         
-        c1.metric("Товаров на складе", int(total_qty))
-        c2.metric("Позиций без адреса", unassigned, delta_color="inverse")
-        c3.metric("Всего строк в базе", len(inventory_df))
+        c1.metric("Всего поступило (ед.)", f"{int(total_in)} шт")
+        c2.metric("Требуют размещения", unassigned, delta=f"{unassigned} поз.", delta_color="inverse")
+        c3.metric("Уникальных строк", len(inventory_df))
 
-        # Настройка Ag-Grid
+        # Настройка таблицы Ag-Grid
         gb = GridOptionsBuilder.from_dataframe(inventory_df)
         gb.configure_default_column(resizable=True, filterable=True, sortable=True, floatingFilter=True)
         gb.configure_selection(selection_mode="single", use_checkbox=True)
         
-        # Стилизация адреса
+        # Интеллектуальная подсветка адресов
         cellsytle_jscode = JsCode("""
         function(params) {
             if (params.value === 'НЕ НАЗНАЧЕНО') {
@@ -1411,62 +1430,65 @@ elif selected == "База Данных":
             } else if (params.value === '🚚 В ЗАКАЗЕ') {
                 return {'color': 'white', 'backgroundColor': '#3498DB'};
             } else {
-                return {'color': '#2ECC71', 'fontWeight': 'bold'};
+                return {'color': '#2ECC71', 'fontWeight': 'bold', 'backgroundColor': '#1e2329'};
             }
         };
         """)
         gb.configure_column("Адрес", cellStyle=cellsytle_jscode, pinned='left', width=180)
         
-        # Отображение таблицы (Исправлено под новые стандарты 2026)
+        # Рендеринг таблицы
         grid_res = AgGrid(
             inventory_df,
             gridOptions=gb.build(),
-            height=450,
+            height=500,
             theme='alpine',
             allow_unsafe_jscode=True,
-            update_on=['selectionChanged'], # Убираем DeprecationWarning
+            update_on=['selectionChanged'], 
             key="global_inventory_grid"
         )
 
-        # Выбор товара
+        # Обработка выбора строки
         sel_row = grid_res.get('selected_rows')
         
-        # Проверка выбора (AgGrid возвращает список словарей в новых версиях)
         if sel_row is not None and len(sel_row) > 0:
-            item = sel_row[0]
+            # Извлекаем данные (учитываем, что AgGrid может возвращать список или DataFrame)
+            if isinstance(sel_row, pd.DataFrame):
+                item = sel_row.iloc[0]
+            else:
+                item = sel_row[0]
+                
             st.divider()
-            
             col_txt, col_map = st.columns([1, 1])
             
             with col_txt:
-                st.subheader(f"🛠️ Управление: {item['Название товара']}")
+                st.subheader(f"🛠️ Товар: {item['Название товара']}")
                 st.markdown(f"""
-                <div style="background: #161b22; padding: 15px; border-radius: 10px; border: 1px solid #30363d;">
-                    📍 <b>Текущий адрес:</b> <code>{item['Адрес']}</code><br>
-                    📄 <b>Источник:</b> {item['Тип']} № <code>{item['ID Документа']}</code><br>
-                    🤝 <b>Контрагент:</b> {item['Контрагент']}
+                <div style="background: #1d222b; padding: 20px; border-radius: 12px; border: 1px solid #3d444d; line-height: 1.6;">
+                    📍 <b>Зона хранения:</b> <code style="color: #58a6ff; font-size: 1.1em;">{item['Адрес']}</code><br>
+                    📊 <b>Кол-во:</b> {item['Количество']} шт.<br>
+                    📄 <b>Документ:</b> {item['Тип']} № {item['ID Документа']}<br>
+                    📅 <b>Дата операции:</b> {item['Дата']}
                 </div>
                 """, unsafe_allow_html=True)
                 
                 st.write("")
-                # Исправляем use_container_width на width="stretch"
-                if st.button("🔄 ИЗМЕНИТЬ ДАННЫЕ / НАЗНАЧИТЬ СКЛАД", type="primary", width="stretch"):
+                if st.button("🔄 РЕДАКТИРОВАТЬ ПОЗИЦИЮ / ПЕРЕМЕСТИТЬ", type="primary", width="stretch"):
                     st.session_state.editing_id = item.get('id')
                     st.session_state.active_modal = "inventory_edit"
                     st.rerun()
 
             with col_map:
                 addr = str(item['Адрес'])
-                if "-" in addr and addr != "НЕ НАЗНАЧЕНО":
+                if "-" in addr and addr not in ["НЕ НАЗНАЧЕНО", "🚚 В ЗАКАЗЕ"]:
                     try:
                         wh_id = addr.split('-')[0].replace("WH", "")
-                        st.caption(f"📍 Позиция на схеме склада {wh_id}")
+                        st.caption(f"🗺️ Визуализация ячейки {addr}")
                         fig = get_warehouse_figure(wh_id, highlighted_cell=addr)
                         st.plotly_chart(fig, width="stretch")
                     except Exception as e:
-                        st.error(f"Ошибка карты: {e}")
+                        st.warning(f"Карта недоступна для этого адреса")
                 else:
-                    st.warning("⚠️ Товар не размещен или находится в пути.")
+                    st.info("ℹ️ Визуализация доступна только для товаров с назначенным адресом склада (формат WH1-A-01).")
 
 elif selected == "Карта": show_map()
 elif selected == "Личный кабинет": show_profile()
@@ -1671,6 +1693,7 @@ elif st.session_state.get("active_modal"):
         create_arrival_modal() # Теперь это вызовется один раз
     elif m_type == "orders_new":
         create_order_modal()
+
 
 
 
