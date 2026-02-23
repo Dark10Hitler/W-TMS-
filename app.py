@@ -1444,30 +1444,64 @@ elif selected == "Аналитика":
         m2.metric("Ср. пробег в день", f"{round(total_km/len(summary_df), 2)} км")
         m3.metric("Расход топлива (MDL)", f"{int(total_fuel * 23.45)} MDL")
 
-        # ТАБЛИЦА ПО ДНЯМ — Теперь здесь будет ровно 8 км и 40 км
-        st.write("**Детализация по дням:**")
-        display_df = summary_df[['day_label', 'distance_km', 'engine_hours', 'averageSpeed', 'maxSpeed']].copy()
-        display_df.columns = ['Дата', 'Пробег (км)', 'Моточасы (ч)', 'Ср. Скорость', 'Макс. Скорость']
-        st.table(display_df)
+        # --- БЛОК 3: ТАБЛИЦА ПО ДНЯМ (КОМПАКТНАЯ) ---
+        st.divider()
+        col_t1, col_t2 = st.columns([2, 1])
+        
+        with col_t1:
+            st.subheader("📅 Детализация по дням")
+            display_df = summary_df[['day_label', 'distance_km', 'engine_hours', 'averageSpeed', 'maxSpeed']].copy()
+            display_df.columns = ['Дата', 'Пробег (км)', 'Моточасы (ч)', 'Ср. Скорость', 'Макс. Скорость']
+            
+            # Используем dataframe вместо table для компактности (авто-скролл, если строк много)
+            st.dataframe(
+                display_df, 
+                use_container_width=True, 
+                hide_index=True,
+                height=250 # Фиксированная высота, чтобы не растягивать страницу
+            )
+        
+        with col_t2:
+            st.subheader("📈 Итоги периода")
+            st.markdown(f"""
+            <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #1a237e;">
+                <p style="margin:0; color:black;"><b>Всего за {len(summary_df)} дн.</b></p>
+                <h2 style="margin:0; color:#1a237e;">{total_km:.1f} км</h2>
+                <hr>
+                <p style="margin:0; color:black;"><b>Всего моточасов:</b></p>
+                <h4 style="margin:0; color:black;">{summary_df['engine_hours'].sum():.1f} ч</h4>
+            </div>
+            """, unsafe_allow_html=True)
 
         
 
-        # --- БЛОК 2: ТЕХОБСЛУЖИВАНИЕ ---
+        # --- БЛОК 2: ТЕХОБСЛУЖИВАНИЕ (В КОЛОНКАХ) ---
         st.divider()
-        st.subheader("🔧 Регламент техобслуживания")
+        st.subheader("🔧 Состояние узлов и агрегатов")
+        
         # Берем одометр из последней точки трека
         last_odo = 0
         if route_data:
             last_odo = route_data[-1].get('attributes', {}).get('totalDistance', 0) / 1000
         
-        c_odo, c_info = st.columns([1, 2])
-        c_odo.metric("Одометр ТС", f"{int(last_odo)} км")
+        st.info(f"📊 Текущие показания одометра: **{int(last_odo)} км**")
         
-        m_items = [("Масло ДВС", 10000), ("Тормозные колодки", 30000), ("Фильтры", 15000)]
-        for name, limit in m_items:
-            rem = limit - (last_odo % limit)
-            st.caption(f"**{name}**: Осталось {int(rem)} км")
-            st.progress(max(0, min(100, int((rem/limit)*100))) / 100)
+        # Ряд колонок для регламента ТО
+        m_items = [
+            ("🛢️ Масло ДВС", 10000, "blue"), 
+            ("🛑 Колодки", 30000, "orange"), 
+            ("🧪 Фильтры", 15000, "green"),
+            ("⚙️ ГРМ", 80000, "red")
+        ]
+        
+        cols = st.columns(len(m_items))
+        for i, (name, limit, color) in enumerate(m_items):
+            with cols[i]:
+                rem = limit - (last_odo % limit)
+                perc = max(0, min(100, int((rem/limit)*100)))
+                st.metric(name, f"{int(rem)} км")
+                st.progress(perc / 100)
+                st.caption(f"Ресурс: {perc}%")
 
         # --- БЛОК 3: КАРТА (ROUTE) ---
         st.divider()
@@ -1518,12 +1552,34 @@ elif selected == "Аналитика":
             
             st.info(f"🚩 Зафиксировано нарушений: {overspeed_count} превышений и {len(hard_brakes)} опасных маневров.")
         
-        # --- БЛОК 4: ГРАФИКИ ---
-        st.subheader("📈 Скоростной режим")
+        # --- БЛОК 5: ГРАФИКИ (ПРИЯТНЫЙ ВИД) ---
+        st.divider()
+        st.subheader("📈 Анализ скоростного режима")
+        
         if route_data:
-            st.area_chart(df_route.set_index(pd.to_datetime(df_route['deviceTime']))['speed_kmh'])
+            chart_df = df_route[['dt', 'speed_kmh']].copy()
+            chart_df = chart_df.set_index('dt')
+            
+            # Красивый линейный график с заливкой
+            st.area_chart(chart_df, color="#29b5e8", use_container_width=True)
+            
+            # Дополнительная аналитика под графиком
+            g1, g2, g3 = st.columns(3)
+            with g1:
+                st.write("🚀 **Пиковая скорость**")
+                st.title(f"{int(df_route['speed_kmh'].max())} <small>км/ч</small>")
+            with g2:
+                st.write("⏱️ **Время в движении**")
+                moving_time = len(df_route[df_route['speed_kmh'] > 5]) * 15 / 60 # при интервале 15 сек
+                st.title(f"{int(moving_time)} <small>мин</small>")
+            with g3:
+                st.write("⚠️ **Интенсивность**")
+                accel_index = len(hard_brakes)
+                st.title(f"{accel_index} <small>маневра</small>")
 
-        if st.button("❌ ЗАКРЫТЬ ОТЧЕТ"):
+        # Кнопка закрытия внизу
+        st.markdown("---")
+        if st.button("🗑️ ОЧИСТИТЬ ОТЧЕТ И ВЕРНУТЬСЯ", use_container_width=True):
             st.session_state.show_report = False
             st.rerun()
             
@@ -1879,6 +1935,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
