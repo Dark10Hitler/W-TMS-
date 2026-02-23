@@ -214,22 +214,17 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
 
 
 # --- КОНФИГУРАЦИЯ ПОДКЛЮЧЕНИЯ ---
-# В st.secrets должно быть: traccar_url, traccar_user, traccar_pass
-TRACCAR_URL = st.secrets.get("TRACCAR_URL", "http://127.0.0.1:8082")
-TRACCAR_AUTH = (
-    st.secrets.get("TRACCAR_USER", "denis.masliuc.speak23dev@gmail.com"), 
-    st.secrets.get("TRACCAR_PASS", "qwert12345")
-)
+# Используем 127.0.0.1 вместо localhost для обхода проблем с IPv6 на Windows
+TRACCAR_URL = "http://127.0.0.1:8082"
+TRACCAR_AUTH = ("denis.masliuc.speak23dev@gmail.com", "qwert12345")
 
-@st.cache_data(ttl=10) # Уменьшил TTL до 10 сек для оперативности
-def get_detailed_traccar_data(endpoint="positions", params=None):
+@st.cache_data(ttl=10, show_spinner=False)
+def get_detailed_traccar_data():
+    api_base = f"{TRACCAR_URL}/api"
     try:
-        api_base = f"{TRACCAR_URL.rstrip('/')}/api"
-        
-        # 1. Запрос устройств
-        dev_resp = requests.get(f"{api_base}/devices", auth=TRACCAR_AUTH, timeout=7)
-        # 2. Запрос позиций
-        pos_resp = requests.get(f"{api_base}/positions", auth=TRACCAR_AUTH, timeout=7)
+        # Устанавливаем небольшие таймауты
+        dev_resp = requests.get(f"{api_base}/devices", auth=TRACCAR_AUTH, timeout=3)
+        pos_resp = requests.get(f"{api_base}/positions", auth=TRACCAR_AUTH, timeout=3)
         
         if dev_resp.status_code == 200 and pos_resp.status_code == 200:
             devices = {d['id']: d for d in dev_resp.json()}
@@ -238,18 +233,13 @@ def get_detailed_traccar_data(endpoint="positions", params=None):
             for pos in positions:
                 dev_info = devices.get(pos['deviceId'], {})
                 pos['name'] = dev_info.get('name', f"ID: {pos['deviceId']}")
-                pos['status'] = dev_info.get('status', 'unknown')
-            
             return devices, positions
         else:
-            st.error(f"🚫 Ошибка API: Devices({dev_resp.status_code}), Positions({pos_resp.status_code})")
+            # Если получили не 200, сбрасываем кеш этой функции
+            st.cache_data.clear()
             return {}, []
-            
-    except requests.exceptions.ConnectionError:
-        # Здесь не выводим st.error, чтобы не спамить в UI, просто пробрасываем пустые данные
-        return {}, []
-    except Exception as e:
-        st.sidebar.error(f"GPS Error: {e}")
+    except Exception:
+        # В случае любой сетевой ошибки возвращаем пустоту
         return {}, []
 
 def get_vehicle_status_color(status):
@@ -1778,6 +1768,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
