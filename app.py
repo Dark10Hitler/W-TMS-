@@ -1511,28 +1511,75 @@ elif selected == "Аналитика":
         m.get_root().html.add_child(folium.Element(legend_html))
         st_folium(m, width=1300, height=600)
 
-        # --- БЛОК 5: УЛУЧШЕННЫЕ ГРАФИКИ ---
+        # --- БЛОК 5: ПРОФЕССИОНАЛЬНЫЙ ГРАФИК СКОРОСТИ ---
         st.divider()
         st.subheader("📈 Детальный анализ скоростного режима")
-        
-        chart_data = df_route[['dt', 'speed_kmh']].set_index('dt')
-        st.area_chart(chart_data, color="#29b5e8")
-        
-        # Информационные карточки под графиком
-        g1, g2, g3, g4 = st.columns(4)
-        with g1:
-            st.metric("Макс. скорость", f"{int(df_route['speed_kmh'].max())} км/ч")
-        with g2:
-            st.metric("Ср. скорость", f"{int(df_route['speed_kmh'].mean())} км/ч")
-        with g3:
-            st.metric("Резкие ускорения", f"{len(df_route[df_route['diff_speed'] > 15])}")
-        with g4:
-            st.metric("Опасные маневры", f"{len(hard_brakes) + len(overspeeds)}")
 
-        # Финальная кнопка
-        if st.button("❌ ЗАКРЫТЬ ОТЧЕТ", use_container_width=True):
-            st.session_state.show_report = False
-            st.rerun()
+        if not df_route.empty:
+            import altair as alt
+
+            # Подготовка данных для графика
+            chart_df = df_route[['dt', 'speed_kmh']].copy()
+            
+            # 1. Линия скорости
+            line = alt.Chart(chart_df).mark_line(
+                color='#29b5e8',
+                strokeWidth=2,
+                interpolate='monotone' # Плавные переходы между точками
+            ).encode(
+                x=alt.X('dt:T', title='Время пути'),
+                y=alt.Y('speed_kmh:Q', title='Скорость (км/ч)'),
+                tooltip=[alt.Tooltip('dt:T', title='Время'), alt.Tooltip('speed_kmh:Q', title='Скорость')]
+            )
+
+            # 2. Точки на пиках (где скорость выше 90)
+            peaks = alt.Chart(chart_df[chart_df['speed_kmh'] > 90]).mark_circle(
+                color='red',
+                size=60
+            ).encode(
+                x='dt:T',
+                y='speed_kmh:Q',
+                tooltip=[alt.Tooltip('dt:T', title='Время нарушения'), alt.Tooltip('speed_kmh:Q', title='СКОРОСТЬ!')]
+            )
+
+            # 3. Текстовые подписи к пикам (самые высокие точки)
+            text = peaks.mark_text(
+                align='left',
+                dx=7,
+                dy=-7,
+                fontSize=12,
+                fontWeight='bold'
+            ).encode(
+                text='speed_kmh:Q'
+            )
+
+            # Объединяем слои в один график
+            st.altair_chart((line + peaks + text).properties(width=1300, height=450).interactive(), use_container_width=True)
+
+            # --- ИНФОРМАЦИОННЫЕ ПАНЕЛИ ---
+            st.markdown("#### 🔍 Сводка инцидентов на графике")
+            g1, g2, g3, g4 = st.columns(4)
+            
+            with g1:
+                max_s = int(df_route['speed_kmh'].max())
+                st.metric("🚀 ПИКОВАЯ СКОРОСТЬ", f"{max_s} км/ч", delta=f"{max_s - 90} км/ч" if max_s > 90 else None, delta_color="inverse")
+            
+            with g2:
+                avg_s = int(df_route[df_route['speed_kmh'] > 5]['speed_kmh'].mean())
+                st.metric("⏱️ СР. В ДВИЖЕНИИ", f"{avg_s} км/ч")
+                
+            with g3:
+                # Считаем резкие рывки (ускорение)
+                hard_accel = len(df_route[df_route['diff_speed'] > 15])
+                st.metric("🏎️ РЕЗКИЕ РАЗГОНЫ", f"{hard_accel} раз")
+                
+            with g4:
+                # Опасные маневры (сумма торможений и превышений)
+                danger_score = len(hard_brakes) + len(overspeeds)
+                st.metric("⚠️ ИНДЕКС РИСКА", f"{danger_score}", delta="КРИТИЧНО" if danger_score > 5 else "НОРМА", delta_color="inverse")
+
+        else:
+            st.warning("Нет данных для построения графика скорости.")
             
             
 # Замени этот блок в разделе РОУТИНГ:
@@ -1886,6 +1933,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
