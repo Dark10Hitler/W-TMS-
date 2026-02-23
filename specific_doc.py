@@ -684,143 +684,73 @@ def create_defect_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
-@st.dialog("👤 Регистрация водителя", width="medium")
+            
+@st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
     from database import supabase
-    st.subheader("📝 Данные нового сотрудника")
-    uploaded_photo = st.file_uploader("📸 Фото водителя", type=["jpg", "png", "jpeg"], key="upload_drv_new")
+    import uuid
     
-    with st.form("driver_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        f_name = col1.text_input("Имя")
-        l_name = col2.text_input("Фамилия")
-        phone = st.text_input("📱 Номер телефона", value="+7 ")
-        license_cat = st.multiselect("🪪 Категории прав", ["B", "C", "CE", "D"], default=["B", "C"])
-        
-        st.divider()
-        experience = st.slider("Стаж вождения (лет)", 0, 40, 5)
-        status = st.selectbox("📍 Текущий статус", ["В штате", "На подработке", "Уволен"])
-        
-        submitted = st.form_submit_button("✅ СОХРАНИТЬ КАРТОЧКУ", use_container_width=True)
+    f_name = st.text_input("Имя")
+    l_name = st.text_input("Фамилия")
+    phone = st.text_input("Номер телефона", value="+7")
+    cats = st.multiselect("Категории", ["B", "C", "CE", "D"], default=["B", "C"])
+    exp = st.number_input("Стаж (лет)", 0, 50, 5)
+    stat = st.selectbox("Статус", ["В штате", "На подработке", "Уволен"])
+    up_photo = st.file_uploader("Фото")
 
-    if submitted:
-        if not f_name or not l_name:
-            st.error("Введите имя и фамилию!")
-            return
+    if st.button("✅ СОХРАНИТЬ", use_container_width=True, type="primary"):
+        final_photo = upload_driver_photo(up_photo) if up_photo else None
+        new_id = f"DRV-{str(uuid.uuid4())[:4].upper()}"
         
-        # Обработка фото (функция process_image должна возвращать URL или base64)
-        final_photo = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
-        if uploaded_photo:
-            try:
-                final_photo = process_image(uploaded_photo)
-            except: pass
-
-        driver_id = f"DRV-{str(uuid.uuid4())[:4].upper()}"
-        
-        # 1. Данные для Supabase
         db_data = {
-            "id": driver_id,
-            "first_name": f_name,
-            "last_name": l_name,
-            "phone": phone,
-            "categories": ", ".join(license_cat),
-            "experience": experience,
-            "status": status,
-            "photo_url": final_photo,
-            "created_at": datetime.now().strftime("%Y-%m-%d")
+            "id": new_id, "first_name": f_name, "last_name": l_name,
+            "phone": phone, "categories": ", ".join(cats),
+            "experience": exp, "status": stat, "photo_url": final_photo
         }
-
-        try:
-            supabase.table("drivers").insert(db_data).execute()
-        except Exception as e:
-            st.error(f"Ошибка сохранения в базу: {e}")
-            return
-
-        # 2. Обновление локально для скорости
-        new_driver_ui = {
-            "id": driver_id, "Имя": f_name, "Фамилия": l_name, "Телефон": phone,
-            "Категории": ", ".join(license_cat), "Стаж": experience,
-            "Статус": status, "Фото": final_photo,
-            "Дата регистрации": datetime.now().strftime("%Y-%m-%d")
-        }
-        st.session_state.drivers = pd.concat([st.session_state.drivers, pd.DataFrame([new_driver_ui])], ignore_index=True)
         
-        st.success(f"Водитель {l_name} добавлен в облако!")
-        st.session_state.active_modal = None
-        time.sleep(1)
-        st.rerun()
-
-@st.dialog("⚙️ Редактирование водителя", width="medium")
-def edit_driver_modal():
-    from database import supabase
-    if not st.session_state.get("editing_id"):
-        st.error("Ошибка: ID не найден")
-        return
-
-    d_id = st.session_state.editing_id
-    df = st.session_state.drivers
-    
-    matching_rows = df.index[df['id'] == d_id].tolist()
-    if not matching_rows:
-        st.error("Водитель не найден")
-        return
-        
-    idx = matching_rows[0]
-    curr = df.loc[idx]
-
-    st.subheader(f"Изменение: {curr['Фамилия']}")
-    up_photo = st.file_uploader("📸 Обновить фото", type=["jpg", "png", "jpeg"], key=f"up_drv_{d_id}")
-    
-    with st.form("edit_driver_form"):
-        col1, col2 = st.columns(2)
-        f_name = col1.text_input("Имя", value=curr['Имя'])
-        l_name = col2.text_input("Фамилия", value=curr['Фамилия'])
-        phone = st.text_input("Телефон", value=curr['Телефон'])
-        
-        default_cats = curr['Категории'].split(", ") if isinstance(curr['Категории'], str) else []
-        cats = st.multiselect("Категории", ["B", "C", "CE", "D"], default=default_cats)
-        
-        status_options = ["В штате", "На подработке", "Уволен"]
-        current_status_idx = status_options.index(curr['Статус']) if curr['Статус'] in status_options else 0
-        status = st.selectbox("Статус", status_options, index=current_status_idx)
-        
-        if st.form_submit_button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True):
-            new_photo = curr['Фото']
-            if up_photo:
-                try:
-                    new_photo = process_image(up_photo)
-                except: pass
-
-            # 1. ОБНОВЛЯЕМ В SUPABASE
-            update_data = {
-                "first_name": f_name,
-                "last_name": l_name,
-                "phone": phone,
-                "categories": ", ".join(cats),
-                "status": status,
-                "photo_url": new_photo
-            }
-            
-            try:
-                supabase.table("drivers").update(update_data).eq("id", d_id).execute()
-            except Exception as e:
-                st.error(f"Ошибка обновления в облаке: {e}")
-                return
-
-            # 2. ОБНОВЛЯЕМ В SESSION STATE (локально)
-            df.at[idx, 'Имя'] = f_name
-            df.at[idx, 'Фамилия'] = l_name
-            df.at[idx, 'Телефон'] = phone
-            df.at[idx, 'Статус'] = status
-            df.at[idx, 'Категории'] = ", ".join(cats)
-            df.at[idx, 'Фото'] = new_photo
-            
-            st.session_state.drivers = df
-            st.session_state.active_edit_modal = None
-            st.success("Данные синхронизированы с базой!")
+        res = supabase.table("drivers").insert(db_data).execute()
+        if res.data:
+            st.success("Водитель добавлен!")
+            # Сбрасываем кэш, чтобы данные подтянулись заново
+            st.session_state.drivers = pd.DataFrame() 
             time.sleep(1)
             st.rerun()
-            
+
+@st.dialog("⚙️ Редактирование водителя")
+def edit_driver_modal(d_id):
+    from database import supabase
+    # Тянем свежие данные именно по этому ID
+    res = supabase.table("drivers").select("*").eq("id", d_id).execute()
+    if not res.data: return
+    curr = res.data[0]
+
+    f_name = st.text_input("Имя", value=curr['first_name'])
+    l_name = st.text_input("Фамилия", value=curr['last_name'])
+    phone = st.text_input("Телефон", value=curr['phone'])
+    
+    # Обработка категорий
+    def_cats = curr['categories'].split(", ") if curr['categories'] else []
+    cats = st.multiselect("Категории", ["B", "C", "CE", "D"], default=def_cats)
+    
+    stat = st.selectbox("Статус", ["В штате", "На подработке", "Уволен"], 
+                        index=["В штате", "На подработке", "Уволен"].index(curr['status']))
+    
+    up_photo = st.file_uploader("Обновить фото")
+
+    if st.button("💾 СОХРАНИТЬ"):
+        new_photo = upload_driver_photo(up_photo) if up_photo else curr['photo_url']
+        
+        upd_data = {
+            "first_name": f_name, "last_name": l_name, "phone": phone,
+            "categories": ", ".join(cats), "status": stat, "photo_url": new_photo
+        }
+        
+        supabase.table("drivers").update(upd_data).eq("id", d_id).execute()
+        st.session_state.drivers = pd.DataFrame() # Сброс кэша для обновления списка
+        st.success("Изменено!")
+        time.sleep(1)
+        st.rerun()
+        
 @st.dialog("🚛 Регистрация ТС", width="large")
 def create_vehicle_modal():
     from database import supabase
@@ -985,6 +915,7 @@ def edit_vehicle_modal():
             st.success("Данные ТС успешно обновлены!")
             time.sleep(1)
             st.rerun()
+
 
 
 
