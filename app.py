@@ -875,7 +875,17 @@ def show_map():
     BASE_LAT, BASE_LON = 47.776654, 27.913643
     base_coords = [BASE_LAT, BASE_LON]
     
-    m = folium.Map(location=base_coords, zoom_start=12, tiles="cartodbpositron")
+    # Используем Voyager - он яркий и детальный
+    m = folium.Map(
+        location=base_coords, 
+        zoom_start=12, 
+        tiles="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", 
+        attr='&copy; OpenStreetMap &copy; CARTO'
+    )
+    
+    # Добавим кнопку переключения слоев (если захочешь вернуться к простой)
+    folium.TileLayer('OpenStreetMap').add_to(m)
+    folium.LayerControl().add_to(m)
     
     # Геозона склада
     folium.Circle(
@@ -1813,6 +1823,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
