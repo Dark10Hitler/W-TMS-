@@ -792,6 +792,10 @@ def edit_driver_modal(d_id):
 @st.dialog("🚛 Регистрация ТС", width="large")
 def create_vehicle_modal():
     from database import supabase
+    import uuid
+    from datetime import datetime
+    import time
+
     st.subheader("📋 Технический паспорт автомобиля")
     uploaded_v_photo = st.file_uploader("📸 Фото автомобиля", type=["jpg", "png"], key="upload_v_new")
 
@@ -800,6 +804,7 @@ def create_vehicle_modal():
         with col_side:
             brand = st.text_input("Марка / Модель", placeholder="Газель Next")
             v_type = st.selectbox("Тип кузова", ["Тент", "Рефрижератор", "Изотерм", "Бортовой"])
+        
         with col_main:
             r1_c1, r1_c2 = st.columns(2)
             gov_num = r1_c1.text_input("🔢 Госномер")
@@ -807,7 +812,7 @@ def create_vehicle_modal():
             
             st.divider()
             r2_c1, r2_c2, r2_c3 = st.columns(3)
-            cap = r2_c1.number_input("Вес (кг)", value=1500)
+            cap = r2_c1.number_input("Грузоподъемность (кг)", value=1500)
             vol = r2_c2.number_input("Объем (м³)", value=12.0)
             pal = r2_c3.number_input("Паллеты", value=4)
             
@@ -819,52 +824,50 @@ def create_vehicle_modal():
         submitted = st.form_submit_button("✅ ВНЕСТИ ТС В РЕЕСТР", use_container_width=True)
 
     if submitted:
-        # Валидация заполнения
         if not gov_num or not brand:
             st.error("🚨 Заполните обязательные поля: Госномер и Марка!")
             return
         
-        # Очистка госномера (удаляем пробелы и переводим в верхний регистр)
         clean_gov_num = gov_num.strip().upper()
 
-        # --- ШАГ 1: ПРОВЕРКА НА СУЩЕСТВОВАНИЕ ---
         try:
-            # Ищем, есть ли уже такой номер в базе
+            # Проверка на дубликат
             existing = supabase.table("vehicles").select("id").eq("gov_num", clean_gov_num).execute()
-            
             if existing.data:
-                st.warning(f"⚠️ Автомобиль с госномером **{clean_gov_num}** уже зарегистрирован!")
-                return  # Прерываем выполнение, чтобы не добавлять дубль
-        except Exception as e:
-            st.error(f"Ошибка при проверке базы данных: {e}")
-            return
+                st.warning(f"⚠️ Автомобиль с госномером **{clean_gov_num}** уже существует!")
+                return
+            
+            vehicle_id = f"VEH-{str(uuid.uuid4())[:4].upper()}"
+            
+            # Обработка фото (fallback на иконку, если функции нет или она вернула None)
+            final_v_photo = None
+            try:
+                final_v_photo = process_image(uploaded_v_photo)
+            except:
+                pass
+            
+            if not final_v_photo:
+                # Пытаемся взять из img_map или ставим дефолт
+                final_v_photo = globals().get('img_map', {}).get(v_type, "https://cdn-icons-png.flaticon.com/512/2554/2554977.png")
 
-        # --- ШАГ 2: ПОДГОТОВКА И СОХРАНЕНИЕ ---
-        vehicle_id = f"VEH-{str(uuid.uuid4())[:4].upper()}"
-        
-        # Логика обработки фото (используем вашу функцию process_image)
-        final_v_photo = process_image(uploaded_v_photo) or img_map.get(v_type)
+            db_payload = {
+                "id": vehicle_id,
+                "brand": brand,
+                "gov_num": clean_gov_num, 
+                "vin": vin.strip().upper() if vin else None,
+                "body_type": v_type,
+                "capacity": float(cap),
+                "volume": float(vol),
+                "pallets": int(pal),
+                "last_service": l_to.strftime("%Y-%m-%d"),
+                "insurance_expiry": ins.strftime("%Y-%m-%d"),
+                "photo_url": final_v_photo,
+                "status": "На линии"
+            }
 
-        db_payload = {
-            "id": vehicle_id,
-            "brand": brand,
-            "gov_num": clean_gov_num, 
-            "vin": vin.strip().upper() if vin else None,
-            "body_type": v_type,
-            "capacity": float(cap),
-            "volume": float(vol),
-            "pallets": int(pal),
-            "last_service": l_to.strftime("%Y-%m-%d"),
-            "insurance_expiry": ins.strftime("%Y-%m-%d"),
-            "photo_url": final_v_photo,
-            "status": "На линии"
-        }
-
-        try:
-            # Отправка в Supabase
             supabase.table("vehicles").insert(db_payload).execute()
             
-            # Локальное обновление состояния (чтобы ТС появилось сразу без перезагрузки всей страницы)
+            # Обновляем локальный список для UI
             new_v_ui = {
                 "id": vehicle_id, 
                 "Марка": brand, "Госномер": clean_gov_num, "Тип": v_type, 
@@ -874,22 +877,21 @@ def create_vehicle_modal():
             }
             
             if "vehicles" in st.session_state:
-                st.session_state.vehicles = pd.concat([
-                    st.session_state.vehicles, 
-                    pd.DataFrame([new_v_ui])
-                ], ignore_index=True)
+                st.session_state.vehicles = pd.concat([st.session_state.vehicles, pd.DataFrame([new_v_ui])], ignore_index=True)
 
-            # После успешного сохранения:
-            st.success(f"✅ ТС {clean_gov_num} успешно добавлено!")
+            st.success(f"✅ ТС {clean_gov_num} добавлено!")
             time.sleep(1)
-            st.rerun() # Диалог закроется сам при обновлении страницы
+            st.rerun()
             
         except Exception as e:
-            st.error(f"Ошибка сохранения ТС: {e}")
+            st.error(f"Ошибка: {e}")
 
 @st.dialog("⚙️ Редактирование ТС", width="large")
 def edit_vehicle_modal():
     from database import supabase
+    from datetime import datetime
+    import time
+
     if not st.session_state.get("editing_id"):
         st.error("ID автомобиля не найден!")
         return
@@ -899,31 +901,41 @@ def edit_vehicle_modal():
     
     matching = df.index[df['id'] == v_id].tolist()
     if not matching:
-        st.error("Автомобиль не найден!")
+        st.error("Автомобиль не найден в локальном списке!")
         return
         
     idx = matching[0]
     curr = df.loc[idx]
 
-    st.subheader(f"Редактирование: {curr['Госномер']}")
+    # БЕЗОПАСНОЕ ПОЛУЧЕНИЕ ДАННЫХ (защита от KeyError)
+    curr_gov_num = curr.get('Госномер') or curr.get('gov_num') or "Н/Д"
+    curr_brand = curr.get('Марка') or curr.get('brand') or ""
+    curr_type = curr.get('Тип') or curr.get('body_type') or "Тент"
+    curr_cap = curr.get('Грузоподъемность') or curr.get('capacity') or 0
+    curr_vol = curr.get('Объем') or curr.get('volume') or 0
+    curr_pal = curr.get('Паллеты') or curr.get('pallets') or 0
+    curr_photo = curr.get('Фото') or curr.get('photo_url')
+
+    st.subheader(f"⚙️ {curr_gov_num}")
     up_v_photo = st.file_uploader("📸 Обновить фото", type=["jpg", "png"], key=f"up_v_{v_id}")
 
     with st.form("edit_v_form"):
         c1, c2 = st.columns(2)
-        brand = c1.text_input("Марка", value=curr['Марка'])
+        brand = c1.text_input("Марка", value=str(curr_brand))
         v_types = ["Тент", "Рефрижератор", "Изотерм", "Бортовой"]
-        v_type = c2.selectbox("Тип", v_types, index=v_types.index(curr['Тип']) if curr['Тип'] in v_types else 0)
+        v_type = c2.selectbox("Тип", v_types, index=v_types.index(curr_type) if curr_type in v_types else 0)
         
         st.divider()
         r2_1, r2_2, r2_3 = st.columns(3)
-        cap = r2_1.number_input("Грузоподъемность", value=float(curr['Грузоподъемность']))
-        vol = r2_2.number_input("Объем", value=float(curr['Объем']))
-        pal = r2_3.number_input("Паллеты", value=int(curr['Паллеты']))
+        cap = r2_1.number_input("Грузоподъемность", value=float(curr_cap))
+        vol = r2_2.number_input("Объем", value=float(curr_vol))
+        pal = r2_3.number_input("Паллеты", value=int(curr_pal))
         
         st.divider()
+        # Парсим даты безопасно
         try:
-            d_to = datetime.strptime(curr['ТО'], "%Y-%m-%d")
-            d_ins = datetime.strptime(curr['Страховка'], "%Y-%m-%d")
+            d_to = datetime.strptime(str(curr.get('ТО') or curr.get('last_service')), "%Y-%m-%d")
+            d_ins = datetime.strptime(str(curr.get('Страховка') or curr.get('insurance_expiry')), "%Y-%m-%d")
         except:
             d_to, d_ins = datetime.now(), datetime.now()
 
@@ -931,31 +943,31 @@ def edit_vehicle_modal():
         new_to = r3_1.date_input("Дата ТО", value=d_to)
         new_ins = r3_2.date_input("Страховка до", value=d_ins)
         
-        if st.form_submit_button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True):
-            new_photo = curr['Фото']
-            if up_v_photo:
-                try: new_photo = process_image(up_v_photo)
-                except: pass
+        submitted = st.form_submit_button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True)
 
-            # 1. СИНХРОНИЗАЦИЯ С SUPABASE
-            update_payload = {
-                "brand": brand,
-                "body_type": v_type,
-                "capacity": float(cap),
-                "volume": float(vol),
-                "pallets": int(pal),
-                "last_service": new_to.strftime("%Y-%m-%d"),
-                "insurance_expiry": new_ins.strftime("%Y-%m-%d"),
-                "photo_url": new_photo
-            }
+    if submitted:
+        new_photo = curr_photo
+        if up_v_photo:
+            try: 
+                new_photo = process_image(up_v_photo)
+            except: 
+                pass
 
-            try:
-                supabase.table("vehicles").update(update_payload).eq("id", v_id).execute()
-            except Exception as e:
-                st.error(f"Ошибка обновления ТС в облаке: {e}")
-                return
+        update_payload = {
+            "brand": brand,
+            "body_type": v_type,
+            "capacity": float(cap),
+            "volume": float(vol),
+            "pallets": int(pal),
+            "last_service": new_to.strftime("%Y-%m-%d"),
+            "insurance_expiry": new_ins.strftime("%Y-%m-%d"),
+            "photo_url": new_photo
+        }
 
-            # 2. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ
+        try:
+            supabase.table("vehicles").update(update_payload).eq("id", v_id).execute()
+            
+            # Обновляем локальный DataFrame
             df.at[idx, 'Марка'] = brand
             df.at[idx, 'Тип'] = v_type
             df.at[idx, 'Грузоподъемность'] = cap
@@ -965,11 +977,13 @@ def edit_vehicle_modal():
             df.at[idx, 'Страховка'] = new_ins.strftime("%Y-%m-%d")
             df.at[idx, 'Фото'] = new_photo
             
-            # После успешного сохранения:
             st.session_state.vehicles = df
-            st.success("Данные ТС успешно обновлены!")
+            st.success("Данные успешно синхронизированы!")
             time.sleep(1)
-            st.rerun() # Диалог закроется сам
+            st.rerun()
+        except Exception as e:
+            st.error(f"Ошибка БД: {e}")
+
 
 
 
