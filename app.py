@@ -1254,83 +1254,75 @@ elif selected == "ТС":
     df_v = st.session_state.get("vehicles", pd.DataFrame())
 
     if not df_v.empty:
-        # Создаем сетку
         cols = st.columns(2) 
-        
         for idx, (i, row) in enumerate(df_v.iterrows()):
-            # --- ПОДГОТОВКА ДАННЫХ (Безопасно) ---
+            # --- 1. БЕЗОПАСНЫЕ ДАННЫЕ ---
             v_id = row.get('id')
             g_num = row.get('Госномер') or row.get('gov_num') or "Н/Д"
-            brand = row.get('Марка') or row.get('brand') or "Неизвестно"
-            v_type = row.get('Тип') or row.get('body_type') or "Тент"
+            brand = row.get('Марка') or row.get('brand') or ""
+            v_type = row.get('Тип') or row.get('body_type') or ""
             status = row.get('Статус') or row.get('status') or "На линии"
             veh_img = row.get('Фото') or row.get('photo_url') or "https://cdn-icons-png.flaticon.com/512/2554/2554977.png"
             
-            capacity = row.get('Грузоподъемность') or row.get('capacity') or 0
-            volume = row.get('Объем') or row.get('volume') or 0
-            pallets = row.get('Паллеты') or row.get('pallets') or 0
+            cap = row.get('Грузоподъемность') or row.get('capacity') or 0
+            vol = row.get('Объем') or row.get('volume') or 0
+            pal = row.get('Паллеты') or row.get('pallets') or 0
 
-            # Настройка цвета статуса
-            status_color = "#238636" if status in ["На линии", "В работе", "Свободен"] else "#D29922"
-            if status == "Ремонт": status_color = "#F85149"
+            # Цвет статуса (зеленый для "На линии", желтый для остальных)
+            st_color = "#238636" if status == "На линии" else "#d29922"
 
             with cols[idx % 2]:
-                # Главный контейнер карточки
                 with st.container(border=True):
-                    # --- ВЕРСТКА КАРТОЧКИ ---
-                    st.markdown(f"""
-                    <div style="padding: 5px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                            <div style="display: flex; align-items: center; gap: 12px;">
-                                <div style="background: #161B22; padding: 8px; border-radius: 10px; border: 1px solid #30363D;">
-                                    <img src="{veh_img}" style="width: 45px; height: 45px; object-fit: contain;">
-                                </div>
+                    # --- 2. КРАСИВЫЙ И ПОНЯТНЫЙ ДИЗАЙН ---
+                    card_html = f"""
+                    <div style="font-family: sans-serif; color: white;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                            <div style="display: flex; gap: 12px;">
+                                <img src="{veh_img}" style="width: 48px; height: 48px; object-fit: contain; background: #161b22; border-radius: 8px; padding: 4px;">
                                 <div>
-                                    <h3 style="margin:0; color:#58A6FF; font-size: 1.3em; letter-spacing: 1px;">{g_num}</h3>
-                                    <p style="margin:0; color: #8B949E; font-size: 0.9em; font-weight: 500;">{brand} • {v_type}</p>
+                                    <div style="font-size: 1.2em; font-weight: bold; color: #58a6ff;">{g_num}</div>
+                                    <div style="font-size: 0.85em; color: #8b949e;">{brand} • {v_type}</div>
                                 </div>
                             </div>
-                            <div style="background: {status_color}22; color: {status_color}; border: 1px solid {status_color}; 
-                                        padding: 3px 12px; border-radius: 20px; font-size: 0.75em; font-weight: bold; text-transform: uppercase;">
-                                {status}
+                            <div style="border: 1px solid {st_color}; color: {st_color}; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold;">
+                                {status.upper()}
                             </div>
                         </div>
                         
-                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 5px;">
-                            <div style="background: #0D1117; padding: 10px; border-radius: 8px; border: 1px solid #21262D; text-align: center;">
-                                <div style="color: #8B949E; font-size: 0.7em; text-transform: uppercase; margin-bottom: 4px;">⚖️ Вес</div>
-                                <div style="color: #C9D1D9; font-size: 0.95em; font-weight: bold;">{capacity} <small>кг</small></div>
+                        <div style="display: flex; gap: 8px; margin-top: 10px;">
+                            <div style="flex: 1; background: #0d1117; padding: 8px; border-radius: 6px; border: 1px solid #30363d; text-align: center;">
+                                <div style="font-size: 0.65em; color: #8b949e; text-transform: uppercase;">Вес</div>
+                                <div style="font-size: 0.9em; font-weight: bold;">{cap} кг</div>
                             </div>
-                            <div style="background: #0D1117; padding: 10px; border-radius: 8px; border: 1px solid #21262D; text-align: center;">
-                                <div style="color: #8B949E; font-size: 0.7em; text-transform: uppercase; margin-bottom: 4px;">📦 Объем</div>
-                                <div style="color: #C9D1D9; font-size: 0.95em; font-weight: bold;">{volume} <small>м³</small></div>
+                            <div style="flex: 1; background: #0d1117; padding: 8px; border-radius: 6px; border: 1px solid #30363d; text-align: center;">
+                                <div style="font-size: 0.65em; color: #8b949e; text-transform: uppercase;">Объем</div>
+                                <div style="font-size: 0.9em; font-weight: bold;">{vol} м³</div>
                             </div>
-                            <div style="background: #0D1117; padding: 10px; border-radius: 8px; border: 1px solid #21262D; text-align: center;">
-                                <div style="color: #8B949E; font-size: 0.7em; text-transform: uppercase; margin-bottom: 4px;">🧱 Паллеты</div>
-                                <div style="color: #C9D1D9; font-size: 0.95em; font-weight: bold;">{pallets} <small>шт</small></div>
+                            <div style="flex: 1; background: #0d1117; padding: 8px; border-radius: 6px; border: 1px solid #30363d; text-align: center;">
+                                <div style="font-size: 0.65em; color: #8b949e; text-transform: uppercase;">Паллеты</div>
+                                <div style="font-size: 0.9em; font-weight: bold;">{pal} шт</div>
                             </div>
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
-
-                    # --- КНОПКИ (ВНЕ st.markdown) ---
-                    st.write("") # Небольшой отступ
-                    btn_col1, btn_col2 = st.columns([4, 1])
+                    """
+                    st.markdown(card_html, unsafe_allow_html=True)
                     
-                    if btn_col1.button(f"⚙️ РЕДАКТИРОВАТЬ", key=f"edit_{v_id}", use_container_width=True):
+                    st.write("") # Проставка
+                    
+                    # --- 3. КНОПКИ УПРАВЛЕНИЯ ---
+                    c1, c2 = st.columns([4, 1])
+                    if c1.button(f"⚙️ РЕДАКТИРОВАТЬ", key=f"ed_{v_id}", use_container_width=True):
                         st.session_state.editing_id = v_id
                         edit_vehicle_modal()
                     
-                    if btn_col2.button(f"🗑️", key=f"del_{v_id}", use_container_width=True):
+                    if c2.button(f"🗑️", key=f"dl_{v_id}", use_container_width=True):
                         try:
                             supabase.table("vehicles").delete().eq("id", v_id).execute()
                             st.session_state.vehicles = st.session_state.vehicles[st.session_state.vehicles.id != v_id]
-                            st.toast(f"Транспорт {g_num} удален", icon="✅")
-                            import time
-                            time.sleep(1)
+                            st.toast("Автомобиль удален")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Ошибка удаления: {e}")
+                            st.error(f"Ошибка: {e}")
     else:
         st.info("ℹ️ В автопарке пока нет записей. Воспользуйтесь кнопкой выше, чтобы добавить первый автомобиль.")
 
@@ -1860,6 +1852,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
