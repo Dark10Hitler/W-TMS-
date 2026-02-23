@@ -213,29 +213,25 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
         return False, None
 
 
-T_URL = "http://127.0.0.1:8082"
-T_USER = "denis.masliuc.speak23dev@gmail.com"
-T_PASS = "qwert12345"
+# ИСПОЛЬЗУЕМ ВНЕШНИЙ URL ТУННЕЛЯ, чтобы облако видело твой ПК
+TRACCAR_URL = "https://bronchiolar-dichromatic-abdul.ngrok-free.dev"
+TRACCAR_AUTH = ("denis.masliuc.speak23dev@gmail.com", "qwert12345")
 
+@st.cache_data(ttl=10)
 def get_detailed_traccar_data():
-    # УБИРАЕМ @st.cache_data ВРЕМЕННО, чтобы исключить старые ошибки
-    api_base = f"{T_URL}/api"
+    api_base = f"{TRACCAR_URL.rstrip('/')}/api"
+    # Добавляем заголовки, чтобы Ngrok не показывал страницу-предупреждение
+    headers = {'ngrok-skip-browser-warning': 'true'}
     try:
-        # Используем Session для стабильности
-        with requests.Session() as s:
-            s.auth = (T_USER, T_PASS)
-            # Пробуем получить устройства
-            r = s.get(f"{api_base}/devices", timeout=5)
-            if r.status_code == 200:
-                devices_list = r.json()
-                # Если устройства есть, пробуем позиции
-                p = s.get(f"{api_base}/positions", timeout=5)
-                return {d['id']: d for d in devices_list}, p.json()
-            else:
-                st.sidebar.error(f"Ошибка API: {r.status_code}")
-                return {}, []
+        dev_resp = requests.get(f"{api_base}/devices", auth=TRACCAR_AUTH, headers=headers, timeout=10)
+        pos_resp = requests.get(f"{api_base}/positions", auth=TRACCAR_AUTH, headers=headers, timeout=10)
+        
+        if dev_resp.status_code == 200 and pos_resp.status_code == 200:
+            devices = {d['id']: d for d in dev_resp.json()}
+            return devices, pos_resp.json()
+        return {}, []
     except Exception as e:
-        st.sidebar.error(f"Ошибка подключения: {e}")
+        st.sidebar.error(f"📡 Ошибка связи с туннелем: {e}")
         return {}, []
 
 def get_vehicle_status_color(status):
@@ -859,22 +855,66 @@ def show_dashboard():
             st.metric("Ср. загрузка ТС", f"{avg_load:.1f}%" if not pd.isna(avg_load) else "0%")
             
 def show_map():
-    st.markdown("## 🛰️ Оперативный штаб")
+    st.markdown("## 🛰️ Оперативный штаб: Мониторинг Fleet")
+    st_autorefresh(interval=15000, key="traccar_refresh")
     
-    # КНОПКА ПРИНУДИТЕЛЬНОГО ОБНОВЛЕНИЯ
-    if st.button("🔄 Обновить данные вручную"):
-        st.cache_data.clear()
-        st.rerun()
-
+    # Получаем данные
     devices, positions = get_detailed_traccar_data()
+    v_reg = st.session_state.get('vehicles', pd.DataFrame())
+    d_reg = st.session_state.get('drivers', pd.DataFrame())
 
-    if not devices:
-        st.warning("⚠️ Данные не получены. Проверь консоль (черное окно), там должна быть ошибка.")
-    else:
-        st.success(f"✅ Подключено! Найдено устройств: {len(devices)}")
-        # Выведем список имен для проверки
-        for d_id, d_info in devices.items():
-            st.write(f"Устройство: {d_info.get('name')} (ID: {d_id})")
+    # Базовая карта (Центральный склад)
+    BASE_LAT, BASE_LON = 47.776654, 27.913643
+    m = folium.Map(location=[BASE_LAT, BASE_LON], zoom_start=12, tiles="cartodbpositron")
+
+    if not positions:
+        st.info("🛰️ Ожидание сигналов GPS... Убедитесь, что Ngrok и Traccar запущены на вашем ПК.")
+    
+    stats = {"active": 0, "stopped": 0, "at_base": []}
+
+    for pos in positions:
+        dev_id = pos.get('deviceId')
+        if dev_id not in devices: continue
+        
+        v_name = devices[dev_id].get('name') # Имя в Traccar
+        
+        # --- СВЯЗКА С SUPABASE (теперь через 'model') ---
+        # Ищем по колонке 'model'
+        v_data = {}
+        if not v_reg.empty and 'model' in v_reg.columns:
+            v_row = v_reg[v_reg['model'] == v_name]
+            if not v_row.empty:
+                v_data = v_row.iloc[0].to_dict()
+
+        # Ищем водителя (по имени ТС)
+        d_data = {}
+        if not d_reg.empty and 'ТС' in d_reg.columns:
+            d_row = d_reg[d_reg['ТС'] == v_name]
+            if not d_row.empty:
+                d_data = d_row.iloc[0].to_dict()
+
+        # Технические данные
+        speed = round(pos.get('speed', 0) * 1.852, 1)
+        lat, lon = pos.get('latitude'), pos.get('longitude')
+        
+        # Метрики состояния
+        if speed > 3: stats["active"] += 1
+        else: stats["stopped"] += 1
+
+        # Отрисовка маркера
+        folium.Marker(
+            [lat, lon],
+            popup=f"<b>🚛 {v_name}</b><br>Водитель: {d_data.get('Фамилия', 'Не назначен')}<br>Скорость: {speed} км/ч",
+            icon=folium.Icon(color="green" if speed > 3 else "blue", icon="truck", prefix="fa")
+        ).add_to(m)
+
+    # Вывод метрик и карты
+    c1, c2, c3 = st.columns(3)
+    c1.metric("🚚 В движении", stats["active"])
+    c2.metric("🅿️ На стоянке", stats["stopped"])
+    c3.metric("📡 Статус туннеля", "ONLINE" if devices else "OFFLINE")
+
+    st_folium(m, width=1300, height=600)
             
 def show_profile():
     st.markdown("<h1 class='no-print'>👤 Личный кабинет / Карточка Сотрудника</h1>", unsafe_allow_html=True)
@@ -1715,6 +1755,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
