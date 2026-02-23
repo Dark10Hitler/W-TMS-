@@ -11,6 +11,24 @@ from constants import ORDER_COLUMNS, ARRIVAL_COLUMNS, EXTRA_COLUMNS, DEFECT_COLU
 import base64
 from database import supabase
 
+def upload_driver_photo(file):
+    from database import supabase
+    try:
+        file_ext = file.name.split(".")[-1]
+        file_name = f"drv_{int(time.time())}.{file_ext}"
+        
+        # Загрузка
+        supabase.storage.from_("defects_photos").upload(
+            path=file_name,
+            file=file.getvalue(),
+            file_options={"content-type": f"image/{file_ext}"}
+        )
+        # Получение ссылки
+        return supabase.storage.from_("defects_photos").get_public_url(file_name)
+    except Exception as e:
+        # В случае ошибки возвращаем дефолтную иконку
+        return "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+
 def process_image(uploaded_file):
     if uploaded_file is not None:
         file_bytes = uploaded_file.getvalue()
@@ -688,33 +706,53 @@ def create_defect_modal():
 @st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
     from database import supabase
-    import uuid
+    st.subheader("📝 Данные нового сотрудника")
     
-    f_name = st.text_input("Имя")
-    l_name = st.text_input("Фамилия")
-    phone = st.text_input("Номер телефона", value="+7")
-    cats = st.multiselect("Категории", ["B", "C", "CE", "D"], default=["B", "C"])
-    exp = st.number_input("Стаж (лет)", 0, 50, 5)
-    stat = st.selectbox("Статус", ["В штате", "На подработке", "Уволен"])
-    up_photo = st.file_uploader("Фото")
+    # Сначала виджет файла
+    up_photo = st.file_uploader("📸 Фото водителя", type=["jpg", "png", "jpeg"])
+    
+    # Потом форма
+    with st.form("driver_form_new"):
+        col1, col2 = st.columns(2)
+        f_name = col1.text_input("Имя")
+        l_name = col2.text_input("Фамилия")
+        phone = st.text_input("📱 Номер телефона", value="+7")
+        license_cat = st.multiselect("🪪 Категории", ["B", "C", "CE", "D"], default=["B", "C"])
+        experience = st.slider("Стаж (лет)", 0, 40, 5)
+        status = st.selectbox("📍 Статус", ["В штате", "На подработке", "Уволен"])
+        
+        submitted = st.form_submit_button("✅ СОХРАНИТЬ")
 
-    if st.button("✅ СОХРАНИТЬ", use_container_width=True, type="primary"):
-        final_photo = upload_driver_photo(up_photo) if up_photo else None
-        new_id = f"DRV-{str(uuid.uuid4())[:4].upper()}"
+    if submitted:
+        if not f_name or not l_name:
+            st.error("Заполните ФИО!")
+            return
+
+        # ТЕПЕРЬ NameError исчезнет, так как функция определена выше
+        final_photo = upload_driver_photo(up_photo) if up_photo else "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+        
+        driver_id = f"DRV-{str(uuid.uuid4())[:4].upper()}"
         
         db_data = {
-            "id": new_id, "first_name": f_name, "last_name": l_name,
-            "phone": phone, "categories": ", ".join(cats),
-            "experience": exp, "status": stat, "photo_url": final_photo
+            "id": driver_id,
+            "first_name": f_name,
+            "last_name": l_name,
+            "phone": phone,
+            "categories": ", ".join(license_cat),
+            "experience": experience,
+            "status": status,
+            "photo_url": final_photo,
+            "created_at": datetime.now().strftime("%Y-%m-%d")
         }
-        
-        res = supabase.table("drivers").insert(db_data).execute()
-        if res.data:
+
+        try:
+            supabase.table("drivers").insert(db_data).execute()
+            st.session_state.drivers = pd.DataFrame() # Сброс кэша
             st.success("Водитель добавлен!")
-            # Сбрасываем кэш, чтобы данные подтянулись заново
-            st.session_state.drivers = pd.DataFrame() 
             time.sleep(1)
             st.rerun()
+        except Exception as e:
+            st.error(f"Ошибка базы: {e}")
 
 @st.dialog("⚙️ Редактирование водителя")
 def edit_driver_modal(d_id):
@@ -915,6 +953,7 @@ def edit_vehicle_modal():
             st.success("Данные ТС успешно обновлены!")
             time.sleep(1)
             st.rerun()
+
 
 
 
