@@ -819,26 +819,37 @@ def create_vehicle_modal():
         submitted = st.form_submit_button("✅ ВНЕСТИ ТС В РЕЕСТР", use_container_width=True)
 
     if submitted:
+        # Валидация заполнения
         if not gov_num or not brand:
-            st.error("Заполните госномер и марку!")
+            st.error("🚨 Заполните обязательные поля: Госномер и Марка!")
             return
         
-        # Обработка фото
-        img_map = {
-            "Тент": "https://cdn-icons-png.flaticon.com/512/3564/3564344.png", 
-            "Рефрижератор": "https://cdn-icons-png.flaticon.com/512/3564/3564359.png",
-            "Изотерм": "https://cdn-icons-png.flaticon.com/512/3564/3564344.png",
-            "Бортовой": "https://cdn-icons-png.flaticon.com/512/2554/2554977.png"
-        }
-        final_v_photo = process_image(uploaded_v_photo) or img_map.get(v_type)
-        vehicle_id = f"VEH-{str(uuid.uuid4())[:4].upper()}"
+        # Очистка госномера (удаляем пробелы и переводим в верхний регистр)
+        clean_gov_num = gov_num.strip().upper()
 
-        # 1. ОТПРАВКА В SUPABASE
+        # --- ШАГ 1: ПРОВЕРКА НА СУЩЕСТВОВАНИЕ ---
+        try:
+            # Ищем, есть ли уже такой номер в базе
+            existing = supabase.table("vehicles").select("id").eq("gov_num", clean_gov_num).execute()
+            
+            if existing.data:
+                st.warning(f"⚠️ Автомобиль с госномером **{clean_gov_num}** уже зарегистрирован!")
+                return  # Прерываем выполнение, чтобы не добавлять дубль
+        except Exception as e:
+            st.error(f"Ошибка при проверке базы данных: {e}")
+            return
+
+        # --- ШАГ 2: ПОДГОТОВКА И СОХРАНЕНИЕ ---
+        vehicle_id = f"VEH-{str(uuid.uuid4())[:4].upper()}"
+        
+        # Логика обработки фото (используем вашу функцию process_image)
+        final_v_photo = process_image(uploaded_v_photo) or img_map.get(v_type)
+
         db_payload = {
             "id": vehicle_id,
             "brand": brand,
-            "gov_number": gov_num,
-            "vin": vin,
+            "gov_num": clean_gov_num,  -- Ключ исправлен на gov_num
+            "vin": vin.strip().upper() if vin else None,
             "body_type": v_type,
             "capacity": float(cap),
             "volume": float(vol),
@@ -850,25 +861,30 @@ def create_vehicle_modal():
         }
 
         try:
+            # Отправка в Supabase
             supabase.table("vehicles").insert(db_payload).execute()
-        except Exception as e:
-            st.error(f"Ошибка сохранения ТС в облако: {e}")
-            return
+            
+            # Локальное обновление состояния (чтобы ТС появилось сразу без перезагрузки всей страницы)
+            new_v_ui = {
+                "id": vehicle_id, 
+                "Марка": brand, "Госномер": clean_gov_num, "Тип": v_type, 
+                "Грузоподъемность": cap, "Объем": vol, "Паллеты": pal,
+                "ТО": l_to.strftime("%Y-%m-%d"), "Страховка": ins.strftime("%Y-%m-%d"),
+                "Фото": final_v_photo, "Статус": "На линии"
+            }
+            
+            if "vehicles" in st.session_state:
+                st.session_state.vehicles = pd.concat([
+                    st.session_state.vehicles, 
+                    pd.DataFrame([new_v_ui])
+                ], ignore_index=True)
 
-        # 2. ОБНОВЛЕНИЕ ЛОКАЛЬНО
-        new_v_ui = {
-            "id": vehicle_id, 
-            "Марка": brand, "Госномер": gov_num, "Тип": v_type, 
-            "Грузоподъемность": cap, "Объем": vol, "Паллеты": pal,
-            "ТО": l_to.strftime("%Y-%m-%d"), "Страховка": ins.strftime("%Y-%m-%d"),
-            "Фото": final_v_photo, "Статус": "На линии"
-        }
-        st.session_state.vehicles = pd.concat([st.session_state.vehicles, pd.DataFrame([new_v_ui])], ignore_index=True)
-        
-        st.success(f"ТС {gov_num} успешно зарегистрировано!")
-        st.session_state.active_modal = None
-        time.sleep(1)
-        st.rerun()
+            st.success(f"✅ ТС {clean_gov_num} успешно добавлено в реестр!")
+            time.sleep(1)
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"Ошибка сохранения ТС: {e}")
 
 @st.dialog("⚙️ Редактирование ТС", width="large")
 def edit_vehicle_modal():
@@ -953,6 +969,7 @@ def edit_vehicle_modal():
             st.success("Данные ТС успешно обновлены!")
             time.sleep(1)
             st.rerun()
+
 
 
 
