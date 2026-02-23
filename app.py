@@ -212,8 +212,9 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
         st.error(f"🚨 Ошибка сохранения в {table_name}: {e}")
         return False, None
 
-
-TRACCAR_URL = "http://127.0.0.1:8082"
+# Если 127.0.0.1 не работает в Streamlit, попробуй свой же туннель
+TRACCAR_URL = "https://bronchiolar-dichromatic-abdul.ngrok-free.dev"
+#TRACCAR_URL = "http://127.0.0.1:8082"
 TRACCAR_AUTH = ("denis.masliuc.speak23dev@gmail.com", "qwert12345")
 
 @st.cache_data(ttl=5) # Минимальный TTL
@@ -1766,6 +1767,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
