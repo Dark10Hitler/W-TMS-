@@ -879,9 +879,10 @@ def create_vehicle_modal():
                     pd.DataFrame([new_v_ui])
                 ], ignore_index=True)
 
-            st.success(f"✅ ТС {clean_gov_num} успешно добавлено в реестр!")
+            # После успешного сохранения:
+            st.success(f"✅ ТС {clean_gov_num} успешно добавлено!")
             time.sleep(1)
-            st.rerun()
+            st.rerun() # Диалог закроется сам при обновлении страницы
             
         except Exception as e:
             st.error(f"Ошибка сохранения ТС: {e}")
@@ -964,11 +965,11 @@ def edit_vehicle_modal():
             df.at[idx, 'Страховка'] = new_ins.strftime("%Y-%m-%d")
             df.at[idx, 'Фото'] = new_photo
             
+            # После успешного сохранения:
             st.session_state.vehicles = df
-            st.session_state.active_edit_modal = None
             st.success("Данные ТС успешно обновлены!")
             time.sleep(1)
-            st.rerun()
+            st.rerun() # Диалог закроется сам
 
 
 
