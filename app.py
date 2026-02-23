@@ -668,6 +668,7 @@ def render_aggrid_table(table_key, title):
                 if target_key == "orders": show_print_modal(row_id)
                 elif target_key == "arrivals": show_arrival_print_modal(row_id)
                 elif target_key == "extras": show_extra_print_modal(row_id)
+                elif target_key == "defects": show_defect_print_modal(row_id)
 
     else:
         st.info("💡 Выберите запись в таблице для управления")
@@ -1809,6 +1810,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
