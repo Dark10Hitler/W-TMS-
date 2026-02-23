@@ -1277,7 +1277,7 @@ elif selected == "ТС":
             with cols[idx % 2]:
                 # Главный контейнер карточки
                 with st.container(border=True):
-                    # HTML-верстка карточки
+                    # --- ВЕРСТКА КАРТОЧКИ ---
                     st.markdown(f"""
                     <div style="padding: 5px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
@@ -1313,9 +1313,8 @@ elif selected == "ТС":
                     </div>
                     """, unsafe_allow_html=True)
 
-                    st.markdown("<div style='margin: 10px 0;'></div>", unsafe_allow_html=True)
-
-                    # --- КНОПКИ УПРАВЛЕНИЯ ---
+                    # --- КНОПКИ (ВНЕ st.markdown) ---
+                    st.write("") # Небольшой отступ
                     btn_col1, btn_col2 = st.columns([4, 1])
                     
                     if btn_col1.button(f"⚙️ РЕДАКТИРОВАТЬ", key=f"edit_{v_id}", use_container_width=True):
@@ -1325,9 +1324,9 @@ elif selected == "ТС":
                     if btn_col2.button(f"🗑️", key=f"del_{v_id}", use_container_width=True):
                         try:
                             supabase.table("vehicles").delete().eq("id", v_id).execute()
-                            # Мгновенное обновление локального состояния
                             st.session_state.vehicles = st.session_state.vehicles[st.session_state.vehicles.id != v_id]
                             st.toast(f"Транспорт {g_num} удален", icon="✅")
+                            import time
                             time.sleep(1)
                             st.rerun()
                         except Exception as e:
@@ -1861,6 +1860,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
