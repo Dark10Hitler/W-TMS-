@@ -1241,47 +1241,63 @@ elif selected == "Водители":
 elif selected == "ТС":
     st.markdown("<h1 class='section-head'>🚛 Управление Автопарком</h1>", unsafe_allow_html=True)
     
-    if "vehicles" not in st.session_state or st.session_state.vehicles.empty:
+    # 1. Загрузка данных, если их нет в стейте
+    if "vehicles" not in st.session_state or st.session_state.vehicles is None:
         with st.spinner("Загрузка автопарка..."):
             st.session_state.vehicles = load_data_from_supabase("vehicles")
 
-    # Кнопка добавления: ВЫЗЫВАЕМ НАПРЯМУЮ
+    # Кнопка добавления
     if st.button("➕ ДОБАВИТЬ НОВОЕ ТС", type="primary", use_container_width=True):
         create_vehicle_modal() 
 
     st.divider()
 
-    df_v = st.session_state.vehicles
+    # Работаем с данными
+    df_v = st.session_state.get("vehicles", pd.DataFrame())
+
     if not df_v.empty:
         cols = st.columns(2) 
         for idx, (i, row) in enumerate(df_v.iterrows()):
+            # Безопасное получение ID
+            v_id = row.get('id')
+            
             with cols[idx % 2]:
                 with st.container(border=True):
-                    # ... (твой HTML код карточки остается без изменений) ...
+                    # РЕНДЕРИНГ КАРТОЧКИ (Твой HTML код здесь)
+                    # Используй row.get('Госномер') или row.get('gov_num')
+                    veh_img = row.get('Фото') or "https://cdn-icons-png.flaticon.com/512/2554/2554977.png"
+                    
+                    st.markdown(f"""
+                        <div style="display: flex; gap: 15px;">
+                            <img src="{veh_img}" style="width: 50px; height: 50px; object-fit: contain;">
+                            <div>
+                                <h2 style="margin:0; color:#58A6FF; font-size: 1.2em;">{row.get('Госномер', 'Н/Д')}</h2>
+                                <p style="margin:0; color: gray; font-size: 0.85em;">{row.get('Марка', 'Н/Д')}</p>
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
                     
                     st.divider()
 
-                    vc1, vc2, vc3 = st.columns([1.5, 1.5, 0.8])
+                    # КНОПКИ УПРАВЛЕНИЯ (Только две)
+                    vc1, vc2 = st.columns([4, 1])
                     
-                    # КНОПКА ИЗМЕНИТЬ: Сохраняем ID и вызываем функцию
-                    if vc1.button("⚙️ Изменить", key=f"edit_v_btn_{row['id']}", use_container_width=True):
-                        st.session_state.editing_id = row['id']
-                        edit_vehicle_modal() # ВЫЗОВ НАПРЯМУЮ
+                    if vc1.button("⚙️ Изменить", key=f"edit_v_btn_{v_id}", use_container_width=True):
+                        st.session_state.editing_id = v_id
+                        edit_vehicle_modal()
                     
-                    # КНОПКА СЕРВИС
-                    if vc2.button("🛠️ Сервис", key=f"serv_v_{row['id']}", use_container_width=True):
+                    if vc2.button("🗑️", key=f"del_v_{v_id}", use_container_width=True):
                         try:
-                            # Обрати внимание: в базе колонка может называться "status" (лат), проверь это!
-                            curr_status = row.get('Статус', 'На линии')
-                            new_status = "Сервис" if curr_status == "На линии" else "На линии"
-                            supabase.table("vehicles").update({"status": new_status}).eq("id", row['id']).execute()
-                            st.session_state.vehicles.at[i, 'Статус'] = new_status
+                            # Прямое удаление, чтобы избежать ошибки в функции delete_entry
+                            supabase.table("vehicles").delete().eq("id", v_id).execute()
+                            # Удаляем из локального стейта
+                            st.session_state.vehicles = st.session_state.vehicles[st.session_state.vehicles.id != v_id]
+                            st.toast(f"ТС удалено")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Ошибка: {e}")
-
-                    if vc3.button("🗑️", key=f"del_v_{row['id']}", use_container_width=True):
-                        delete_entry("vehicles", row['id'])
+                            st.error(f"Ошибка удаления: {e}")
+    else:
+        st.info("В автопарке пока нет автомобилей или данные загружаются.")
 
 elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence & Tech Audit")
@@ -1809,6 +1825,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
