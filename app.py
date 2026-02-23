@@ -1267,17 +1267,36 @@ elif selected == "ТС":
                     # Используй row.get('Госномер') или row.get('gov_num')
                     veh_img = row.get('Фото') or "https://cdn-icons-png.flaticon.com/512/2554/2554977.png"
                     
-                    st.markdown(f"""
-                        <div style="display: flex; gap: 15px;">
-                            <img src="{veh_img}" style="width: 50px; height: 50px; object-fit: contain;">
-                            <div>
-                                <h2 style="margin:0; color:#58A6FF; font-size: 1.2em;">{row.get('Госномер', 'Н/Д')}</h2>
-                                <p style="margin:0; color: gray; font-size: 0.85em;">{row.get('Марка', 'Н/Д')}</p>
-                            </div>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    st.divider()
+                    # 3. ВИЗУАЛЬНАЯ ЧАСТЬ (HTML)
+st.markdown(f"""
+<div style="position: relative; margin-bottom: 10px;">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+        <div style="display: flex; gap: 15px;">
+            <img src="{veh_img}" style="width: 50px; height: 50px; object-fit: contain;">
+            <div>
+                <h2 style="margin:0; color:#58A6FF; font-size: 1.2em;">{g_num}</h2>
+                <p style="margin:0; color: gray; font-size: 0.85em;">{brand} • {v_type}</p>
+            </div>
+        </div>
+        <div style="background: {status_bg}; color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.7em; font-weight: bold;">
+            {status}
+        </div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 15px; text-align: center;">
+        <div style="background: #0D1117; padding: 6px; border-radius: 8px; border: 1px solid #30363D;">
+            <small style="color: gray; font-size: 0.7em;">Вес</small><br><b style="font-size: 0.8em;">{capacity} кг</b>
+        </div>
+        <div style="background: #0D1117; padding: 6px; border-radius: 8px; border: 1px solid #30363D;">
+            <small style="color: gray; font-size: 0.7em;">Объем</small><br><b style="font-size: 0.8em;">{volume} м³</b>
+        </div>
+        <div style="background: #0D1117; padding: 6px; border-radius: 8px; border: 1px solid #30363D;">
+            <small style="color: gray; font-size: 0.7em;">Паллеты</small><br><b style="font-size: 0.8em;">{pallets} шт</b>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+st.divider()
 
                     # КНОПКИ УПРАВЛЕНИЯ (Только две)
                     vc1, vc2 = st.columns([4, 1])
@@ -1825,6 +1844,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
