@@ -1240,12 +1240,10 @@ elif selected == "Водители":
 elif selected == "ТС":
     st.markdown("<h1 class='section-head'>🚛 Управление Автопарком</h1>", unsafe_allow_html=True)
     
-    # 1. Загрузка данных
     if "vehicles" not in st.session_state or st.session_state.vehicles is None:
-        with st.spinner("Синхронизация с базой данных..."):
+        with st.spinner("Синхронизация..."):
             st.session_state.vehicles = load_data_from_supabase("vehicles")
 
-    # Кнопка добавления
     if st.button("➕ ДОБАВИТЬ НОВОЕ ТРАНСПОРТНОЕ СРЕДСТВО", type="primary", use_container_width=True):
         create_vehicle_modal() 
 
@@ -1256,7 +1254,6 @@ elif selected == "ТС":
     if not df_v.empty:
         cols = st.columns(2) 
         for idx, (i, row) in enumerate(df_v.iterrows()):
-            # --- 1. БЕЗОПАСНЫЕ ДАННЫЕ ---
             v_id = row.get('id')
             g_num = row.get('Госномер') or row.get('gov_num') or "Н/Д"
             brand = row.get('Марка') or row.get('brand') or ""
@@ -1268,50 +1265,47 @@ elif selected == "ТС":
             vol = row.get('Объем') or row.get('volume') or 0
             pal = row.get('Паллеты') or row.get('pallets') or 0
 
-            # Цвет статуса (зеленый для "На линии", желтый для остальных)
             st_color = "#238636" if status == "На линии" else "#d29922"
 
             with cols[idx % 2]:
                 with st.container(border=True):
-                    # --- 2. КРАСИВЫЙ И ПОНЯТНЫЙ ДИЗАЙН ---
+                    # Мы упаковываем HTML в одну строку, чтобы Streamlit не путался
                     card_html = f"""
-                    <div style="font-family: sans-serif; color: white;">
+                    <div style="font-family: sans-serif;">
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
                             <div style="display: flex; gap: 12px;">
-                                <img src="{veh_img}" style="width: 48px; height: 48px; object-fit: contain; background: #161b22; border-radius: 8px; padding: 4px;">
+                                <img src="{veh_img}" style="width: 48px; height: 48px; object-fit: contain; background: #161b22; border-radius: 8px; padding: 4px; border: 1px solid #30363d;">
                                 <div>
-                                    <div style="font-size: 1.2em; font-weight: bold; color: #58a6ff;">{g_num}</div>
+                                    <div style="font-size: 1.1em; font-weight: bold; color: #58a6ff;">{g_num}</div>
                                     <div style="font-size: 0.85em; color: #8b949e;">{brand} • {v_type}</div>
                                 </div>
                             </div>
-                            <div style="border: 1px solid {st_color}; color: {st_color}; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold;">
+                            <div style="border: 1px solid {st_color}; color: {st_color}; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold; background: {st_color}11;">
                                 {status.upper()}
                             </div>
                         </div>
-                        
-                        <div style="display: flex; gap: 8px; margin-top: 10px;">
+                        <div style="display: flex; gap: 8px;">
                             <div style="flex: 1; background: #0d1117; padding: 8px; border-radius: 6px; border: 1px solid #30363d; text-align: center;">
-                                <div style="font-size: 0.65em; color: #8b949e; text-transform: uppercase;">Вес</div>
-                                <div style="font-size: 0.9em; font-weight: bold;">{cap} кг</div>
+                                <div style="font-size: 0.6em; color: #8b949e; text-transform: uppercase;">Вес</div>
+                                <div style="font-size: 0.85em; font-weight: bold; color: #c9d1d9;">{cap} кг</div>
                             </div>
                             <div style="flex: 1; background: #0d1117; padding: 8px; border-radius: 6px; border: 1px solid #30363d; text-align: center;">
-                                <div style="font-size: 0.65em; color: #8b949e; text-transform: uppercase;">Объем</div>
-                                <div style="font-size: 0.9em; font-weight: bold;">{vol} м³</div>
+                                <div style="font-size: 0.6em; color: #8b949e; text-transform: uppercase;">Объем</div>
+                                <div style="font-size: 0.85em; font-weight: bold; color: #c9d1d9;">{vol} м&sup3;</div>
                             </div>
                             <div style="flex: 1; background: #0d1117; padding: 8px; border-radius: 6px; border: 1px solid #30363d; text-align: center;">
-                                <div style="font-size: 0.65em; color: #8b949e; text-transform: uppercase;">Паллеты</div>
-                                <div style="font-size: 0.9em; font-weight: bold;">{pal} шт</div>
+                                <div style="font-size: 0.6em; color: #8b949e; text-transform: uppercase;">Паллеты</div>
+                                <div style="font-size: 0.85em; font-weight: bold; color: #c9d1d9;">{pal} шт</div>
                             </div>
                         </div>
                     </div>
-                    """
+                    """.replace("\n", "") # Убираем переносы, которые ломают рендеринг
+                    
                     st.markdown(card_html, unsafe_allow_html=True)
+                    st.write("") 
                     
-                    st.write("") # Проставка
-                    
-                    # --- 3. КНОПКИ УПРАВЛЕНИЯ ---
                     c1, c2 = st.columns([4, 1])
-                    if c1.button(f"⚙️ РЕДАКТИРОВАТЬ", key=f"ed_{v_id}", use_container_width=True):
+                    if c1.button(f"⚙️ ИЗМЕНИТЬ", key=f"ed_{v_id}", use_container_width=True):
                         st.session_state.editing_id = v_id
                         edit_vehicle_modal()
                     
@@ -1324,7 +1318,7 @@ elif selected == "ТС":
                         except Exception as e:
                             st.error(f"Ошибка: {e}")
     else:
-        st.info("ℹ️ В автопарке пока нет записей. Воспользуйтесь кнопкой выше, чтобы добавить первый автомобиль.")
+        st.info("ℹ️ В автопарке пока нет записей.")
 
 elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence & Tech Audit")
@@ -1852,6 +1846,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
