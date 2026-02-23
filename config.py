@@ -1318,9 +1318,12 @@ def edit_defect_modal(entry_id):
         
 @st.dialog("🔍 Просмотр Акта брака", width="large")
 def show_defect_details_modal(defect_id):
+    from database import supabase
+    import pandas as pd
+    import streamlit as st
+
     # --- 1. ЗАГРУЗКА ДАННЫХ НАПРЯМУЮ ИЗ БД ---
     try:
-        # Берем все актуальные поля, включая items_data и photo_url
         response = supabase.table("defects").select("*").eq("id", defect_id).execute()
         
         if not response.data:
@@ -1329,24 +1332,27 @@ def show_defect_details_modal(defect_id):
             
         db_row = response.data[0]
         
-        # Загружаем спецификацию из JSONB колонки (items_data)
-        # Это гарантирует, что мы видим именно те товары, которые были сохранены
+        # Безопасная загрузка спецификации
         items_list = db_row.get('items_data', [])
-        if isinstance(items_list, list) and len(items_list) > 0:
-            items_df = pd.DataFrame(items_list)
-    # ПРИНУДИТЕЛЬНО ПЕРЕИМЕНОВЫВАЕМ ДЛЯ ОТОБРАЖЕНИЯ, ЕСЛИ КЛЮЧИ РАЗНЫЕ
+        items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame()
+
+        # Принудительная унификация названий колонок для отображения
+        if not items_df.empty:
+            # Если в базе ключ "Описание", меняем его на "Описание дефекта" для красоты в UI
             if 'Описание' in items_df.columns:
                 items_df = items_df.rename(columns={'Описание': 'Описание дефекта'})
+            elif 'item' in items_df.columns:
+                items_df = items_df.rename(columns={'item': 'Товар'})
     
-            st.dataframe(items_df, use_container_width=True)
-        else:
-            st.warning("⚠️ Детальная спецификация товаров не заполнена.")
+    except Exception as e:
+        st.error(f"Ошибка при получении данных: {e}")
+        return
 
     # --- 2. ЗАГОЛОВОК И СТАТУСНЫЕ МЕТРИКИ ---
-    st.error(f"### 📑 АКТ ДЕФЕКТОВКИ №{defect_id}")
+    st.subheader(f"📑 Акт дефектовки №{defect_id}")
     
-    # Верхняя панель с метриками (используем ключи БД)
     m1, m2, m3 = st.columns(3)
+    # Используем .get() с дефолтными значениями, чтобы избежать ошибок
     m1.metric("Статус", db_row.get('status', 'Н/Д'))
     m2.metric("Виновник", db_row.get('culprit', 'Н/Д'))
     m3.metric("Тип дефекта", db_row.get('defect_type', 'Н/Д'))
@@ -1363,12 +1369,10 @@ def show_defect_details_modal(defect_id):
     
     with col_right:
         st.markdown(f"**📍 Зона хранения:** `{db_row.get('quarantine_address', 'Зона Карантин')}`")
-        # Форматируем дату, если она есть
         raw_date = db_row.get('updated_at', '---')
-        clean_date = raw_date[:16].replace('T', ' ') if 'T' in raw_date else raw_date
+        clean_date = raw_date[:16].replace('T', ' ') if 'T' in str(raw_date) else raw_date
         st.markdown(f"**📅 Последнее обновление:** {clean_date}")
         
-    # Блок с решением комиссии
     st.info(f"**⚖️ Принятое решение:**\n\n{db_row.get('decision', 'На стадии рассмотрения')}")
 
     # --- 4. СПЕЦИФИКАЦИЯ ТОВАРОВ (ТАБЛИЦА) ---
@@ -1376,7 +1380,6 @@ def show_defect_details_modal(defect_id):
     st.markdown("#### 📦 Спецификация поврежденных позиций")
     
     if not items_df.empty:
-        # Отображаем таблицу (только чтение)
         st.dataframe(
             items_df, 
             use_container_width=True,
@@ -1387,31 +1390,27 @@ def show_defect_details_modal(defect_id):
             }
         )
         
-        # Подвал таблицы с итогами
-        footer_c1, footer_c2 = st.columns(2)
-        footer_c1.caption(f"Всего позиций в списке: {len(items_df)}")
+        f1, f2 = st.columns(2)
+        f1.caption(f"Всего позиций: {len(items_df)}")
         if 'Кол-во' in items_df.columns:
-            try:
-                total_q = pd.to_numeric(items_df['Кол-во']).sum()
-                footer_c2.caption(f"Общее количество единиц: {total_q}")
-            except:
-                pass
+            total_q = pd.to_numeric(items_df['Кол-во'], errors='coerce').sum()
+            f2.caption(f"Общее кол-во единиц: {int(total_q)}")
     else:
         st.warning("⚠️ Детальная спецификация товаров не заполнена.")
 
-    # --- 5. ФОТОФИКСАЦИЯ (ВИЗУАЛИЗАЦИЯ) ---
+    # --- 5. ФОТОФИКСАЦИЯ ---
     photo_url = db_row.get('photo_url')
     if photo_url:
         st.divider()
         st.markdown("#### 📷 Фотофиксация повреждений")
-        # Показываем фото. Если в базе лежит URL, он отобразится корректно.
-        st.image(photo_url, use_container_width=True, caption=f"Доказательство к акту №{defect_id}")
+        st.image(photo_url, use_container_width=True, caption=f"Фото к акту №{defect_id}")
     else:
         st.divider()
-        st.caption("📷 Фотоматериалы к данному акту не загружены.")
+        st.caption("📷 Фотоматериалы не загружены.")
 
     # Кнопка закрытия
-    if st.button("❌ ЗАКРЫТЬ ПРОСМОТР", use_container_width=True):
+    st.write("") # Отступ
+    if st.button("❌ ЗАКРЫТЬ ПРОСМОТР", use_container_width=True, type="secondary"):
         st.rerun()
         
 @st.dialog("🖨️ Печать Акта о браке", width="large")
@@ -1566,6 +1565,7 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
+
 
 
 
