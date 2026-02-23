@@ -1122,14 +1122,7 @@ def delete_entry(table_key, entry_id):
             
     except Exception as e:
         st.error(f"❌ Ошибка при удалении из базы данных: {e}")
-    
-if selected == "Dashboard": show_dashboard()
-elif selected == "Main": render_aggrid_table("main", "Основной Реестр")
-elif selected == "Заявки": render_aggrid_table("orders", "Заявки")
-elif selected == "Приходы": render_aggrid_table("arrivals", "Приходы")
-elif selected == "Брак": render_aggrid_table("defects", "Журнал Брака")
-elif selected == "Дополнения": render_aggrid_table("extras", "Дополнения")
-# --- РАЗДЕЛ ВОДИТЕЛИ ---
+
 def upload_driver_photo(file):
     from database import supabase
     import time
@@ -1146,6 +1139,13 @@ def upload_driver_photo(file):
     except:
         return "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
         
+if selected == "Dashboard": show_dashboard()
+elif selected == "Main": render_aggrid_table("main", "Основной Реестр")
+elif selected == "Заявки": render_aggrid_table("orders", "Заявки")
+elif selected == "Приходы": render_aggrid_table("arrivals", "Приходы")
+elif selected == "Брак": render_aggrid_table("defects", "Журнал Брака")
+elif selected == "Дополнения": render_aggrid_table("extras", "Дополнения")
+# --- РАЗДЕЛ ВОДИТЕЛИ ---     
 elif selected == "Водители":
     st.markdown("<h1 class='section-head'>👨‍✈️ Реестр водителей</h1>", unsafe_allow_html=True)
     
@@ -1824,6 +1824,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
