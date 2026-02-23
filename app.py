@@ -1130,25 +1130,48 @@ elif selected == "Приходы": render_aggrid_table("arrivals", "Приход
 elif selected == "Брак": render_aggrid_table("defects", "Журнал Брака")
 elif selected == "Дополнения": render_aggrid_table("extras", "Дополнения")
 # --- РАЗДЕЛ ВОДИТЕЛИ ---
-# --- РАЗДЕЛ ВОДИТЕЛИ ---
+def upload_driver_photo(file):
+    from database import supabase
+    import time
+    try:
+        file_ext = file.name.split(".")[-1]
+        file_name = f"drv_{int(time.time())}.{file_ext}"
+        # Загружаем в созданный тобой бакет
+        supabase.storage.from_("defects_photos").upload(
+            path=file_name,
+            file=file.getvalue(),
+            file_options={"content-type": f"image/{file_ext}"}
+        )
+        return supabase.storage.from_("defects_photos").get_public_url(file_name)
+    except:
+        return "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+        
 elif selected == "Водители":
     st.markdown("<h1 class='section-head'>👨‍✈️ Реестр водителей</h1>", unsafe_allow_html=True)
     
-    # 1. СИНХРОНИЗАЦИЯ С БД: Если в сессии пусто, тянем из Supabase
+    # 1. СИНХРОНИЗАЦИЯ
     if "drivers" not in st.session_state or st.session_state.drivers.empty:
-        with st.spinner("Загрузка списка водителей..."):
-            # Загружаем через нашу функцию (предполагаем, что она возвращает DataFrame)
-            st.session_state.drivers = load_data_from_supabase("drivers")
+        with st.spinner("Загрузка..."):
+            res = supabase.table("drivers").select("*").execute()
+            if res.data:
+                # Маппинг из имен БД в имена для UI
+                df = pd.DataFrame(res.data)
+                df = df.rename(columns={
+                    'first_name': 'Имя', 'last_name': 'Фамилия', 
+                    'phone': 'Телефон', 'categories': 'Категории',
+                    'experience': 'Стаж', 'status': 'Статус', 'photo_url': 'Фото'
+                })
+                st.session_state.drivers = df
+            else:
+                st.session_state.drivers = pd.DataFrame(columns=['id', 'Имя', 'Фамилия', 'Телефон', 'Категории', 'Стаж', 'Статус', 'Фото'])
 
     col_btn, col_search = st.columns([1, 2])
     
     if col_btn.button("➕ ДОБАВИТЬ ВОДИТЕЛЯ", type="primary", use_container_width=True):
-        st.session_state.active_modal = "drivers_new"
-        st.rerun()
+        create_driver_modal() # Вызываем напрямую через диалог
 
-    search = col_search.text_input("🔍 Поиск по фамилии...", placeholder="Введите фамилию для фильтрации")
+    search = col_search.text_input("🔍 Поиск по фамилии...", placeholder="Введите фамилию")
 
-    # Фильтрация данных (локальная для быстроты интерфейса)
     df_drivers = st.session_state.drivers
     if search:
         df_drivers = df_drivers[df_drivers['Фамилия'].str.contains(search, case=False, na=False)]
@@ -1156,47 +1179,38 @@ elif selected == "Водители":
     st.divider()
 
     if not df_drivers.empty:
-        # Сетка карточек
         cols = st.columns(3)
-        
         for idx, (i, row) in enumerate(df_drivers.iterrows()):
             with cols[idx % 3]:
                 with st.container(border=True):
-                    # --- ВИЗУАЛ КАРТОЧКИ ---
-                    img_url = row.get('Фото') if row.get('Фото') else "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
-                    status_color = "#238636" if row.get('Статус') == "Активен" else "#8b949e"
+                    img_url = row['Фото'] if row['Фото'] else "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
                     
                     st.markdown(f"""
                     <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
                         <img src="{img_url}" style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover; border: 2px solid #58A6FF;">
                         <div>
-                            <h3 style="margin: 0; color: white; font-size: 1.1em; line-height: 1.2;">{row['Фамилия']}<br>{row['Имя']}</h3>
-                            <span style="background-color: {status_color}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.7em;">{row.get('Статус', 'Н/Д')}</span>
+                            <h3 style="margin: 0; font-size: 1.1em;">{row['Фамилия']} {row['Имя']}</h3>
+                            <small>{row['Статус']}</small>
                         </div>
-                    </div>
-                    <div style="font-size: 0.85em; color: #8B949E; margin-bottom: 10px;">
-                        <div style="margin-bottom: 4px;">📱 {row.get('Телефон', 'Нет номера')}</div>
-                        <div style="margin-bottom: 4px;">🪪 Кат: <b>{row.get('Категории', '-')}</b></div>
-                        <div>📅 Стаж: {row.get('Стаж', '0')} лет</div>
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    # --- КНОПКИ УПРАВЛЕНИЯ ---
-                    c1, c2 = st.columns([1, 1])
+                    st.caption(f"📱 {row['Телефон']}")
+                    st.caption(f"🪪 Кат: {row['Категории']} | Стаж: {row['Стаж']}л.")
                     
-                    # Кнопка изменения (открывает модалку)
-                    if c1.button("⚙️ Изм.", key=f"edit_dr_{row['id']}", use_container_width=True):
-                        st.session_state.editing_id = row['id']
-                        st.session_state.active_modal = "drivers_edit" # Переключаем на модалку редактирования
-                        st.rerun()
+                    c1, c2 = st.columns(2)
+                    if c1.button("⚙️ Изм.", key=f"ed_btn_{row['id']}"):
+                        edit_driver_modal(row['id']) # Передаем ID в диалог
                         
-                    # Кнопка удаления (СВЯЗЬ С БД)
-                    if c2.button("🗑️", key=f"del_dr_{row['id']}", use_container_width=True):
-                        # Вызываем нашу исправленную функцию удаления, которая работает с Supabase
-                        delete_entry("drivers", row['id'])
-    else:
-        st.info("Водители не найдены или база пуста.")
-
+                    if c2.button("🗑️", key=f"del_btn_{row['id']}"):
+                        try:
+                            supabase.table("drivers").delete().eq("id", row['id']).execute()
+                            st.session_state.drivers = st.session_state.drivers[st.session_state.drivers.id != row['id']]
+                            st.success("Удалено")
+                            time.sleep(0.5)
+                            st.rerun()
+                        except Exception as e:
+                            st.error("Ошибка удаления")
 # --- РАЗДЕЛ ТС ---
 elif selected == "ТС":
     st.markdown("<h1 class='section-head'>🚛 Управление Автопарком</h1>", unsafe_allow_html=True)
@@ -1810,6 +1824,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
