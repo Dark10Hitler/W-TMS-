@@ -1511,75 +1511,95 @@ elif selected == "Аналитика":
         m.get_root().html.add_child(folium.Element(legend_html))
         st_folium(m, width=1300, height=600)
 
-        # --- БЛОК 5: ПРОФЕССИОНАЛЬНЫЙ ГРАФИК СКОРОСТИ ---
+        # --- БЛОК 5: ПРОФЕССИОНАЛЬНЫЙ ГРАФИК (БЕЗ "КАШИ") ---
         st.divider()
         st.subheader("📈 Детальный анализ скоростного режима")
 
         if not df_route.empty:
             import altair as alt
 
-            # Подготовка данных для графика
+            # Подготовка данных
             chart_df = df_route[['dt', 'speed_kmh']].copy()
             
-            # 1. Линия скорости
-            line = alt.Chart(chart_df).mark_line(
+            # Находим точку абсолютного максимума, чтобы подписать только её
+            max_val = chart_df['speed_kmh'].max()
+            max_point = chart_df[chart_df['speed_kmh'] == max_val].head(1)
+
+            # 1. Основная линия (прозрачный градиент под ней для объема)
+            base = alt.Chart(chart_df).encode(
+                x=alt.X('dt:T', title='Время пути (период)')
+            )
+
+            line = base.mark_line(
                 color='#29b5e8',
-                strokeWidth=2,
-                interpolate='monotone' # Плавные переходы между точками
+                strokeWidth=3,
+                interpolate='monotone'
             ).encode(
-                x=alt.X('dt:T', title='Время пути'),
                 y=alt.Y('speed_kmh:Q', title='Скорость (км/ч)'),
                 tooltip=[alt.Tooltip('dt:T', title='Время'), alt.Tooltip('speed_kmh:Q', title='Скорость')]
             )
 
-            # 2. Точки на пиках (где скорость выше 90)
-            peaks = alt.Chart(chart_df[chart_df['speed_kmh'] > 90]).mark_circle(
-                color='red',
-                size=60
+            # 2. ВСЕ нарушения (просто красные точки БЕЗ текста, чтобы не было каши)
+            overspeed_threshold = 95
+            violations = base.mark_circle(color='red', size=40, opacity=0.8).encode(
+                y='speed_kmh:Q',
+                tooltip=[alt.Tooltip('dt:T', title='Нарушение'), alt.Tooltip('speed_kmh:Q', title='Скорость')]
+            ).transform_filter(alt.datum.speed_kmh > overspeed_threshold)
+
+            # 3. ТОЛЬКО ОДНА ПОДПИСЬ для главного пика
+            peak_label = alt.Chart(max_point).mark_text(
+                align='center',
+                baseline='bottom',
+                dy=-10,
+                fontSize=16,
+                fontWeight='bold',
+                color='#ff4b4b'
             ).encode(
                 x='dt:T',
                 y='speed_kmh:Q',
-                tooltip=[alt.Tooltip('dt:T', title='Время нарушения'), alt.Tooltip('speed_kmh:Q', title='СКОРОСТЬ!')]
+                text=alt.Text('speed_kmh:Q', format='.1f')
             )
 
-            # 3. Текстовые подписи к пикам (самые высокие точки)
-            text = peaks.mark_text(
-                align='left',
-                dx=7,
-                dy=-7,
-                fontSize=12,
-                fontWeight='bold'
-            ).encode(
-                text='speed_kmh:Q'
-            )
+            # 4. Правило (линия) ограничения скорости
+            limit_line = alt.Chart(pd.DataFrame({'y': [overspeed_threshold]})).mark_rule(
+                color='red', 
+                strokeDash=[5, 5],
+                opacity=0.5
+            ).encode(y='y:Q')
 
-            # Объединяем слои в один график
-            st.altair_chart((line + peaks + text).properties(width=1300, height=450).interactive(), use_container_width=True)
+            # Сборка графика
+            final_chart = (line + violations + peak_label + limit_line).properties(
+                width=1300, 
+                height=500
+            ).interactive()
 
-            # --- ИНФОРМАЦИОННЫЕ ПАНЕЛИ ---
-            st.markdown("#### 🔍 Сводка инцидентов на графике")
-            g1, g2, g3, g4 = st.columns(4)
+            st.altair_chart(final_chart, use_container_width=True)
+
+            # --- ПАНЕЛЬ СТАТИСТИКИ (Улучшенная) ---
+            st.markdown("#### 🔍 Сводный отчет по качеству вождения")
+            s1, s2, s3, s4 = st.columns(4)
             
-            with g1:
-                max_s = int(df_route['speed_kmh'].max())
-                st.metric("🚀 ПИКОВАЯ СКОРОСТЬ", f"{max_s} км/ч", delta=f"{max_s - 90} км/ч" if max_s > 90 else None, delta_color="inverse")
-            
-            with g2:
-                avg_s = int(df_route[df_route['speed_kmh'] > 5]['speed_kmh'].mean())
-                st.metric("⏱️ СР. В ДВИЖЕНИИ", f"{avg_s} км/ч")
-                
-            with g3:
-                # Считаем резкие рывки (ускорение)
-                hard_accel = len(df_route[df_route['diff_speed'] > 15])
-                st.metric("🏎️ РЕЗКИЕ РАЗГОНЫ", f"{hard_accel} раз")
-                
-            with g4:
-                # Опасные маневры (сумма торможений и превышений)
-                danger_score = len(hard_brakes) + len(overspeeds)
-                st.metric("⚠️ ИНДЕКС РИСКА", f"{danger_score}", delta="КРИТИЧНО" if danger_score > 5 else "НОРМА", delta_color="inverse")
+            with s1:
+                st.metric("🚀 Максимум", f"{max_val} км/ч", 
+                          delta=f"{round(max_val - 90, 1)} превышение" if max_val > 90 else None, 
+                          delta_color="inverse")
+            with s2:
+                # Средняя скорость только когда машина ехала
+                real_avg = round(chart_df[chart_df.speed_kmh > 5]['speed_kmh'].mean(), 1)
+                st.metric("⏱️ Ср. в движении", f"{real_avg} км/ч")
+            with s3:
+                # Агрессивное вождение
+                aggressive = len(df_route[df_route['diff_speed'].abs() > 15])
+                st.metric("📉 Резкие маневры", f"{aggressive}", help="Кол-во резких ускорений и торможений")
+            with s4:
+                # Общий статус
+                status = "Критично" if max_val > 110 or len(violations.data) > 20 else "Норма"
+                st.metric("🛡️ Статус аудита", status, 
+                          delta="Внимание" if status == "Критично" else "ОК",
+                          delta_color="normal" if status == "Норма" else "inverse")
 
         else:
-            st.warning("Нет данных для построения графика скорости.")
+            st.info("Нет данных для анализа скорости в выбранном диапазоне.")
             
             
 # Замени этот блок в разделе РОУТИНГ:
@@ -1933,6 +1953,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
