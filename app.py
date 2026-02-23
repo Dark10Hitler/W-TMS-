@@ -1453,12 +1453,6 @@ elif selected == "Аналитика":
         
         last_odo = df_route.iloc[-1].get('attributes', {}).get('totalDistance', 0) / 1000
         
-        c1, c2 = st.columns([1, 3])
-        with c1:
-            st.metric("Общий Одометр", f"{int(last_odo)} км")
-        with c2:
-            st.info(f"💡 **Как читать данные:** Машина проехала за всю жизнь **{int(last_odo)} км**. Из них за выбранный вами период (с {start_date} по {end_date}) пройдено **{total_km:.1f} км**.")
-        
         m_items = [("🛢️ Масло ДВС", 10000), ("🛑 Колодки", 30000), ("🧪 Фильтры", 15000), ("⚙️ ГРМ", 80000)]
         cols = st.columns(4)
         for i, (name, limit) in enumerate(m_items):
@@ -1953,6 +1947,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
