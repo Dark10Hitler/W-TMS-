@@ -856,65 +856,123 @@ def show_dashboard():
             
 def show_map():
     st.markdown("## 🛰️ Оперативный штаб: Мониторинг Fleet")
-    st_autorefresh(interval=15000, key="traccar_refresh")
     
-    # Получаем данные
-    devices, positions = get_detailed_traccar_data()
+    # 1. Автообновление (15 сек)
+    st_autorefresh(interval=15000, key="traccar_map_refresh")
+    
+    # 2. Получение данных
     v_reg = st.session_state.get('vehicles', pd.DataFrame())
     d_reg = st.session_state.get('drivers', pd.DataFrame())
-
-    # Базовая карта (Центральный склад)
-    BASE_LAT, BASE_LON = 47.776654, 27.913643
-    m = folium.Map(location=[BASE_LAT, BASE_LON], zoom_start=12, tiles="cartodbpositron")
-
-    if not positions:
-        st.info("🛰️ Ожидание сигналов GPS... Убедитесь, что Ngrok и Traccar запущены на вашем ПК.")
     
-    stats = {"active": 0, "stopped": 0, "at_base": []}
+    with st.spinner("Обновление данных с GPS-сервера..."):
+        devices, positions = get_detailed_traccar_data()
 
+    if not devices:
+        st.error(f"🔌 Нет связи с сервером Traccar ({TRACCAR_URL}). Проверьте Ngrok на вашем ПК.")
+        # Рисуем пустую карту, если связи нет
+    
+    # 3. Настройка карты (Центральный склад)
+    BASE_LAT, BASE_LON = 47.776654, 27.913643
+    base_coords = [BASE_LAT, BASE_LON]
+    
+    m = folium.Map(location=base_coords, zoom_start=12, tiles="cartodbpositron")
+    
+    # Геозона склада
+    folium.Circle(
+        location=base_coords, radius=500, color='#e74c3c', weight=2,
+        fill=True, fill_color='#e74c3c', fill_opacity=0.1, popup="ЦЕНТРАЛЬНЫЙ СКЛАД"
+    ).add_to(m)
+
+    folium.Marker(
+        base_coords, popup="🏢 <b>IMPERIA LOGISTICS HQ</b>",
+        icon=folium.Icon(color="darkred", icon="home", prefix="fa")
+    ).add_to(m)
+
+    # Счетчики для метрик
+    stats = {"active": 0, "stopped": 0, "low_battery": 0, "at_base": []}
+
+    # 4. Обработка каждой метки GPS
     for pos in positions:
         dev_id = pos.get('deviceId')
         if dev_id not in devices: continue
+            
+        dev = devices[dev_id]
+        v_name = dev.get('name') 
         
-        v_name = devices[dev_id].get('name') # Имя в Traccar
+        # --- СВЯЗКА С БД SUPABASE (по колонке model) ---
+        v_row = v_reg[v_reg['model'] == v_name] if not v_reg.empty and 'model' in v_reg.columns else pd.DataFrame()
+        v_data = v_row.iloc[0].to_dict() if not v_row.empty else {}
         
-        # --- СВЯЗКА С SUPABASE (теперь через 'model') ---
-        # Ищем по колонке 'model'
-        v_data = {}
-        if not v_reg.empty and 'model' in v_reg.columns:
-            v_row = v_reg[v_reg['model'] == v_name]
-            if not v_row.empty:
-                v_data = v_row.iloc[0].to_dict()
+        # Ищем Водителя (связка по имени ТС)
+        d_row = d_reg[d_reg['ТС'] == v_name] if 'ТС' in d_reg.columns and not d_reg.empty else pd.DataFrame()
+        d_data = d_row.iloc[0].to_dict() if not d_row.empty else {}
 
-        # Ищем водителя (по имени ТС)
-        d_data = {}
-        if not d_reg.empty and 'ТС' in d_reg.columns:
-            d_row = d_reg[d_reg['ТС'] == v_name]
-            if not d_row.empty:
-                d_data = d_row.iloc[0].to_dict()
-
-        # Технические данные
-        speed = round(pos.get('speed', 0) * 1.852, 1)
+        # --- ТЕХНИЧЕСКИЕ ДАННЫЕ ---
+        attrs = pos.get('attributes', {})
+        speed = round(pos.get('speed', 0) * 1.852, 1) # Узлы в км/ч
         lat, lon = pos.get('latitude'), pos.get('longitude')
+        batt = attrs.get('batteryLevel', 100)
         
-        # Метрики состояния
+        # Расстояние до базы через geopy
+        dist_to_base = round(geodesic((lat, lon), base_coords).km, 2)
+        is_at_base = dist_to_base <= 0.5
+        
+        # Анализ состояния
+        if is_at_base: stats["at_base"].append(v_name)
         if speed > 3: stats["active"] += 1
         else: stats["stopped"] += 1
+        if isinstance(batt, (int, float)) and batt < 20: stats["low_battery"] += 1
 
-        # Отрисовка маркера
+        # Расчет ETA (Время прибытия)
+        if speed > 5:
+            eta_m = int((dist_to_base / speed) * 60)
+            eta_t = (datetime.now() + timedelta(minutes=eta_m)).strftime("%H:%M")
+        else:
+            eta_t = "На базе" if is_at_base else "Стоянка"
+
+        # --- ФОРМИРОВАНИЕ КАРТОЧКИ (HTML) ---
+        status_color = "#2ecc71" if speed > 3 else "#3498db"
+        popup_html = f"""
+        <div style="width: 280px; font-family: sans-serif; font-size: 13px; color: #333;">
+            <div style="background:{status_color}; color:white; padding:10px; border-radius:5px 5px 0 0;">
+                <b>🚛 {v_name}</b> | {v_data.get('Госномер', 'Б/Н')}
+            </div>
+            <div style="padding:10px; border:1px solid #ddd; border-top:none; background: white;">
+                <b>👤 Водитель:</b> {d_data.get('Фамилия', 'Не назначен')}<br>
+                <b>📞 Тел:</b> {d_data.get('Телефон', '-')}<br>
+                <hr style="margin:8px 0; border:0; border-top:1px solid #eee;">
+                <b>🚀 Скорость:</b> <span style="color:red">{speed} км/ч</span><br>
+                <b>📍 Дистанция:</b> {dist_to_base} км<br>
+                <b>⏱ ETA:</b> <span style="color:blue">{eta_t}</span><br>
+                <div style="margin-top:8px; font-size:11px; color:gray;">
+                    🔋 Заряд: {batt}% | 🛰 Спутники: {attrs.get('sat', '0')}
+                </div>
+            </div>
+        </div>
+        """
+
         folium.Marker(
             [lat, lon],
-            popup=f"<b>🚛 {v_name}</b><br>Водитель: {d_data.get('Фамилия', 'Не назначен')}<br>Скорость: {speed} км/ч",
+            popup=folium.Popup(popup_html, max_width=300),
+            tooltip=f"{v_name} | {speed} км/ч",
             icon=folium.Icon(color="green" if speed > 3 else "blue", icon="truck", prefix="fa")
         ).add_to(m)
 
-    # Вывод метрик и карты
-    c1, c2, c3 = st.columns(3)
+    # 5. ОТОБРАЖЕНИЕ МЕТРИК
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("🚚 В движении", stats["active"])
     c2.metric("🅿️ На стоянке", stats["stopped"])
-    c3.metric("📡 Статус туннеля", "ONLINE" if devices else "OFFLINE")
+    c3.metric("🪫 Низкий заряд", stats["low_battery"], delta_color="inverse")
+    c4.metric("🏠 На базе", len(stats["at_base"]))
 
-    st_folium(m, width=1300, height=600)
+    # 6. ВЫВОД КАРТЫ
+    st_folium(m, width=1300, height=600, returned_objects=[])
+
+    # Список машин на базе
+    if stats["at_base"]:
+        with st.expander("📝 Список машин на территории склада"):
+            for car in stats["at_base"]:
+                st.write(f"✅ **{car}** — Готов к погрузке/разгрузке")
             
 def show_profile():
     st.markdown("<h1 class='no-print'>👤 Личный кабинет / Карточка Сотрудника</h1>", unsafe_allow_html=True)
@@ -1755,6 +1813,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
