@@ -32,6 +32,22 @@ from database import supabase
 from geopy.distance import geodesic
 import json
 
+def upload_driver_photo(file):
+    from database import supabase
+    import time
+    try:
+        file_ext = file.name.split(".")[-1]
+        file_name = f"drv_{int(time.time())}.{file_ext}"
+        # Загружаем в созданный тобой бакет
+        supabase.storage.from_("defects_photos").upload(
+            path=file_name,
+            file=file.getvalue(),
+            file_options={"content-type": f"image/{file_ext}"}
+        )
+        return supabase.storage.from_("defects_photos").get_public_url(file_name)
+    except:
+        return "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+
 TABLES_CONFIG = {
     "main": MAIN_COLUMNS,
     "orders": ORDER_COLUMNS,
@@ -1122,22 +1138,6 @@ def delete_entry(table_key, entry_id):
             
     except Exception as e:
         st.error(f"❌ Ошибка при удалении из базы данных: {e}")
-
-def upload_driver_photo(file):
-    from database import supabase
-    import time
-    try:
-        file_ext = file.name.split(".")[-1]
-        file_name = f"drv_{int(time.time())}.{file_ext}"
-        # Загружаем в созданный тобой бакет
-        supabase.storage.from_("defects_photos").upload(
-            path=file_name,
-            file=file.getvalue(),
-            file_options={"content-type": f"image/{file_ext}"}
-        )
-        return supabase.storage.from_("defects_photos").get_public_url(file_name)
-    except:
-        return "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
         
 if selected == "Dashboard": show_dashboard()
 elif selected == "Main": render_aggrid_table("main", "Основной Реестр")
@@ -1824,6 +1824,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
