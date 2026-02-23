@@ -848,7 +848,7 @@ def create_vehicle_modal():
         db_payload = {
             "id": vehicle_id,
             "brand": brand,
-            "gov_num": clean_gov_num,  -- Ключ исправлен на gov_num
+            "gov_num": clean_gov_num, 
             "vin": vin.strip().upper() if vin else None,
             "body_type": v_type,
             "capacity": float(cap),
@@ -969,6 +969,7 @@ def edit_vehicle_modal():
             st.success("Данные ТС успешно обновлены!")
             time.sleep(1)
             st.rerun()
+
 
 
 
