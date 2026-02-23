@@ -32,23 +32,30 @@ from database import supabase
 from geopy.distance import geodesic
 import json
 from geopy.geocoders import Nominatim # Для получения адреса по координатам
+import math
 
-# Инициализируем геокодер для определения адресов (кэшируем, чтобы не спамить API)
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
 @st.cache_data(ttl=3600)
 def get_address_cached(lat, lon):
+    """Определяет город/улицу по координатам"""
     try:
-        geolocator = Nominatim(user_agent="imperia_fleet_monitor")
+        geolocator = Nominatim(user_agent="imperia_fleet_final")
         location = geolocator.reverse(f"{lat}, {lon}", language='ru')
         if location:
             address = location.raw.get('address', {})
-            # Извлекаем город/село
             city = address.get('city') or address.get('town') or address.get('village') or address.get('hamlet', 'Неизвестно')
             road = address.get('road', '')
-            house = address.get('house_number', '')
-            return f"{city}, {road} {house}".strip(", ")
-        return "Адрес не определен"
+            return f"{city}, {road}".strip(", ")
+        return f"{lat:.5f}, {lon:.5f}"
     except:
-        return "Координаты: " + f"{lat:.5f}, {lon:.5f}"
+        return "Адрес не определен"
+
+def get_bearing_icon(course):
+    """Выбирает иконку стрелки в зависимости от направления (курса)"""
+    if course is None: return "truck"
+    # Логика выбора направления для иконки (упрощенно)
+    return "arrow-up"
 
 def upload_driver_photo(file):
     from database import supabase
@@ -878,22 +885,17 @@ def show_map():
     # 1. Автообновление (15 сек)
     st_autorefresh(interval=15000, key="traccar_map_refresh")
     
-    # 2. Получение данных
+    # 2. Получение данных из БД и API
     v_reg = st.session_state.get('vehicles', pd.DataFrame())
     d_reg = st.session_state.get('drivers', pd.DataFrame())
     
-    with st.spinner("Синхронизация со спутниками и базой данных..."):
+    with st.spinner("🚀 Запрос данных со спутников..."):
         devices, positions = get_detailed_traccar_data()
 
-    if not devices:
-        st.error(f"🔌 Нет связи с сервером Traccar. Проверьте Ngrok туннель.")
-        # Если данных нет, прерывать выполнение не будем, отрисуем пустую карту ниже
-    
-    # 3. Настройка карты (Центральный склад)
+    # 3. Базовая конфигурация карты
     BASE_LAT, BASE_LON = 47.776654, 27.913643
     base_coords = [BASE_LAT, BASE_LON]
     
-    # Используем Voyager - он яркий и детальный
     m = folium.Map(
         location=base_coords, 
         zoom_start=12, 
@@ -901,26 +903,26 @@ def show_map():
         attr='&copy; OpenStreetMap &copy; CARTO'
     )
     
-    # Слой управления и альтернативная подложка
-    folium.TileLayer('OpenStreetMap', name="Детальная карта").add_to(m)
+    # Дополнительные слои
+    folium.TileLayer('OpenStreetMap', name="Детальный план").add_to(m)
     folium.LayerControl(position='topright').add_to(m)
     
-    # Геозона склада (увеличенная визуализация)
+    # Визуализация Центрального Склада
     folium.Circle(
         location=base_coords, radius=500, color='#e74c3c', weight=3,
-        fill=True, fill_color='#e74c3c', fill_opacity=0.15, popup="ЦЕНТРАЛЬНЫЙ СКЛАД (ЗОНА ПОГРУЗКИ)"
+        fill=True, fill_color='#e74c3c', fill_opacity=0.2, popup="🏢 ЦЕНТРАЛЬНЫЙ СКЛАД"
     ).add_to(m)
 
     folium.Marker(
         base_coords, 
-        popup="🏢 <b>IMPERIA LOGISTICS HQ</b><br>Центральный распределительный центр",
+        popup="🏢 <b>IMPERIA LOGISTICS HQ</b>",
         icon=folium.Icon(color="darkred", icon="home", prefix="fa")
     ).add_to(m)
 
-    # Счетчики для метрик
-    stats = {"active": 0, "stopped": 0, "low_battery": 0, "at_base": []}
+    # Счетчики статистики
+    stats = {"active": 0, "stopped": 0, "low_battery": 0, "at_base": [], "offline_long": 0}
 
-    # 4. Обработка каждой метки GPS
+    # 4. ОБРАБОТКА ПОЗИЦИЙ
     for pos in positions:
         dev_id = pos.get('deviceId')
         if dev_id not in devices: continue
@@ -928,121 +930,125 @@ def show_map():
         dev = devices[dev_id]
         v_name = dev.get('name') 
         
-        # --- СВЯЗКА С БД SUPABASE (по колонке model) ---
+        # --- СВЯЗКА С БД (по model) ---
         v_row = v_reg[v_reg['model'] == v_name] if not v_reg.empty and 'model' in v_reg.columns else pd.DataFrame()
         v_data = v_row.iloc[0].to_dict() if not v_row.empty else {}
         
-        # Ищем Водителя (связка по имени ТС)
         d_row = d_reg[d_reg['ТС'] == v_name] if 'ТС' in d_reg.columns and not d_reg.empty else pd.DataFrame()
         d_data = d_row.iloc[0].to_dict() if not d_row.empty else {}
 
-        # --- ТЕХНИЧЕСКИЕ ДАННЫЕ ---
+        # --- ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ ---
         attrs = pos.get('attributes', {})
-        speed = round(pos.get('speed', 0) * 1.852, 1) # Узлы в км/ч
+        speed = round(pos.get('speed', 0) * 1.852, 1)
         lat, lon = pos.get('latitude'), pos.get('longitude')
         batt = attrs.get('batteryLevel', 100)
+        course = pos.get('course', 0) # Направление движения
         
-        # Определение точного адреса (Город/Село)
+        # Расчет времени последнего сигнала
+        last_update_raw = pos.get('deviceTime') or pos.get('fixTime')
+        last_update_dt = datetime.fromisoformat(last_update_raw.replace('Z', '+00:00'))
+        time_diff = datetime.now(last_update_dt.tzinfo) - last_update_dt
+        time_str = f"{int(time_diff.total_seconds() // 60)} мин. назад" if time_diff.total_seconds() > 60 else "Только что"
+
+        # Определение адреса и дистанции
         current_address = get_address_cached(lat, lon)
-        
-        # Расстояние до базы
         dist_to_base = round(geodesic((lat, lon), base_coords).km, 2)
         is_at_base = dist_to_base <= 0.5
         
-        # Анализ состояния
+        # Сбор статистики
         if is_at_base: stats["at_base"].append(v_name)
         if speed > 3: stats["active"] += 1
         else: stats["stopped"] += 1
         if isinstance(batt, (int, float)) and batt < 20: stats["low_battery"] += 1
+        if time_diff.total_seconds() > 600: stats["offline_long"] += 1
 
-        # Расчет ETA (Время прибытия)
+        # Расчет ETA
         if speed > 5:
             eta_m = int((dist_to_base / speed) * 60)
             eta_t = (datetime.now() + timedelta(minutes=eta_m)).strftime("%H:%M")
         else:
             eta_t = "На базе" if is_at_base else "Стоянка"
 
-        # --- ФОРМИРОВАНИЕ УЛУЧШЕННОЙ КАРТОЧКИ (HTML) ---
+        # --- КАРТОЧКА ОБЪЕКТА (HTML) ---
         status_color = "#2ecc71" if speed > 3 else "#3498db"
-        status_text = "В ДВИЖЕНИИ" if speed > 3 else "СТОЯНКА"
         
         popup_html = f"""
-        <div style="width: 300px; font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 13px; color: #333;">
-            <div style="background:{status_color}; color:white; padding:12px; border-radius:8px 8px 0 0; display:flex; justify-content:space-between;">
-                <b>🚛 {v_name}</b> <span>{status_text}</span>
+        <div style="width: 290px; font-family: 'Segoe UI', sans-serif; font-size: 13px;">
+            <div style="background:{status_color}; color:white; padding:10px; border-radius:5px 5px 0 0;">
+                <b>🚛 {v_name}</b> | {v_data.get('Госномер', 'Б/Н')}
             </div>
-            <div style="padding:12px; border:1px solid #eee; border-top:none; background: white; border-radius:0 0 8px 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                <div style="margin-bottom:8px;">
-                    <span style="color:gray;">Госномер:</span> <b>{v_data.get('Госномер', 'Б/Н')}</b><br>
-                    <span style="color:gray;">Водитель:</span> <b>{d_data.get('Фамилия', 'Не назначен')}</b>
-                </div>
-                <div style="background:#f9f9f9; padding:8px; border-radius:4px; margin-bottom:8px; font-size:12px;">
-                    📍 <b>Текущий адрес:</b><br>{current_address}
-                </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                    <div><span style="color:gray;">🚀 Скорость:</span><br><b style="color:red; font-size:14px;">{speed} км/ч</b></div>
-                    <div><span style="color:gray;">⏱ ETA База:</span><br><b style="color:blue; font-size:14px;">{eta_t}</b></div>
-                </div>
-                <hr style="margin:10px 0; border:0; border-top:1px solid #eee;">
+            <div style="padding:10px; border:1px solid #ddd; background: white;">
+                👤 <b>Водитель:</b> {d_data.get('Фамилия', 'Не назначен')}<br>
+                📞 <b>Тел:</b> {d_data.get('Телефон', '-')}<br>
+                <hr style="margin:8px 0; border:0; border-top:1px solid #eee;">
+                📍 <b>Место:</b> {current_address}<br>
+                🚀 <b>Скорость:</b> <span style="color:red">{speed} км/ч</span><br>
+                🏠 <b>До базы:</b> {dist_to_base} км<br>
+                ⏱ <b>ETA:</b> <span style="color:blue">{eta_t}</span><br>
+                <hr style="margin:8px 0; border:0; border-top:1px solid #eee;">
                 <div style="font-size:11px; color:gray; display:flex; justify-content:space-between;">
                     <span>🔋 Заряд: {batt}%</span>
-                    <span>🛰 Спутники: {attrs.get('sat', '0')}</span>
+                    <span>📡 {time_str}</span>
                 </div>
-                <div style="font-size:10px; color:#aaa; margin-top:5px; text-align:center;">
-                    Координаты: {lat:.5f}, {lon:.5f}
-                </div>
+            </div>
+            <div style="font-size:10px; text-align:center; color: #aaa; padding-top:5px;">
+                Координаты: {lat:.5f}, {lon:.5f}
             </div>
         </div>
         """
 
-        # Добавляем постоянную текстовую метку над машиной
-        folium.map.Marker(
-            [lat, lon],
-            icon=folium.DivIcon(
-                icon_size=(150,36),
-                icon_anchor=(75, 45),
-                html=f'<div style="font-size: 10pt; font-weight: bold; color: white; text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; text-align: center;">{v_name}</div>',
-            )
-        ).add_to(m)
-
-        # Основной маркер машины
+        # Направление движения (стрелка)
+        icon_color = "green" if speed > 3 else "blue"
+        
         folium.Marker(
             [lat, lon],
-            popup=folium.Popup(popup_html, max_width=320),
-            tooltip=f"<b>{v_name}</b>: {speed} км/ч<br>{current_address}",
-            icon=folium.Icon(color="green" if speed > 3 else "blue", icon="truck", prefix="fa")
+            popup=folium.Popup(popup_html, max_width=300),
+            tooltip=f"{v_name} ({speed} км/ч)",
+            icon=folium.Icon(color=icon_color, icon="play", angle=course, prefix="fa") if speed > 3 
+                 else folium.Icon(color=icon_color, icon="truck", prefix="fa")
         ).add_to(m)
 
-    # 5. ОТОБРАЖЕНИЕ МЕТРИК
+    # 5. ВЫВОД МЕТРИК
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🚚 В движении", stats["active"])
     c2.metric("🅿️ На стоянке", stats["stopped"])
-    c3.metric("🪫 Низкий заряд", stats["low_battery"], delta=f"{stats['low_battery']} критично" if stats['low_battery']>0 else None, delta_color="inverse")
-    c4.metric("🏠 На базе", len(stats["at_base"]))
+    c3.metric("🏠 На базе", len(stats["at_base"]), delta=f"{dist_to_base} км ближ." if positions else None)
+    c4.metric("🪫 Низкий заряд", stats["low_battery"], delta_color="inverse")
 
-    # 6. ВЫВОД КАРТЫ
-    st_folium(m, width=1300, height=650, returned_objects=[])
+    # 6. КАРТА
+    st_folium(m, width=1300, height=600, returned_objects=[])
 
-    # Список машин на базе с дополнительными деталями
-    if stats["at_base"]:
-        with st.expander("📝 Детальный список ТС на территории склада"):
-            cols = st.columns(len(stats["at_base"]) if len(stats["at_base"]) < 4 else 4)
-            for idx, car in enumerate(stats["at_base"]):
-                cols[idx % 4].success(f"**{car}**\n\nГотов к погрузке")
+    # 7. ДОПОЛНИТЕЛЬНЫЕ ИНСТРУМЕНТЫ ПОД КАРТОЙ
+    col_left, col_right = st.columns(2)
+    
+    with col_left:
+        if stats["at_base"]:
+            with st.expander("🏢 Машины на территории склада"):
+                for car in stats["at_base"]:
+                    st.write(f"🟢 **{car}** — ожидание распоряжений")
+        else:
+            st.info("ℹ️ На территории склада сейчас нет машин")
 
-    # Дополнительная таблица "Кто онлайн" под картой для быстрой навигации
+    with col_right:
+        with st.expander("📡 Статус системы"):
+            st.write(f"Обновлено: {datetime.now().strftime('%H:%M:%S')}")
+            st.write(f"URL Traccar: `{TRACCAR_URL}`")
+            if stats["offline_long"] > 0:
+                st.warning(f"⚠️ {stats['offline_long']} устр. не на связи > 10 мин!")
+
+    # Краткая сводная таблица (для быстрого поиска)
     if positions:
-        with st.expander("📊 Сводная таблица активных GPS-датчиков"):
-            online_data = []
-            for pos in positions:
-                d = devices.get(pos['deviceId'], {})
-                online_data.append({
+        with st.expander("📋 Сводный лог текущих позиций"):
+            log_df = []
+            for p in positions:
+                d = devices.get(p['deviceId'], {})
+                log_df.append({
                     "Машина": d.get('name'),
-                    "Скорость": f"{round(pos.get('speed', 0) * 1.852, 1)} км/ч",
-                    "Последняя активность": datetime.fromisoformat(pos['deviceTime'].replace('Z', '+00:00')).strftime('%H:%M:%S'),
-                    "Адрес": get_address_cached(pos['latitude'], pos['longitude'])
+                    "Скорость": f"{round(p.get('speed', 0) * 1.852, 1)} км/ч",
+                    "К базе": f"{round(geodesic((p['latitude'], p['longitude']), base_coords).km, 2)} км",
+                    "Адрес": get_address_cached(p['latitude'], p['longitude'])
                 })
-            st.table(pd.DataFrame(online_data))
+            st.dataframe(pd.DataFrame(log_df), use_container_width=True)
             
 def show_profile():
     st.markdown("<h1 class='no-print'>👤 Личный кабинет / Карточка Сотрудника</h1>", unsafe_allow_html=True)
@@ -1883,6 +1889,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
