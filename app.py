@@ -213,33 +213,31 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
         return False, None
 
 
-# --- КОНФИГУРАЦИЯ ПОДКЛЮЧЕНИЯ ---
-# Используем 127.0.0.1 вместо localhost для обхода проблем с IPv6 на Windows
 TRACCAR_URL = "http://127.0.0.1:8082"
 TRACCAR_AUTH = ("denis.masliuc.speak23dev@gmail.com", "qwert12345")
 
-@st.cache_data(ttl=10, show_spinner=False)
+@st.cache_data(ttl=5) # Минимальный TTL
 def get_detailed_traccar_data():
     api_base = f"{TRACCAR_URL}/api"
     try:
-        # Устанавливаем небольшие таймауты
-        dev_resp = requests.get(f"{api_base}/devices", auth=TRACCAR_AUTH, timeout=3)
-        pos_resp = requests.get(f"{api_base}/positions", auth=TRACCAR_AUTH, timeout=3)
+        # Прямая проверка без лишних оберток
+        with requests.Session() as s:
+            s.auth = TRACCAR_AUTH
+            dev_resp = s.get(f"{api_base}/devices", timeout=5)
+            pos_resp = s.get(f"{api_base}/positions", timeout=5)
         
         if dev_resp.status_code == 200 and pos_resp.status_code == 200:
             devices = {d['id']: d for d in dev_resp.json()}
             positions = pos_resp.json()
-            
             for pos in positions:
                 dev_info = devices.get(pos['deviceId'], {})
                 pos['name'] = dev_info.get('name', f"ID: {pos['deviceId']}")
             return devices, positions
         else:
-            # Если получили не 200, сбрасываем кеш этой функции
-            st.cache_data.clear()
             return {}, []
-    except Exception:
-        # В случае любой сетевой ошибки возвращаем пустоту
+    except Exception as e:
+        # Выводим ошибку в консоль, чтобы понять причину
+        print(f"DEBUG: Traccar connection error: {e}")
         return {}, []
 
 def get_vehicle_status_color(status):
@@ -1768,6 +1766,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
