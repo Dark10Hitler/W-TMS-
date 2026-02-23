@@ -1364,164 +1364,166 @@ elif selected == "ТС":
         st.info("ℹ️ В автопарке пока нет записей.")
 
 elif selected == "Аналитика":
-    st.title("🛡️ Logistics Intelligence: Ultimate Server Audit 5.0")
+    st.title("🛡️ Logistics Intelligence: Глубокий Аудит (Server Side)")
     st.markdown("---")
 
-    # --- ТЕХНИЧЕСКИЙ ЭШЕЛОН: ЗАПРОСЫ К ЯДРУ ---
-    def fetch_traccar_data(endpoint, params):
-        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/{endpoint}"
+    # --- ФУНКЦИЯ №1: ОФИЦИАЛЬНАЯ СВОДКА (Для точного километража) ---
+    def get_traccar_summary(v_id, start, end):
+        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/summary"
+        params = {
+            "deviceId": v_id,
+            "from": f"{start.strftime('%Y-%m-%d')}T00:00:00Z",
+            "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z",
+            "daily": "true" # ЭТО КЛЮЧЕВОЙ МОМЕНТ: Traccar сам разобьет по дням
+        }
         headers = {'ngrok-skip-browser-warning': 'true'}
         try:
-            resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=40)
+            resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
             return resp.json() if resp.status_code == 200 else []
-        except Exception as e:
-            st.error(f"Ошибка связи с сервером: {e}")
+        except:
             return []
 
-    # --- БЛОК УПРАВЛЕНИЯ (КАЛЕНДАРЬ И ВЫБОР) ---
+    # --- ФУНКЦИЯ №2: ТРЕК (Для карты и анализа стиля вождения) ---
+    def get_traccar_route(v_id, start, end):
+        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
+        params = {
+            "deviceId": v_id,
+            "from": f"{start.strftime('%Y-%m-%d')}T00:00:00Z",
+            "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z"
+        }
+        headers = {'ngrok-skip-browser-warning': 'true'}
+        try:
+            resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
+            return resp.json() if resp.status_code == 200 else []
+        except:
+            return []
+
+    # --- ИНТЕРФЕЙС ВЫБОРА ---
     devices_dict, _ = get_detailed_traccar_data()
     
-    with st.container():
-        c1, c2, c3 = st.columns([2, 1, 1])
-        with c1:
-            v_name = st.selectbox("🎯 Выберите транспортное средство", options=[d['name'] for d in devices_dict.values()])
-            v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
-        with c2:
-            start_date = st.date_input("📅 Начало периода", datetime.now() - timedelta(days=3))
-        with c3:
-            end_date = st.date_input("📅 Конец периода", datetime.now())
+    col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
+    with col_v1:
+        v_name = st.selectbox("🎯 ТС для аудита", options=[d['name'] for d in devices_dict.values()])
+        v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
+    with col_v2:
+        start_date = st.date_input("Дата начала", datetime.now() - timedelta(days=3))
+    with col_v3:
+        end_date = st.date_input("Дата конца", datetime.now())
 
-    if st.button("🚀 ЗАПУСТИТЬ ГЛУБОКИЙ АУДИТ", type="primary", use_container_width=True):
+    if st.button("📑 СФОРМИРОВАТЬ ОТЧЕТ НА ОСНОВЕ ДАННЫХ СЕРВЕРА", type="primary", use_container_width=True):
         st.session_state.show_report = True
 
     if st.session_state.get('show_report'):
-        common_params = {
-            "deviceId": v_id,
-            "from": f"{start_date.strftime('%Y-%m-%d')}T00:00:00Z",
-            "to": f"{end_date.strftime('%Y-%m-%d')}T23:59:59Z"
-        }
+        with st.spinner('📡 Запрос официальных данных с сервера Traccar...'):
+            # 1. Получаем точные цифры по дням
+            summary_data = get_traccar_summary(v_id, start_date, end_date)
+            # 2. Получаем гео-данные для карты
+            route_data = get_traccar_route(v_id, start_date, end_date)
 
-        with st.status("🛸 Извлечение данных из черного ящика...", expanded=True) as status:
-            # 1. Точные цифры (Summary) с daily=true для разбивки по дням
-            summary_params = common_params.copy()
-            summary_params["daily"] = "true"
-            raw_summary = fetch_traccar_data("summary", summary_params)
-            
-            # 2. Геометрия пути (Route) для карты и нарушений
-            raw_route = fetch_traccar_data("route", common_params)
-            
-            status.update(label="✅ Анализ завершен. Данные синхронизированы.", state="complete")
-
-        if not raw_summary or not raw_route:
-            st.warning("📭 За выбранный период данных не обнаружено. ТС находилось в офлайне или не двигалось.")
+        if not summary_data:
+            st.error("❌ Сервер не вернул сводные данные. Проверьте связь с Traccar.")
             st.stop()
 
-        # --- ОБРАБОТКА ДАННЫХ ---
-        df_sum = pd.DataFrame(raw_summary)
-        df_sum['distance_km'] = round(df_sum['distance'] / 1000, 2)
-        df_sum['date_label'] = pd.to_datetime(df_sum['startTime']).dt.strftime('%d.%m.%Y')
-        
-        df_route = pd.DataFrame(raw_route)
-        df_route['dt'] = pd.to_datetime(df_route['deviceTime'])
-        df_route['speed_kmh'] = round(df_route['speed'] * 1.852, 1)
-        df_route['diff_speed'] = df_route['speed_kmh'].diff()
+        # --- ОБРАБОТКА ЦИФР ---
+        summary_df = pd.DataFrame(summary_data)
+        # Traccar возвращает дистанцию в МЕТРАХ. Переводим в КМ.
+        summary_df['distance_km'] = round(summary_df['distance'] / 1000, 2)
+        summary_df['spent_fuel'] = round(summary_df['spentFuel'], 1)
+        summary_df['engine_hours'] = round(summary_df['engineHours'] / 3600000, 1) # мс в часы
+        summary_df['day_label'] = pd.to_datetime(summary_df['startTime']).dt.strftime('%d.%m.%Y')
 
-        # --- БЛОК 1: ТЕХОБСЛУЖИВАНИЕ (Maintenance) ---
-        st.subheader("🔧 Состояние и Регламент ТО")
-        total_period_km = df_sum['distance_km'].sum()
-        current_odo = df_route.iloc[-1].get('attributes', {}).get('totalDistance', 0) / 1000
+        # --- БЛОК 1: ТОЧНЫЕ ЦИФРЫ (SUMMARY) ---
+        st.subheader("📊 Официальные показатели пробега (Server-Side)")
+        
+        # Выводим метрики за весь период
+        total_km = summary_df['distance_km'].sum()
+        total_fuel = summary_df['spent_fuel'].sum() if 'spent_fuel' in summary_df else total_km * 0.12
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("Текущий Одометр", f"{int(current_odo)} км")
-        m2.metric("Пробег за отчет", f"{total_period_km:.2f} км", delta=f"{len(df_sum)} дн.")
-        m3.metric("Моточасы (двиг.)", f"{round(df_sum['engineHours'].sum()/3600000, 1)} ч")
+        m1.metric("Суммарный пробег", f"{total_km:.2f} км")
+        m2.metric("Ср. пробег в день", f"{round(total_km/len(summary_df), 2)} км")
+        m3.metric("Расход топлива (MDL)", f"{int(total_fuel * 23.45)} MDL")
 
-        # Индикаторы жизни запчастей
-        st.write("🛠️ **Прогноз износа на сегодня:**")
-        reg_cols = st.columns(4)
-        tasks = [("Масло", 10000), ("Фильтры", 15000), ("Колодки", 35000), ("ГРМ", 80000)]
-        for i, (name, limit) in enumerate(tasks):
-            left = limit - (current_odo % limit)
-            prog = max(0, min(100, int((left/limit)*100)))
-            with reg_cols[i]:
-                st.caption(f"{name} ({int(left)} км)")
-                st.progress(prog/100)
+        # ТАБЛИЦА ПО ДНЯМ — Теперь здесь будет ровно 8 км и 40 км
+        st.write("**Детализация по дням:**")
+        display_df = summary_df[['day_label', 'distance_km', 'engine_hours', 'averageSpeed', 'maxSpeed']].copy()
+        display_df.columns = ['Дата', 'Пробег (км)', 'Моточасы (ч)', 'Ср. Скорость', 'Макс. Скорость']
+        st.table(display_df)
 
-        # --- БЛОК 2: ТОЧНАЯ ТАБЛИЦА ПРОБЕГА (SUMMARY) ---
+        
+
+        # --- БЛОК 2: ТЕХОБСЛУЖИВАНИЕ ---
         st.divider()
-        st.subheader("📋 Официальный журнал пробега (Server-Validated)")
+        st.subheader("🔧 Регламент техобслуживания")
+        # Берем одометр из последней точки трека
+        last_odo = 0
+        if route_data:
+            last_odo = route_data[-1].get('attributes', {}).get('totalDistance', 0) / 1000
         
-        # Здесь будут те самые 8 км и 40 км, потому что данные идут от summary API
-        report_table = df_sum[['date_label', 'distance_km', 'maxSpeed', 'spentFuel']].copy()
-        report_table.columns = ['Дата', 'Пробег (км)', 'Макс. Скорость', 'Топливо (л)']
-        st.dataframe(report_table, use_container_width=True, hide_index=True)
+        c_odo, c_info = st.columns([1, 2])
+        c_odo.metric("Одометр ТС", f"{int(last_odo)} км")
         
-        
+        m_items = [("Масло ДВС", 10000), ("Тормозные колодки", 30000), ("Фильтры", 15000)]
+        for name, limit in m_items:
+            rem = limit - (last_odo % limit)
+            st.caption(f"**{name}**: Осталось {int(rem)} км")
+            st.progress(max(0, min(100, int((rem/limit)*100))) / 100)
 
-        # --- БЛОК 3: КАРТА С ЛЕГЕНДОЙ И НАРУШЕНИЯМИ ---
+        # --- БЛОК 3: КАРТА (ROUTE) ---
+        st.divider()
         st.subheader("🗺 Карта фактического маршрута")
         
-        m = folium.Map(location=[df_route['latitude'].mean(), df_route['longitude'].mean()], zoom_start=11, tiles="cartodbpositron")
-        
-        # Отрисовка пути
-        path_points = [[r['latitude'], r['longitude']] for _, r in df_route.iterrows()]
-        folium.PolyLine(path_points, color="#2c3e50", weight=5, opacity=0.8).add_to(m)
-
-        # Анализ нарушений (Скорость > 90 и резкие торможения)
-        overspeeds = df_route[df_route['speed_kmh'] > 90]
-        for _, row in overspeeds.iterrows():
-            folium.CircleMarker([row['latitude'], row['longitude']], radius=6, color='#e67e22', fill=True, popup=f"Скорость: {row['speed_kmh']}").add_to(m)
+        if route_data:
+            df_route = pd.DataFrame(route_data)
+            df_route['speed_kmh'] = df_route['speed'] * 1.852
             
-        brakes = df_route[df_route['diff_speed'] < -18]
-        for _, row in brakes.iterrows():
-            folium.CircleMarker([row['latitude'], row['longitude']], radius=8, color='#c0392b', fill=True, popup="Резкое торможение").add_to(m)
+            m = folium.Map(location=[df_route['latitude'].mean(), df_route['longitude'].mean()], zoom_start=11, tiles="cartodbpositron")
+            
+            # Линия пути
+            points = [[r['latitude'], r['longitude']] for _, r in df_route.iterrows()]
+            folium.PolyLine(points, color="#1a237e", weight=5, opacity=0.8).add_to(m)
 
-        # ЛЕГЕНДА С ЧЕРНЫМ ТЕКСТОМ (КАЧЕСТВО!)
-        legend_html = '''
-             <div style="position: fixed; bottom: 40px; left: 40px; width: 230px; height: 140px; 
-                         background-color: white; border:3px solid black; z-index:9999; font-size:14px;
-                         padding: 12px; color: black; font-weight: bold; border-radius: 8px; box-shadow: 5px 5px 15px rgba(0,0,0,0.3);">
-             <p style="margin-bottom:8px; border-bottom: 1px solid black;">📊 ЛЕГЕНДА ОТЧЕТА</p>
-             <i style="background:#2c3e50; width:15px; height:3px; display:inline-block; margin-right:5px;"></i> Трек движения<br>
-             <i style="background:#e67e22; border-radius:50%; width:10px; height:10px; display:inline-block; margin-right:5px;"></i> Превышение >90 км/ч<br>
-             <i style="background:#c0392b; border-radius:50%; width:10px; height:10px; display:inline-block; margin-right:5px;"></i> Опасный маневр<br>
-             <i style="background:#27ae60; border-radius:2px; width:10px; height:10px; display:inline-block; margin-right:5px;"></i> Точка Старта
-             </div>
-             '''
-        m.get_root().html.add_child(folium.Element(legend_html))
+            # ПРЕВЫШЕНИЯ И НАРУШЕНИЯ (Анализируем каждую точку)
+            overspeed_count = 0
+            for _, row in df_route.iterrows():
+                if row['speed_kmh'] > 95:
+                    overspeed_count += 1
+                    folium.CircleMarker(
+                        [row['latitude'], row['longitude']], 
+                        radius=5, color='orange', fill=True, popup=f"ПРЕВЫШЕНИЕ: {int(row['speed_kmh'])} км/ч"
+                    ).add_to(m)
+            
+            # Резкие торможения
+            df_route['diff_speed'] = df_route['speed_kmh'].diff()
+            hard_brakes = df_route[df_route['diff_speed'] < -15]
+            for _, row in hard_brakes.iterrows():
+                folium.CircleMarker(
+                    [row['latitude'], row['longitude']], 
+                    radius=7, color='red', fill=True, popup="РЕЗКОЕ ТОРМОЖЕНИЕ"
+                ).add_to(m)
+
+            # Легенда
+            legend_html = '''
+                 <div style="position: fixed; bottom: 30px; left: 30px; width: 220px; z-index:9999; 
+                             background: white; border: 2px solid black; padding: 10px; border-radius: 5px;
+                             color: black; font-size: 13px; font-weight: bold;">
+                     <p style="margin: 0 0 5px 0;">📋 ЛЕГЕНДА АНАЛИТИКИ</p>
+                     <span style="color: #1a237e;">▬</span> Весь путь за период<br>
+                     <span style="color: orange;">●</span> Превышение (>95 км/ч)<br>
+                     <span style="color: red;">●</span> Резкое торможение
+                 </div>
+            '''
+            m.get_root().html.add_child(folium.Element(legend_html))
+            st_folium(m, width=1300, height=500)
+            
+            st.info(f"🚩 Зафиксировано нарушений: {overspeed_count} превышений и {len(hard_brakes)} опасных маневров.")
         
-        folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
-        folium.Marker(path_points[-1], icon=folium.Icon(color='red', icon='stop')).add_to(m)
+        # --- БЛОК 4: ГРАФИКИ ---
+        st.subheader("📈 Скоростной режим")
+        if route_data:
+            st.area_chart(df_route.set_index(pd.to_datetime(df_route['deviceTime']))['speed_kmh'])
 
-        st_folium(m, width=1300, height=550)
-
-        # --- БЛОК 4: ЭКОНОМИКА И ЭКОЛОГИЯ ---
-        st.divider()
-        st.subheader("💰 Финансовый и Операционный аудит")
-        
-        fuel_price = 23.45 # MDL
-        total_liters = total_period_km * 0.125 # 12.5л/100км
-        total_cost = total_liters * fuel_price
-        
-        ec1, ec2, ec3 = st.columns(3)
-        ec1.metric("Затраты на ГСМ", f"{int(total_cost)} MDL", help="Расчет по среднему расходу 12.5л/100км")
-        ec2.metric("Утилизация", f"{int((len(df_route[df_route.speed_kmh > 0])/len(df_route))*100)} %", help="Процент времени в движении")
-        ec3.metric("Эмиссия CO2", f"{int(total_liters * 2.68)} кг", delta="Eco Standard")
-
-        # --- БЛОК 5: АНАЛИЗ ПОВЕДЕНИЯ (SAFETY) ---
-        st.subheader("📈 График скорости и нагрузок")
-        st.area_chart(df_route.set_index('dt')['speed_kmh'], color="#29b5e8")
-        
-        
-
-        # Итоговый вердикт
-        st.divider()
-        if len(overspeeds) > 10 or len(brakes) > 5:
-            st.error("⚠️ ВЕРДИКТ: ВЫСОКИЙ РИСК. Обнаружен агрессивный стиль вождения. Требуется инструктаж водителя.")
-        else:
-            st.success("✅ ВЕРДИКТ: БЕЗОПАСНО. ТС эксплуатируется в штатном режиме, скоростные лимиты соблюдены.")
-
-        if st.button("❌ ЗАКРЫТЬ И ОЧИСТИТЬ ОТЧЕТ"):
+        if st.button("❌ ЗАКРЫТЬ ОТЧЕТ"):
             st.session_state.show_report = False
             st.rerun()
             
@@ -1877,6 +1879,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
