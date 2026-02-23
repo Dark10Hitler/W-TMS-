@@ -213,56 +213,43 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
         return False, None
 
 
-# Рекомендую вынести это в st.secrets для безопасности
-TRACCAR_URL = st.secrets.get("http://localhost:8082", "http://localhost:8082")
-TRACCAR_AUTH = (st.secrets.get("denis.masliuc.speak23dev@gmail.com", "qwert12345"), st.secrets.get("TRACCAR_PASS", "password"))
+# --- КОНФИГУРАЦИЯ ПОДКЛЮЧЕНИЯ ---
+# В st.secrets должно быть: traccar_url, traccar_user, traccar_pass
+TRACCAR_URL = st.secrets.get("TRACCAR_URL", "http://127.0.0.1:8082")
+TRACCAR_AUTH = (
+    st.secrets.get("TRACCAR_USER", "denis.masliuc.speak23dev@gmail.com"), 
+    st.secrets.get("TRACCAR_PASS", "qwert12345")
+)
 
-@st.cache_data(ttl=30) # Кешируем данные на 30 секунд, чтобы карта не "дергалась"
+@st.cache_data(ttl=10) # Уменьшил TTL до 10 сек для оперативности
 def get_detailed_traccar_data(endpoint="positions", params=None):
-    """
-    Универсальный клиент для Traccar API.
-    Объединяет данные об устройствах с их текущими координатами.
-    """
     try:
-        # Базовый URL для API
-        api_base = f"{TRACCAR_URL}/api"
+        api_base = f"{TRACCAR_URL.rstrip('/')}/api"
         
-        if endpoint == "positions":
-            # 1. Запрос списка устройств (чтобы знать их имена)
-            dev_resp = requests.get(f"{api_base}/devices", auth=TRACCAR_AUTH, timeout=5)
-            # 2. Запрос последних позиций
-            pos_resp = requests.get(f"{api_base}/positions", auth=TRACCAR_AUTH, timeout=5)
-            
-            if dev_resp.status_code == 200 and pos_resp.status_code == 200:
-                # Индексируем устройства по ID для быстрого доступа
-                devices = {d['id']: d for d in dev_resp.json()}
-                positions = pos_resp.json()
-                
-                # Обогащаем данные позиций именами из устройств
-                for pos in positions:
-                    dev_info = devices.get(pos['deviceId'], {})
-                    pos['name'] = dev_info.get('name', f"ID: {pos['deviceId']}")
-                    pos['status'] = dev_info.get('status', 'unknown')
-                
-                return devices, positions
-            
-            st.warning(f"📡 Traccar доступен, но вернул ошибку: {dev_resp.status_code}")
-            return {}, []
+        # 1. Запрос устройств
+        dev_resp = requests.get(f"{api_base}/devices", auth=TRACCAR_AUTH, timeout=7)
+        # 2. Запрос позиций
+        pos_resp = requests.get(f"{api_base}/positions", auth=TRACCAR_AUTH, timeout=7)
         
+        if dev_resp.status_code == 200 and pos_resp.status_code == 200:
+            devices = {d['id']: d for d in dev_resp.json()}
+            positions = pos_resp.json()
+            
+            for pos in positions:
+                dev_info = devices.get(pos['deviceId'], {})
+                pos['name'] = dev_info.get('name', f"ID: {pos['deviceId']}")
+                pos['status'] = dev_info.get('status', 'unknown')
+            
+            return devices, positions
         else:
-            # Логика для отчетов (маршруты, остановки)
-            resp = requests.get(f"{api_base}/{endpoint}", auth=TRACCAR_AUTH, params=params, timeout=10)
-            if resp.status_code == 200:
-                return resp.json()
-            else:
-                st.error(f"❌ Ошибка отчета Traccar ({resp.status_code}): {resp.text}")
-                return []
-                
+            st.error(f"🚫 Ошибка API: Devices({dev_resp.status_code}), Positions({pos_resp.status_code})")
+            return {}, []
+            
     except requests.exceptions.ConnectionError:
-        st.error("🔌 Нет связи с сервером Traccar (localhost:8082). Проверьте, запущен ли сервис.")
+        # Здесь не выводим st.error, чтобы не спамить в UI, просто пробрасываем пустые данные
         return {}, []
     except Exception as e:
-        st.error(f"⚠️ Системная ошибка GPS-модуля: {e}")
+        st.sidebar.error(f"GPS Error: {e}")
         return {}, []
 
 def get_vehicle_status_color(status):
@@ -887,125 +874,70 @@ def show_dashboard():
             
 def show_map():
     st.markdown("## 🛰️ Оперативный штаб: Мониторинг Fleet")
-    
-    # 1. Автообновление (15 сек)
     st_autorefresh(interval=15000, key="traccar_map_refresh")
     
-    # 2. Получение данных из Traccar и БД
-    try:
-        # Получаем данные GPS
+    # Инициализация данных
+    devices, positions = {}, []
+    v_reg = st.session_state.get('vehicles', pd.DataFrame())
+    d_reg = st.session_state.get('drivers', pd.DataFrame())
+
+    # Попытка получить GPS данные
+    with st.spinner("Синхронизация спутников..."):
         devices, positions = get_detailed_traccar_data()
-        # Убеждаемся, что справочники в стейте актуальны (из Supabase)
-        v_reg = st.session_state.vehicles
-        d_reg = st.session_state.drivers
-    except Exception as e:
-        st.error(f"❌ Ошибка связи с модулями: {e}")
-        return
 
-    # 3. Настройка карты (Центральный склад)
-    # Координаты вашего склада (можно вынести в st.secrets)
+    if not devices:
+        st.error(f"🔌 Нет связи с сервером Traccar ({TRACCAR_URL}). Проверьте Ngrok и статус службы.")
+
+    # Настройка карты
     BASE_LAT, BASE_LON = 47.776654, 27.913643
-    base_coords = [BASE_LAT, BASE_LON]
+    m = folium.Map(location=[BASE_LAT, BASE_LON], zoom_start=12, tiles="cartodbpositron")
     
-    m = folium.Map(location=base_coords, zoom_start=12, tiles="cartodbpositron") # Более строгий стиль
-    
-    # Геозона склада
-    folium.Circle(
-        location=base_coords, radius=500, color='#e74c3c', weight=2,
-        fill=True, fill_color='#e74c3c', fill_opacity=0.1, popup="ЦЕНТРАЛЬНЫЙ СКЛАД"
-    ).add_to(m)
+    # Слой склада
+    folium.Circle([BASE_LAT, BASE_LON], radius=500, color='#e74c3c', fill=True, fill_opacity=0.1).add_to(m)
+    folium.Marker([BASE_LAT, BASE_LON], popup="🏢 HQ", icon=folium.Icon(color="darkred", icon="home")).add_to(m)
 
-    folium.Marker(
-        base_coords, popup="🏢 <b>IMPERIA LOGISTICS HQ</b>",
-        icon=folium.Icon(color="darkred", icon="home", prefix="fa")
-    ).add_to(m)
-
-    # Счетчики для метрик
     stats = {"active": 0, "stopped": 0, "low_battery": 0, "at_base": []}
 
-    # 4. Обработка каждой метки GPS
+    # Обработка меток
     for pos in positions:
         dev_id = pos.get('deviceId')
         if dev_id not in devices: continue
-            
-        dev = devices[dev_id]
-        v_name = dev.get('name') # Имя устройства в Traccar должно совпадать с 'Марка' в БД
         
-        # --- СВЯЗКА С БД SUPABASE ---
-        # Ищем данные ТС
+        v_name = devices[dev_id].get('name')
+        
+        # Поиск данных в Supabase
         v_row = v_reg[v_reg['Марка'] == v_name] if not v_reg.empty else pd.DataFrame()
         v_data = v_row.iloc[0].to_dict() if not v_row.empty else {}
         
-        # Ищем Водителя (связка по имени ТС)
         d_row = d_reg[d_reg['ТС'] == v_name] if 'ТС' in d_reg.columns and not d_reg.empty else pd.DataFrame()
         d_data = d_row.iloc[0].to_dict() if not d_row.empty else {}
 
-        # --- ТЕХНИЧЕСКИЕ ДАННЫЕ ---
-        attrs = pos.get('attributes', {})
-        speed = round(pos.get('speed', 0) * 1.852, 1) # Узлы в км/ч
+        speed = round(pos.get('speed', 0) * 1.852, 1)
         lat, lon = pos.get('latitude'), pos.get('longitude')
-        batt = attrs.get('batteryLevel', 100)
         
-        # Расстояние до базы через geopy
-        dist_to_base = round(geodesic((lat, lon), base_coords).km, 2)
-        is_at_base = dist_to_base <= 0.5
+        # Расчет дистанции
+        dist = round(geodesic((lat, lon), [BASE_LAT, BASE_LON]).km, 2)
+        if dist <= 0.5: stats["at_base"].append(v_name)
         
-        # Анализ состояния
-        if is_at_base: stats["at_base"].append(v_name)
         if speed > 3: stats["active"] += 1
         else: stats["stopped"] += 1
-        if isinstance(batt, (int, float)) and batt < 20: stats["low_battery"] += 1
 
-        # Расчет ETA (Время прибытия)
-        if speed > 5:
-            eta_m = int((dist_to_base / speed) * 60)
-            eta_t = (datetime.now() + timedelta(minutes=eta_m)).strftime("%H:%M")
-        else:
-            eta_t = "На базе" if is_at_base else "Стоянка"
-
-        # --- ФОРМИРОВАНИЕ КАРТОЧКИ (HTML) ---
-        status_color = "#2ecc71" if speed > 3 else "#3498db"
-        popup_html = f"""
-        <div style="width: 280px; font-family: sans-serif; font-size: 13px;">
-            <div style="background:{status_color}; color:white; padding:10px; border-radius:5px 5px 0 0;">
-                <b>🚛 {v_name}</b> | {v_data.get('Госномер', 'Б/Н')}
-            </div>
-            <div style="padding:10px; border:1px solid #ddd; border-top:none;">
-                <b>👤 Водитель:</b> {d_data.get('Фамилия', 'Не назначен')}<br>
-                <b>📞 Тел:</b> {d_data.get('Телефон', '-')}<br>
-                <hr style="margin:8px 0; border:0; border-top:1px solid #eee;">
-                <b>🚀 Скорость:</b> <span style="color:red">{speed} км/ч</span><br>
-                <b>📍 Дистанция:</b> {dist_to_base} км<br>
-                <b>⏱ ETA:</b> <span style="color:blue">{eta_t}</span><br>
-                <div style="margin-top:8px; font-size:11px; color:gray;">
-                    🔋 Заряд: {batt}% | 🛰 Спутники: {attrs.get('sat', '0')}
-                </div>
-            </div>
-        </div>
-        """
-
+        # Маркер
+        popup_content = f"<b>🚛 {v_name}</b><br>Скорость: {speed} км/ч<br>До базы: {dist} км"
         folium.Marker(
             [lat, lon],
-            popup=folium.Popup(popup_html, max_width=300),
-            tooltip=f"{v_name} | {speed} км/ч",
+            popup=folium.Popup(popup_content, max_width=250),
             icon=folium.Icon(color="green" if speed > 3 else "blue", icon="truck", prefix="fa")
         ).add_to(m)
 
-    # 5. ОТОБРАЖЕНИЕ МЕТРИК
+    # Метрики
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🚚 В движении", stats["active"])
     c2.metric("🅿️ На стоянке", stats["stopped"])
-    c3.metric("🪫 Низкий заряд", stats["low_battery"], delta_color="inverse")
-    c4.metric("🏠 На базе", len(stats["at_base"]))
+    c3.metric("🏠 На базе", len(stats["at_base"]))
+    c4.metric("📡 Статус связи", "OK" if devices else "OFFLINE")
 
-    # 6. ВЫВОД КАРТЫ
     st_folium(m, width=1300, height=600, returned_objects=[])
-
-    # Список машин на базе
-    if stats["at_base"]:
-        with st.expander("📝 Список машин на территории"):
-            for car in stats["at_base"]:
-                st.write(f"✅ {car} — Готов к погрузке/разгрузке")
     
 def show_profile():
     st.markdown("<h1 class='no-print'>👤 Личный кабинет / Карточка Сотрудника</h1>", unsafe_allow_html=True)
@@ -1846,6 +1778,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
