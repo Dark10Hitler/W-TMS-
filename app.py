@@ -1152,65 +1152,91 @@ elif selected == "Водители":
     # 1. СИНХРОНИЗАЦИЯ
     if "drivers" not in st.session_state or st.session_state.drivers.empty:
         with st.spinner("Загрузка..."):
-            res = supabase.table("drivers").select("*").execute()
-            if res.data:
-                # Маппинг из имен БД в имена для UI
-                df = pd.DataFrame(res.data)
-                df = df.rename(columns={
-                    'first_name': 'Имя', 'last_name': 'Фамилия', 
-                    'phone': 'Телефон', 'categories': 'Категории',
-                    'experience': 'Стаж', 'status': 'Статус', 'photo_url': 'Фото'
-                })
-                st.session_state.drivers = df
-            else:
-                st.session_state.drivers = pd.DataFrame(columns=['id', 'Имя', 'Фамилия', 'Телефон', 'Категории', 'Стаж', 'Статус', 'Фото'])
+            try:
+                res = supabase.table("drivers").select("*").execute()
+                if res.data:
+                    df = pd.DataFrame(res.data)
+                    # Маппинг из имен БД в имена для UI
+                    df = df.rename(columns={
+                        'first_name': 'Имя', 
+                        'last_name': 'Фамилия', 
+                        'phone': 'Телефон', 
+                        'categories': 'Категории',
+                        'experience': 'Стаж', 
+                        'status': 'Статус', 
+                        'photo_url': 'Фото'
+                    })
+                    st.session_state.drivers = df
+                else:
+                    st.session_state.drivers = pd.DataFrame(columns=['id', 'Имя', 'Фамилия', 'Телефон', 'Категории', 'Стаж', 'Статус', 'Фото'])
+            except Exception as e:
+                st.error(f"Ошибка загрузки: {e}")
+                st.session_state.drivers = pd.DataFrame()
 
     col_btn, col_search = st.columns([1, 2])
     
     if col_btn.button("➕ ДОБАВИТЬ ВОДИТЕЛЯ", type="primary", use_container_width=True):
-        create_driver_modal() # Вызываем напрямую через диалог
+        create_driver_modal() 
 
     search = col_search.text_input("🔍 Поиск по фамилии...", placeholder="Введите фамилию")
 
     df_drivers = st.session_state.drivers
-    if search:
-        df_drivers = df_drivers[df_drivers['Фамилия'].str.contains(search, case=False, na=False)]
+    
+    # Фильтрация (с защитой от пустых значений в колонке Фамилия)
+    if search and not df_drivers.empty:
+        df_drivers = df_drivers[df_drivers['Фамилия'].fillna('').str.contains(search, case=False, na=False)]
 
     st.divider()
 
     if not df_drivers.empty:
         cols = st.columns(3)
         for idx, (i, row) in enumerate(df_drivers.iterrows()):
+            # Безопасное получение данных через .get()
+            driver_id = row.get('id')
+            f_name = row.get('Имя', '')
+            l_name = row.get('Фамилия', '')
+            status = row.get('Статус', 'Н/Д')
+            phone = row.get('Телефон', 'Нет номера')
+            cats = row.get('Категории', '-')
+            exp = row.get('Стаж', 0)
+            
+            # Логика фото: проверяем 'Фото', потом 'photo_url', потом дефолт
+            img_url = row.get('Фото') or row.get('photo_url') or "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+            
             with cols[idx % 3]:
                 with st.container(border=True):
-                    img_url = row['Фото'] if row['Фото'] else "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
-                    
                     st.markdown(f"""
                     <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
                         <img src="{img_url}" style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover; border: 2px solid #58A6FF;">
                         <div>
-                            <h3 style="margin: 0; font-size: 1.1em;">{row['Фамилия']} {row['Имя']}</h3>
-                            <small>{row['Статус']}</small>
+                            <h3 style="margin: 0; font-size: 1.1em;">{l_name} {f_name}</h3>
+                            <small style="color: #8B949E;">{status}</small>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    st.caption(f"📱 {row['Телефон']}")
-                    st.caption(f"🪪 Кат: {row['Категории']} | Стаж: {row['Стаж']}л.")
+                    st.caption(f"📱 {phone}")
+                    st.caption(f"🪪 Кат: {cats} | Стаж: {exp}л.")
                     
                     c1, c2 = st.columns(2)
-                    if c1.button("⚙️ Изм.", key=f"ed_btn_{row['id']}"):
-                        edit_driver_modal(row['id']) # Передаем ID в диалог
-                        
-                    if c2.button("🗑️", key=f"del_btn_{row['id']}"):
+                    # Кнопка изменения
+                    if c1.button("⚙️ Изм.", key=f"ed_btn_{driver_id}", use_container_width=True):
+                        edit_driver_modal(driver_id)
+                    
+                    # Кнопка удаления
+                    if c2.button("🗑️", key=f"del_btn_{driver_id}", use_container_width=True):
                         try:
-                            supabase.table("drivers").delete().eq("id", row['id']).execute()
-                            st.session_state.drivers = st.session_state.drivers[st.session_state.drivers.id != row['id']]
-                            st.success("Удалено")
+                            supabase.table("drivers").delete().eq("id", driver_id).execute()
+                            # Обновляем локальный стейт без перезагрузки всей базы
+                            st.session_state.drivers = st.session_state.drivers[st.session_state.drivers.id != driver_id]
+                            st.toast(f"Водитель {l_name} удален")
                             time.sleep(0.5)
                             st.rerun()
                         except Exception as e:
                             st.error("Ошибка удаления")
+    else:
+        st.info("Водители не найдены.")
+        
 # --- РАЗДЕЛ ТС ---
 elif selected == "ТС":
     st.markdown("<h1 class='section-head'>🚛 Управление Автопарком</h1>", unsafe_allow_html=True)
@@ -1824,6 +1850,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
