@@ -1237,86 +1237,103 @@ elif selected == "Водители":
     else:
         st.info("Водители не найдены.")
         
-# --- РАЗДЕЛ ТС ---
 elif selected == "ТС":
     st.markdown("<h1 class='section-head'>🚛 Управление Автопарком</h1>", unsafe_allow_html=True)
     
-    # 1. Загрузка данных, если их нет в стейте
+    # 1. Загрузка данных
     if "vehicles" not in st.session_state or st.session_state.vehicles is None:
-        with st.spinner("Загрузка автопарка..."):
+        with st.spinner("Синхронизация с базой данных..."):
             st.session_state.vehicles = load_data_from_supabase("vehicles")
 
     # Кнопка добавления
-    if st.button("➕ ДОБАВИТЬ НОВОЕ ТС", type="primary", use_container_width=True):
+    if st.button("➕ ДОБАВИТЬ НОВОЕ ТРАНСПОРТНОЕ СРЕДСТВО", type="primary", use_container_width=True):
         create_vehicle_modal() 
 
     st.divider()
 
-    # Работаем с данными
     df_v = st.session_state.get("vehicles", pd.DataFrame())
 
     if not df_v.empty:
+        # Создаем сетку
         cols = st.columns(2) 
+        
         for idx, (i, row) in enumerate(df_v.iterrows()):
-            # Безопасное получение ID
+            # --- ПОДГОТОВКА ДАННЫХ (Безопасно) ---
             v_id = row.get('id')
+            g_num = row.get('Госномер') or row.get('gov_num') or "Н/Д"
+            brand = row.get('Марка') or row.get('brand') or "Неизвестно"
+            v_type = row.get('Тип') or row.get('body_type') or "Тент"
+            status = row.get('Статус') or row.get('status') or "На линии"
+            veh_img = row.get('Фото') or row.get('photo_url') or "https://cdn-icons-png.flaticon.com/512/2554/2554977.png"
             
+            capacity = row.get('Грузоподъемность') or row.get('capacity') or 0
+            volume = row.get('Объем') or row.get('volume') or 0
+            pallets = row.get('Паллеты') or row.get('pallets') or 0
+
+            # Настройка цвета статуса
+            status_color = "#238636" if status in ["На линии", "В работе", "Свободен"] else "#D29922"
+            if status == "Ремонт": status_color = "#F85149"
+
             with cols[idx % 2]:
+                # Главный контейнер карточки
                 with st.container(border=True):
-                    # РЕНДЕРИНГ КАРТОЧКИ (Твой HTML код здесь)
-                    # Используй row.get('Госномер') или row.get('gov_num')
-                    veh_img = row.get('Фото') or "https://cdn-icons-png.flaticon.com/512/2554/2554977.png"
-                    
-                    # 3. ВИЗУАЛЬНАЯ ЧАСТЬ (HTML)
-st.markdown(f"""
-<div style="position: relative; margin-bottom: 10px;">
-    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-        <div style="display: flex; gap: 15px;">
-            <img src="{veh_img}" style="width: 50px; height: 50px; object-fit: contain;">
-            <div>
-                <h2 style="margin:0; color:#58A6FF; font-size: 1.2em;">{g_num}</h2>
-                <p style="margin:0; color: gray; font-size: 0.85em;">{brand} • {v_type}</p>
-            </div>
-        </div>
-        <div style="background: {status_bg}; color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.7em; font-weight: bold;">
-            {status}
-        </div>
-    </div>
-    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 15px; text-align: center;">
-        <div style="background: #0D1117; padding: 6px; border-radius: 8px; border: 1px solid #30363D;">
-            <small style="color: gray; font-size: 0.7em;">Вес</small><br><b style="font-size: 0.8em;">{capacity} кг</b>
-        </div>
-        <div style="background: #0D1117; padding: 6px; border-radius: 8px; border: 1px solid #30363D;">
-            <small style="color: gray; font-size: 0.7em;">Объем</small><br><b style="font-size: 0.8em;">{volume} м³</b>
-        </div>
-        <div style="background: #0D1117; padding: 6px; border-radius: 8px; border: 1px solid #30363D;">
-            <small style="color: gray; font-size: 0.7em;">Паллеты</small><br><b style="font-size: 0.8em;">{pallets} шт</b>
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+                    # HTML-верстка карточки
+                    st.markdown(f"""
+                    <div style="padding: 5px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div style="background: #161B22; padding: 8px; border-radius: 10px; border: 1px solid #30363D;">
+                                    <img src="{veh_img}" style="width: 45px; height: 45px; object-fit: contain;">
+                                </div>
+                                <div>
+                                    <h3 style="margin:0; color:#58A6FF; font-size: 1.3em; letter-spacing: 1px;">{g_num}</h3>
+                                    <p style="margin:0; color: #8B949E; font-size: 0.9em; font-weight: 500;">{brand} • {v_type}</p>
+                                </div>
+                            </div>
+                            <div style="background: {status_color}22; color: {status_color}; border: 1px solid {status_color}; 
+                                        padding: 3px 12px; border-radius: 20px; font-size: 0.75em; font-weight: bold; text-transform: uppercase;">
+                                {status}
+                            </div>
+                        </div>
+                        
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 5px;">
+                            <div style="background: #0D1117; padding: 10px; border-radius: 8px; border: 1px solid #21262D; text-align: center;">
+                                <div style="color: #8B949E; font-size: 0.7em; text-transform: uppercase; margin-bottom: 4px;">⚖️ Вес</div>
+                                <div style="color: #C9D1D9; font-size: 0.95em; font-weight: bold;">{capacity} <small>кг</small></div>
+                            </div>
+                            <div style="background: #0D1117; padding: 10px; border-radius: 8px; border: 1px solid #21262D; text-align: center;">
+                                <div style="color: #8B949E; font-size: 0.7em; text-transform: uppercase; margin-bottom: 4px;">📦 Объем</div>
+                                <div style="color: #C9D1D9; font-size: 0.95em; font-weight: bold;">{volume} <small>м³</small></div>
+                            </div>
+                            <div style="background: #0D1117; padding: 10px; border-radius: 8px; border: 1px solid #21262D; text-align: center;">
+                                <div style="color: #8B949E; font-size: 0.7em; text-transform: uppercase; margin-bottom: 4px;">🧱 Паллеты</div>
+                                <div style="color: #C9D1D9; font-size: 0.95em; font-weight: bold;">{pallets} <small>шт</small></div>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-st.divider()
+                    st.markdown("<div style='margin: 10px 0;'></div>", unsafe_allow_html=True)
 
-                    # КНОПКИ УПРАВЛЕНИЯ (Только две)
-                    vc1, vc2 = st.columns([4, 1])
+                    # --- КНОПКИ УПРАВЛЕНИЯ ---
+                    btn_col1, btn_col2 = st.columns([4, 1])
                     
-                    if vc1.button("⚙️ Изменить", key=f"edit_v_btn_{v_id}", use_container_width=True):
+                    if btn_col1.button(f"⚙️ РЕДАКТИРОВАТЬ", key=f"edit_{v_id}", use_container_width=True):
                         st.session_state.editing_id = v_id
                         edit_vehicle_modal()
                     
-                    if vc2.button("🗑️", key=f"del_v_{v_id}", use_container_width=True):
+                    if btn_col2.button(f"🗑️", key=f"del_{v_id}", use_container_width=True):
                         try:
-                            # Прямое удаление, чтобы избежать ошибки в функции delete_entry
                             supabase.table("vehicles").delete().eq("id", v_id).execute()
-                            # Удаляем из локального стейта
+                            # Мгновенное обновление локального состояния
                             st.session_state.vehicles = st.session_state.vehicles[st.session_state.vehicles.id != v_id]
-                            st.toast(f"ТС удалено")
+                            st.toast(f"Транспорт {g_num} удален", icon="✅")
+                            time.sleep(1)
                             st.rerun()
                         except Exception as e:
                             st.error(f"Ошибка удаления: {e}")
     else:
-        st.info("В автопарке пока нет автомобилей или данные загружаются.")
+        st.info("ℹ️ В автопарке пока нет записей. Воспользуйтесь кнопкой выше, чтобы добавить первый автомобиль.")
 
 elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence & Tech Audit")
@@ -1844,6 +1861,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
