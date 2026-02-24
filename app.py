@@ -1051,83 +1051,52 @@ def show_map():
             st.dataframe(pd.DataFrame(log_df), use_container_width=True)
             
 def show_profile():
-    # 1. СТРОГИЙ CSS (Enterprise Dark Style)
+    # 1. СТРОГИЙ ДИЗАЙН (Enterprise Dark)
     st.markdown("""
         <style>
-        .main-card { 
-            background: #0f172a; 
-            border: 1px solid #1e293b; 
-            border-radius: 4px; 
-            padding: 30px; 
-            color: #f1f5f9; 
-            font-family: 'Inter', sans-serif;
-        }
-        .label { 
-            color: #64748b; 
-            font-size: 0.75rem; 
-            text-transform: uppercase; 
-            letter-spacing: 0.1em; 
-            margin-bottom: 4px;
-        }
-        .value { 
-            color: #f8fafc; 
-            font-size: 1rem; 
-            margin-bottom: 16px; 
-            font-weight: 500;
-            border-bottom: 1px solid #1e293b;
-            padding-bottom: 8px;
-        }
-        .status-tag {
-            font-size: 0.7rem;
-            color: #22c55e;
-            border: 1px solid #22c55e;
-            padding: 2px 8px;
-            border-radius: 2px;
-            display: inline-block;
-            margin-top: 10px;
-        }
+        .main-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 4px; padding: 30px; color: #f1f5f9; }
+        .label { color: #64748b; font-size: 0.75rem; text-transform: uppercase; margin-bottom: 4px; }
+        .value { color: #f8fafc; font-size: 1rem; margin-bottom: 16px; font-weight: 500; border-bottom: 1px solid #1e293b; padding-bottom: 8px; }
         </style>
     """, unsafe_allow_html=True)
 
-    # 2. ЗАГРУЗКА ДАННЫХ ИЗ SUPABASE
+    # 2. ЗАГРУЗКА И ПРОВЕРКА ДАННЫХ
     try:
         response = supabase.table("profiles").select("*").order("id").execute()
         df = pd.DataFrame(response.data)
         
-        # Вспомогательная функция для динамического получения данных
+        # Функция поиска. Если не находит - возвращает "НЕТ В БАЗЕ"
         def get_val(prop_name):
             try:
-                # Ищем значение в колонке 'value', где 'parameter' равен prop_name
                 val = df[df['parameter'] == prop_name]['value'].values[0]
-                return val if val else "—"
+                return val if (val and str(val).strip() != "") else "—"
             except:
-                return "Данные отсутствуют"
+                return f"⚠️ Ключ '{prop_name}' не найден"
 
     except Exception as e:
-        st.error(f"Ошибка базы данных: {e}")
+        st.error(f"Ошибка Supabase: {e}")
         return
 
-    # 3. ВИЗУАЛЬНАЯ КАРТОЧКА (ТЕПЕРЬ ПОЛНОСТЬЮ ДИНАМИЧЕСКАЯ)
+    # 3. ВИЗУАЛЬНАЯ КАРТОЧКА (БЕЗ ХАРДКОДА)
     st.markdown(f"""
     <div class="main-card">
         <div style="display: flex; gap: 40px; align-items: flex-start;">
-            <div style="flex: 0 0 180px; text-align: center;">
-                <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="150" style="filter: grayscale(1); opacity: 0.8;">
-                <br>
-                <div class="status-tag">ID: {get_val('ID Сотрудника')}</div>
+            <div style="flex: 0 0 150px; text-align: center;">
+                <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="140" style="filter: grayscale(1); opacity: 0.8;">
+                <div style="margin-top:15px; font-size:0.7rem; color:#475569;">STATUS: ACTIVE</div>
             </div>
             
             <div style="flex: 1;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <h1 style="margin: 0; color: #3b82f6; font-size: 1.8rem; letter-spacing: -0.5px;">{get_val('ФИО')}</h1>
-                    <span style="color: #475569; font-size: 0.9rem;">Личное дело №{get_val('Номер Контракта')}</span>
+                    <h1 style="margin: 0; color: #3b82f6; font-size: 1.8rem;">{get_val('ФИО')}</h1>
+                    <span style="color: #475569; font-size: 0.8rem;">КОНТРАКТ: {get_val('Номер Контракта')}</span>
                 </div>
                 
-                <div style="color: #94a3b8; font-size: 1.1rem; margin-bottom: 30px; font-weight: 300;">
+                <div style="color: #94a3b8; font-size: 1.1rem; margin-bottom: 30px;">
                     {get_val('Должность')} | {get_val('Департамент')}
                 </div>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px;">
                     <div>
                         <div class="label">Контактный телефон</div>
                         <div class="value">{get_val('Телефон')}</div>
@@ -1150,28 +1119,33 @@ def show_profile():
     </div>
     """, unsafe_allow_html=True)
 
-    # 4. РЕДАКТОР (НИЖЕ)
+    # 4. ДИАГНОСТИКА И РЕДАКТОР
     st.markdown("<br>", unsafe_allow_html=True)
-    with st.expander("⚙️ ТЕХНИЧЕСКОЕ РЕДАКТИРОВАНИЕ ПРОФИЛЯ"):
+    
+    with st.expander("📝 УПРАВЛЕНИЕ ДАННЫМИ И ПРОВЕРКА КЛЮЧЕЙ"):
+        st.info("Чтобы данные отобразились в карточке, параметр в таблице ниже должен называться ТОЧНО ТАК ЖЕ (например: 'Офис', а не 'Региональный офис')")
+        
         edited_df = st.data_editor(
             df[['id', 'parameter', 'value']],
             column_config={
                 "id": None,
-                "parameter": st.column_config.TextColumn("ПАРАМЕТР", disabled=True),
-                "value": st.column_config.TextColumn("ТЕКУЩЕЕ ЗНАЧЕНИЕ")
+                "parameter": st.column_config.TextColumn("КЛЮЧ (Parameter)", help="Это имя ищет карточка"),
+                "value": st.column_config.TextColumn("ЗНАЧЕНИЕ (Value)")
             },
             use_container_width=True,
             hide_index=True,
-            key="profile_editor_new"
+            key="profile_editor_final"
         )
 
-        if st.button("💾 ПОДТВЕРДИТЬ ИЗМЕНЕНИЯ", type="primary", use_container_width=True):
-            with st.spinner("Синхронизация..."):
-                for _, row in edited_df.iterrows():
-                    supabase.table("profiles").update({"value": row["value"]}).eq("id", row["id"]).execute()
-                st.success("Данные успешно сохранены в Supabase")
-                time.sleep(1)
-                st.rerun()
+        if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", type="primary", use_container_width=True):
+            for _, row in edited_df.iterrows():
+                supabase.table("profiles").update({
+                    "value": row["value"],
+                    "parameter": row["parameter"] # Позволяем менять и само имя ключа
+                }).eq("id", row["id"]).execute()
+            st.success("База данных синхронизирована!")
+            st.rerun()
+            
 # --- Сайдбар и навигация остаются как у тебя, но добавляем логику вызова ---
 with st.sidebar:
     st.markdown("### 📦 IMPERIA WMS")
@@ -2015,6 +1989,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
