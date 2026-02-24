@@ -1411,13 +1411,14 @@ elif selected == "Аналитика":
         summary_df['engine_hours'] = round(summary_df['engineHours'] / 3600000, 1)
         summary_df['day_label'] = pd.to_datetime(summary_df['startTime']).dt.strftime('%d.%m.%Y')
         
-        # --- 1. ПОЛУЧЕНИЕ ДАННЫХ ---
+        # --- 1. ОБРАБОТКА GPS-ТОЧЕК (df_route) ---
         df_route = pd.DataFrame(route_data)
         df_route['dt'] = pd.to_datetime(df_route['deviceTime'])
         df_route['speed_kmh'] = round(df_route['speed'] * 1.852, 1)
-        df_route['date_only'] = df_route['dt'].dt.date # Для группировки по дням
+        df_route['date_only'] = df_route['dt'].dt.date  # Группировка
+        df_route['diff_speed'] = df_route['speed_kmh'].diff().fillna(0)
 
-        # --- 2. УМНЫЙ РАСЧЕТ ПРОБЕГА (HAVERSINE) ---
+        # --- 2. ТОЧНЫЙ РАСЧЕТ ДИСТАНЦИИ (Haversine) ---
         from math import radians, cos, sin, asin, sqrt
         def haversine(lon1, lat1, lon2, lat2):
             lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
@@ -1425,35 +1426,47 @@ elif selected == "Аналитика":
             a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
             return 6371 * 2 * asin(sqrt(a))
 
-        # Считаем расстояние между КАЖДОЙ парой точек
-        distances = [0]
+        # Считаем шаги между точками
+        step_distances = [0.0]
         for i in range(1, len(df_route)):
             d = haversine(df_route.iloc[i-1]['longitude'], df_route.iloc[i-1]['latitude'],
                           df_route.iloc[i]['longitude'], df_route.iloc[i]['latitude'])
-            distances.append(d if d > 0.02 else 0) # Игнорируем шум меньше 20 метров
+            # Игнорируем "дребезг" GPS (меньше 30 метров)
+            step_distances.append(d if d > 0.03 else 0.0)
         
-        df_route['dist_step'] = distances
-        total_km = sum(distances)
+        df_route['dist_km'] = step_distances
+        total_km = df_route['dist_km'].sum()
 
-        # --- 3. СИНХРОНИЗАЦИЯ ТАБЛИЦЫ (Группируем df_route, а не верим summary) ---
-        daily_stats = df_route.groupby('date_only').agg({
-            'dist_step': 'sum',
-            'speed_kmh': ['mean', 'max']
-        }).reset_index()
-        daily_stats.columns = ['Дата', 'Пробег (км)', 'Ср. Скорость', 'Макс. Скорость']
-        daily_stats['Пробег (км)'] = daily_stats['Пробег (км)'].round(2)
-        daily_stats['Ср. Скорость'] = daily_stats['Ср. Скорость'].round(1)
+        # --- 3. СИНХРОНИЗАЦИЯ ТАБЛИЦЫ (Группируем наши расчеты, а не Traccar) ---
+        # Теперь данные в таблице ВСЕГДА будут биться с итоговой суммой
+        daily_report = df_route.groupby('date_only').agg(
+            Real_Distance=('dist_km', 'sum'),
+            Avg_Speed=('speed_kmh', lambda x: x[x > 5].mean()), # Средняя только в движении
+            Max_Speed=('speed_kmh', 'max'),
+            Points_Count=('dt', 'count')
+        ).reset_index()
+        
+        daily_report.columns = ['Дата', 'Пробег (км)', 'Ср. скорость (км/ч)', 'Макс. скорость (км/ч)', 'Точек GPS']
+        daily_report = daily_report.round(2).fillna(0)
 
-        # --- 4. ВЕРХНИЕ МЕТРИКИ ---
+        # --- 4. ОТОБРАЖЕНИЕ МЕТРИК ---
+        st.subheader(f"📊 Итоговый аудит: {v_name}")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🏁 Точный пробег", f"{total_km:.2f} км")
-        m2.metric("⏱️ Точек в базе", len(df_route)) # Сразу увидим, почему палка на карте
-        m3.metric("⛽ Топливо", f"{int(total_km * 0.12 * 23.45)} MDL")
-        m4.metric("📊 Дней", len(daily_stats))
+        m1.metric("🏁 Итоговый пробег", f"{total_km:.2f} км")
+        m2.metric("⛽ Расход (прогноз)", f"{int(total_km * 0.12)} л", delta=f"{int(total_km * 0.12 * 24)} MDL")
+        m3.metric("📡 Качество трека", f"{len(df_route)} точ.", help="Чем больше точек, тем точнее карта")
+        
+        # Считаем агрессивные действия
+        overspeeds = df_route[df_route['speed_kmh'] > 95]
+        m4.metric("⚠️ Нарушения", f"{len(overspeeds)}", delta="Превышения", delta_color="inverse")
 
-        # --- 5. ТАБЛИЦА (Теперь она совпадает с пробегом сверху!) ---
-        with st.expander("📅 ПОДРОБНАЯ ДЕТАЛИЗАЦИЯ (СИНХРОННО)"):
-            st.dataframe(daily_stats, use_container_width=True)
+        # --- 5. ТАБЛИЦА (ПРОФЕССИОНАЛЬНЫЙ ВИД) ---
+        with st.expander("📅 ПОДРОБНАЯ ДЕТАЛИЗАЦИЯ ПО ДНЯМ (СИНХРОНИЗИРОВАНО)", expanded=True):
+            st.dataframe(
+                daily_report.style.background_gradient(subset=['Пробег (км)'], cmap='Blues'),
+                use_container_width=True,
+                hide_index=True
+            )
 
         # --- БЛОК 3: ТЕХОБСЛУЖИВАНИЕ И СИНХРОНИЗАЦИЯ ---
         st.divider()
@@ -1981,6 +1994,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
