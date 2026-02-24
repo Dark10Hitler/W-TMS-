@@ -1351,23 +1351,6 @@ elif selected == "ТС":
 elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence: Глубокий Аудит (Server Side)")
     st.markdown("---")
-    from math import radians, cos, sin, asin, sqrt
-
-    def haversine(lon1, lat1, lon2, lat2):
-        lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-        dlon, dlat = lon2 - lon1, lat2 - lat1
-        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-        return 6371 * 2 * asin(sqrt(a))
-
-    # Расчет
-    if not df_route.empty:
-        total_km = 0
-        for i in range(1, len(df_route)):
-            total_km += haversine(df_route.iloc[i-1]['longitude'], df_route.iloc[i-1]['latitude'],
-                              df_route.iloc[i]['longitude'], df_route.iloc[i]['latitude'])
-    
-    # Теперь total_km не будет 0, даже если сервер Traccar прислал 0
-    st.metric("🏁 Реальный пробег (расчетный)", f"{total_km:.2f} км")
     
     # --- ТЕХНИЧЕСКИЕ ФУНКЦИИ (БЕЗ СОКРАЩЕНИЙ) ---
     def get_traccar_summary(v_id, start, end):
@@ -1433,13 +1416,40 @@ elif selected == "Аналитика":
         df_route['speed_kmh'] = round(df_route['speed'] * 1.852, 1)
         df_route['diff_speed'] = df_route['speed_kmh'].diff()
 
+        # ========================================================
+        # ВСТАВКА HAVERSINE: РАСЧЕТ РЕАЛЬНОГО ПРОБЕГА ПО ТОЧКАМ
+        # ========================================================
+        from math import radians, cos, sin, asin, sqrt
+
+        def haversine(lon1, lat1, lon2, lat2):
+            lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+            dlon, dlat = lon2 - lon1, lat2 - lat1
+            a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+            return 6371 * 2 * asin(sqrt(a))
+
+        calculated_distance = 0
+        if len(df_route) > 1:
+            # Итерируемся по строкам и считаем расстояние между точками
+            for i in range(1, len(df_route)):
+                prev = df_route.iloc[i-1]
+                curr = df_route.iloc[i]
+                dist = haversine(prev['longitude'], prev['latitude'], 
+                                 curr['longitude'], curr['latitude'])
+                calculated_distance += dist
+        
+        # Если Traccar вернул 0 или данные сильно расходятся, 
+        # используем наш точный расчет
+        total_km = calculated_distance if calculated_distance > 0 else summary_df['distance_km'].sum()
+        # ========================================================
+
         # --- БЛОК 1: ВЕРХНИЕ МЕТРИКИ ---
-        total_km = summary_df['distance_km'].sum()
         total_hrs = summary_df['engine_hours'].sum()
         
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🏁 Пробег за период", f"{total_km:.2f} км")
+        # Используем наш total_km (из расчета Haversine)
+        m1.metric("🏁 Пробег (Точный расчет)", f"{total_km:.2f} км")
         m2.metric("⏱️ Моточасы", f"{total_hrs:.1f} ч")
+        # Топливо тоже считаем от точного пробега
         m3.metric("⛽ Топливо (MDL)", f"{int(total_km * 0.12 * 23.45)}")
         m4.metric("📊 Дней активно", len(summary_df))
 
@@ -1949,6 +1959,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
