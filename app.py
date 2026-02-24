@@ -1051,75 +1051,118 @@ def show_map():
             st.dataframe(pd.DataFrame(log_df), use_container_width=True)
             
 def show_profile():
-    st.markdown("<h1 class='no-print'>👤 Личный кабинет / Карточка Сотрудника</h1>", unsafe_allow_html=True)
-    
-    # 1. Загружаем актуальные данные из БД, если их нет в сессии
-    if "profile_data" not in st.session_state or st.session_state.profile_data.empty:
-        # Предполагаем, что у нас в Supabase есть таблица 'profiles'
-        # и мы фильтруем по текущему пользователю (например, 'admin')
-        data = supabase.table("profiles").select("*").execute()
-        st.session_state.profile_data = pd.DataFrame(data.data)
+    st.markdown("""
+        <style>
+        .profile-header { background: linear-gradient(90deg, #1a237e 0%, #283593 100%); padding: 2rem; border-radius: 15px; color: white; margin-bottom: 2rem; }
+        .stat-card { background: #f8f9fa; border: 1px solid #e0e0e0; padding: 15px; border-radius: 10px; text-align: center; }
+        .cv-card { border-left: 5px solid #1a237e; background: #ffffff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        </style>
+    """, unsafe_allow_html=True)
 
-    df = st.session_state.profile_data
+    st.markdown('<div class="profile-header"><h1>👤 Профиль Сотрудника / Digital CV</h1><p>Управление персональными данными и квалификацией</p></div>', unsafe_allow_html=True)
 
-    col1, col2 = st.columns([1, 2])
+    # --- 1. ЗАГРУЗКА ДАННЫХ ---
+    try:
+        # Прямой запрос к Supabase
+        response = supabase.table("profiles").select("*").order("id").execute()
+        raw_data = response.data
+        
+        if not raw_data:
+            st.warning("⚠️ База данных пуста. Создайте записи в таблице 'profiles'.")
+            st.stop()
+            
+        df = pd.DataFrame(raw_data)
+        # Мапим колонки для удобства (если в БД на английском)
+        # Если в БД уже 'Параметр' и 'Значение', используй их напрямую
+        df_display = df.copy() 
+    except Exception as e:
+        st.error(f"❌ Ошибка Supabase: {e}")
+        st.info("Проверьте, создана ли таблица 'profiles' и нет ли ограничений RLS.")
+        st.stop()
+
+    # --- 2. ВИЗУАЛЬНАЯ КАРТОЧКА ---
+    def get_v(p_name):
+        try: return df[df['parameter'] == p_name]['value'].values[0]
+        except: return "Не указано"
+
+    c1, c2 = st.columns([1, 2.5])
     
-    with col1:
-        st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=200)
-        if st.button("🖨️ ПЕЧАТЬ CV / ПРОФИЛЯ", use_container_width=True):
+    with c1:
+        st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", use_container_width=True)
+        st.markdown(f"""
+            <div class="stat-card">
+                <small>Статус</small><br>
+                <b style="color:green;">● В СЕТИ (TRACCAR)</b>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("🖨️ СФОРМИРОВАТЬ CV (PDF)", use_container_width=True):
+            st.toast("Подготовка файла для печати...")
             st.markdown('<script>window.print();</script>', unsafe_allow_html=True)
 
-    with col2:
-        # Берем данные из DataFrame. Предполагаем структуру: Ключ | Значение
-        # Или прямые колонки: name, position, phone, email, experience
-        try:
-            # Универсальный поиск значений для отображения
-            def get_val(prop_name):
-                return df[df['Параметр'] == prop_name]['Значение'].values[0]
-
-            st.markdown(f"""
-            <div class="cv-card" style="padding: 20px; border: 1px solid #30363d; border-radius: 10px; background: #161b22;">
-                <h1 style="color: #58A6FF; margin: 0;">{get_val('ФИО')}</h1>
-                <h3 style="color: #8b949e; margin-top: 5px;">{get_val('Должность')}</h3>
-                <hr style="border-color: #30363d;">
-                <p><b>📞 Телефон:</b> {get_val('Телефон')}</p>
-                <p><b>📧 Email:</b> {get_val('Email')}</p>
-                <p><b>💼 Опыт:</b> {get_val('Опыт')}</p>
+    with c2:
+        st.markdown(f"""
+            <div style="background: white; padding: 25px; border-radius: 15px; border: 1px solid #eee; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);">
+                <h2 style="margin:0; color:#1a237e;">{get_v('ФИО')}</h2>
+                <p style="font-size:1.2rem; color:#666;">{get_v('Должность')}</p>
+                <hr>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <p><b>📱 Тел:</b> {get_v('Телефон')}</p>
+                    <p><b>📧 Email:</b> {get_v('Email')}</p>
+                    <p><b>⏳ Опыт:</b> {get_v('Опыт')}</p>
+                    <p><b>🌍 Локация:</b> Молдова, Кишинев</p>
+                </div>
             </div>
-            """, unsafe_allow_html=True)
-        except Exception:
-            st.warning("Заполните таблицу ниже для отображения карточки")
+        """, unsafe_allow_html=True)
 
+    # --- 3. ИНТЕРАКТИВНЫЙ РЕДАКТОР ---
     st.divider()
-    st.markdown("### 🛠️ Редактировать данные профиля")
+    st.subheader("🛠️ Управление данными")
     
-    # 2. Используем data_editor с ключом для отслеживания изменений
+    # Конфигурируем data_editor
     edited_df = st.data_editor(
-        st.session_state.profile_data, 
-        use_container_width=True, 
-        num_rows="fixed",
-        hide_index=True
+        df[['id', 'parameter', 'value', 'category']],
+        column_config={
+            "id": None, # Скрываем ID от пользователя
+            "parameter": st.column_config.TextColumn("Параметр", disabled=True),
+            "value": st.column_config.TextColumn("Значение (Редактируемое) ✍️"),
+            "category": st.column_config.SelectboxColumn("Категория", options=["Основное", "Контакты", "Квалификация"])
+        },
+        use_container_width=True,
+        hide_index=True,
+        key="profile_editor"
     )
 
-    # 3. КНОПКА СОХРАНЕНИЯ В БД (Критически важно!)
-    if st.button("💾 Сохранить изменения в базу данных", type="primary"):
-        try:
-            # Превращаем DataFrame в список словарей для Supabase
-            records = edited_df.to_dict('records')
-            
-            # Обновляем каждую запись в таблице profiles
-            for record in records:
-                supabase.table("profiles").update({
-                    "Значение": record["Значение"]
-                }).eq("Параметр", record["Параметр"]).execute()
-            
-            # Обновляем сессию и радуем пользователя
-            st.session_state.profile_data = edited_df
-            st.success("✅ Данные в БД успешно обновлены!")
-            time.sleep(1)
-            st.rerun()
-        except Exception as e:
-            st.error(f"❌ Ошибка при записи в БД: {e}")
+    # --- 4. УМНОЕ СОХРАНЕНИЕ ---
+    col_btn1, col_btn2 = st.columns([1, 4])
+    
+    with col_btn1:
+        if st.button("💾 СОХРАНИТЬ", type="primary", use_container_width=True):
+            with st.spinner("Синхронизация с облаком Supabase..."):
+                try:
+                    success_count = 0
+                    for _, row in edited_df.iterrows():
+                        # Обновляем только если значение изменилось (сравнение с оригиналом)
+                        original_val = df[df['id'] == row['id']]['value'].values[0]
+                        if row['value'] != original_val:
+                            supabase.table("profiles").update({
+                                "value": row["value"],
+                                "category": row["category"]
+                            }).eq("id", row["id"]).execute()
+                            success_count += 1
+                    
+                    if success_count > 0:
+                        st.success(f"✅ Обновлено записей: {success_count}")
+                    else:
+                        st.info("Изменений не обнаружено.")
+                    
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Ошибка при сохранении: {e}")
+
+    with col_btn2:
+        st.caption("После внесения изменений нажмите кнопку 'Сохранить', чтобы данные обновились в базе данных и на карточке сотрудника.")
 
 # --- Сайдбар и навигация остаются как у тебя, но добавляем логику вызова ---
 with st.sidebar:
@@ -1947,6 +1990,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
