@@ -1411,53 +1411,49 @@ elif selected == "Аналитика":
         summary_df['engine_hours'] = round(summary_df['engineHours'] / 3600000, 1)
         summary_df['day_label'] = pd.to_datetime(summary_df['startTime']).dt.strftime('%d.%m.%Y')
         
+        # --- 1. ПОЛУЧЕНИЕ ДАННЫХ ---
         df_route = pd.DataFrame(route_data)
         df_route['dt'] = pd.to_datetime(df_route['deviceTime'])
         df_route['speed_kmh'] = round(df_route['speed'] * 1.852, 1)
-        df_route['diff_speed'] = df_route['speed_kmh'].diff()
+        df_route['date_only'] = df_route['dt'].dt.date # Для группировки по дням
 
-        # ========================================================
-        # ВСТАВКА HAVERSINE: РАСЧЕТ РЕАЛЬНОГО ПРОБЕГА ПО ТОЧКАМ
-        # ========================================================
+        # --- 2. УМНЫЙ РАСЧЕТ ПРОБЕГА (HAVERSINE) ---
         from math import radians, cos, sin, asin, sqrt
-
         def haversine(lon1, lat1, lon2, lat2):
             lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
             dlon, dlat = lon2 - lon1, lat2 - lat1
             a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
             return 6371 * 2 * asin(sqrt(a))
 
-        calculated_distance = 0
-        if len(df_route) > 1:
-            # Итерируемся по строкам и считаем расстояние между точками
-            for i in range(1, len(df_route)):
-                prev = df_route.iloc[i-1]
-                curr = df_route.iloc[i]
-                dist = haversine(prev['longitude'], prev['latitude'], 
-                                 curr['longitude'], curr['latitude'])
-                calculated_distance += dist
+        # Считаем расстояние между КАЖДОЙ парой точек
+        distances = [0]
+        for i in range(1, len(df_route)):
+            d = haversine(df_route.iloc[i-1]['longitude'], df_route.iloc[i-1]['latitude'],
+                          df_route.iloc[i]['longitude'], df_route.iloc[i]['latitude'])
+            distances.append(d if d > 0.02 else 0) # Игнорируем шум меньше 20 метров
         
-        # Если Traccar вернул 0 или данные сильно расходятся, 
-        # используем наш точный расчет
-        total_km = calculated_distance if calculated_distance > 0 else summary_df['distance_km'].sum()
-        # ========================================================
+        df_route['dist_step'] = distances
+        total_km = sum(distances)
 
-        # --- БЛОК 1: ВЕРХНИЕ МЕТРИКИ ---
-        total_hrs = summary_df['engine_hours'].sum()
-        
+        # --- 3. СИНХРОНИЗАЦИЯ ТАБЛИЦЫ (Группируем df_route, а не верим summary) ---
+        daily_stats = df_route.groupby('date_only').agg({
+            'dist_step': 'sum',
+            'speed_kmh': ['mean', 'max']
+        }).reset_index()
+        daily_stats.columns = ['Дата', 'Пробег (км)', 'Ср. Скорость', 'Макс. Скорость']
+        daily_stats['Пробег (км)'] = daily_stats['Пробег (км)'].round(2)
+        daily_stats['Ср. Скорость'] = daily_stats['Ср. Скорость'].round(1)
+
+        # --- 4. ВЕРХНИЕ МЕТРИКИ ---
         m1, m2, m3, m4 = st.columns(4)
-        # Используем наш total_km (из расчета Haversine)
-        m1.metric("🏁 Пробег (Точный расчет)", f"{total_km:.2f} км")
-        m2.metric("⏱️ Моточасы", f"{total_hrs:.1f} ч")
-        # Топливо тоже считаем от точного пробега
-        m3.metric("⛽ Топливо (MDL)", f"{int(total_km * 0.12 * 23.45)}")
-        m4.metric("📊 Дней активно", len(summary_df))
+        m1.metric("🏁 Точный пробег", f"{total_km:.2f} км")
+        m2.metric("⏱️ Точек в базе", len(df_route)) # Сразу увидим, почему палка на карте
+        m3.metric("⛽ Топливо", f"{int(total_km * 0.12 * 23.45)} MDL")
+        m4.metric("📊 Дней", len(daily_stats))
 
-        # --- БЛОК 2: ТАБЛИЦА (EXPANDER) ---
-        with st.expander("📅 ПОДРОБНАЯ ДЕТАЛИЗАЦИЯ ПО ДНЯМ (Кликните, чтобы развернуть)"):
-            display_df = summary_df[['day_label', 'distance_km', 'engine_hours', 'averageSpeed', 'maxSpeed']].copy()
-            display_df.columns = ['Дата', 'Пробег (км)', 'Моточасы (ч)', 'Ср. Скорость', 'Макс. Скорость']
-            st.table(display_df)
+        # --- 5. ТАБЛИЦА (Теперь она совпадает с пробегом сверху!) ---
+        with st.expander("📅 ПОДРОБНАЯ ДЕТАЛИЗАЦИЯ (СИНХРОННО)"):
+            st.dataframe(daily_stats, use_container_width=True)
 
         # --- БЛОК 3: ТЕХОБСЛУЖИВАНИЕ И СИНХРОНИЗАЦИЯ ---
         st.divider()
@@ -1475,47 +1471,100 @@ elif selected == "Аналитика":
                 st.metric("Осталось", f"{int(rem)} км")
                 st.progress(perc / 100)
 
-        # --- БЛОК 4: КАРТА С ПОЛНОЙ ЛЕГЕНДОЙ ---
+        # --- БЛОК 4: КАРТА С ПОЛНОЙ ЛЕГЕНДОЙ И OSM ---
         st.divider()
-        st.subheader("🗺 Карта фактического маршрута и нарушений")
+        st.subheader("🗺️ Геопространственный аудит маршрута")
         
-        m = folium.Map(location=[df_route['latitude'].mean(), df_route['longitude'].mean()], zoom_start=11, tiles="cartodbpositron")
-        
-        # Отрисовка трека
-        points = [[r['latitude'], r['longitude']] for _, r in df_route.iterrows()]
-        folium.PolyLine(points, color="#1a237e", weight=5, opacity=0.8, tooltip="Маршрут движения").add_to(m)
+        # Проверка на наличие данных, чтобы не упасть
+        if not df_route.empty:
+            # Создаем карту с подложкой OpenStreetMap (яркая, детальная)
+            m = folium.Map(
+                location=[df_route['latitude'].mean(), df_route['longitude'].mean()], 
+                zoom_start=11, 
+                tiles="OpenStreetMap",
+                control_scale=True
+            )
 
-        # Анализ точек (Превышения и Торможения)
-        overspeeds = df_route[df_route['speed_kmh'] > 95]
-        hard_brakes = df_route[df_route['diff_speed'] < -15]
+            # Добавляем плагин Fullscreen для удобства анализа
+            from folium.plugins import Fullscreen
+            Fullscreen().add_to(m)
 
-        for _, row in overspeeds.iterrows():
-            folium.CircleMarker(
-                [row['latitude'], row['longitude']], radius=6, color='orange', fill=True, 
-                popup=f"ПРЕВЫШЕНИЕ: {int(row['speed_kmh'])} км/ч"
+            # 1. ОТРИСОВКА ТРЕКА (Синий профессиональный цвет)
+            points = [[r['latitude'], r['longitude']] for _, r in df_route.iterrows()]
+            folium.PolyLine(
+                points, 
+                color="#2A52BE", # Deep Ocean Blue
+                weight=5, 
+                opacity=0.85, 
+                tooltip="Фактическая траектория ТС"
+            ).add_to(m)
+
+            # 2. МАРКЕРЫ СТАРТА И ФИНИША
+            folium.Marker(
+                points[0], 
+                popup="ТОЧКА ВЫХОДА", 
+                icon=folium.Icon(color='green', icon='play', prefix='fa')
             ).add_to(m)
             
-        for _, row in hard_brakes.iterrows():
-            folium.CircleMarker(
-                [row['latitude'], row['longitude']], radius=8, color='red', fill=True, 
-                popup="РЕЗКОЕ ТОРМОЖЕНИЕ"
+            folium.Marker(
+                points[-1], 
+                popup="ТОЧКА ПРИБЫТИЯ", 
+                icon=folium.Icon(color='red', icon='stop', prefix='fa')
             ).add_to(m)
 
-        # ПОЛНАЯ ЛЕГЕНДА
-        legend_html = f'''
-             <div style="position: fixed; bottom: 50px; left: 50px; width: 250px; z-index:9999; 
-                         background: white; border: 2px solid black; padding: 15px; border-radius: 10px;
-                         color: black; font-size: 14px; font-weight: bold; box-shadow: 2px 2px 5px rgba(0,0,0,0.3);">
-                 <p style="margin: 0 0 10px 0; border-bottom: 1px solid #ccc;">📋 ЛЕГЕНДА ТРЕКА</p>
-                 <span style="color: #1a237e;">▬</span> Весь путь ({total_km:.1f} км)<br>
-                 <span style="color: orange;">●</span> Скорость > 95 км/ч ({len(overspeeds)} точ.)<br>
-                 <span style="color: red;">●</span> Резкое торможение ({len(hard_brakes)} инц.)<br>
-                 <hr style="margin: 10px 0;">
-                 <small style="color: gray;">Период: {start_date} - {end_date}</small>
-             </div>
-        '''
-        m.get_root().html.add_child(folium.Element(legend_html))
-        st_folium(m, width=1300, height=600)
+            # 3. АНАЛИЗ НАРУШЕНИЙ (Круги с обводкой)
+            overspeeds = df_route[df_route['speed_kmh'] > 95]
+            hard_brakes = df_route[df_route['diff_speed'] < -15]
+
+            for _, row in overspeeds.iterrows():
+                folium.CircleMarker(
+                    location=[row['latitude'], row['longitude']],
+                    radius=7,
+                    color='#FF8C00', # Dark Orange
+                    fill=True,
+                    fill_color='#FFD700',
+                    fill_opacity=0.9,
+                    popup=f"🔥 ПРЕВЫШЕНИЕ: {int(row['speed_kmh'])} км/ч"
+                ).add_to(m)
+
+            for _, row in hard_brakes.iterrows():
+                folium.CircleMarker(
+                    location=[row['latitude'], row['longitude']],
+                    radius=9,
+                    color='#B22222', # Firebrick Red
+                    fill=True,
+                    fill_color='#FF0000',
+                    fill_opacity=0.9,
+                    popup="⚠️ ОПАСНОЕ ТОРМОЖЕНИЕ"
+                ).add_to(m)
+
+            # 4. ПРОФЕССИОНАЛЬНАЯ ЛЕГЕНДА (Overlay HTML)
+            legend_html = f'''
+                 <div style="position: fixed; 
+                             top: 10px; right: 10px; width: 220px; height: auto; 
+                             z-index:9999; font-size:13px;
+                             background-color: rgba(255, 255, 255, 0.9);
+                             border: 2px solid #1a237e; border-radius: 6px;
+                             padding: 10px; color: #333; font-family: 'Arial';
+                             box-shadow: 3px 3px 6px rgba(0,0,0,0.2);">
+                     <b style="font-size: 14px; color: #1a237e;">📜 ОТЧЕТ МАРШРУТА</b><br>
+                     <hr style="margin: 5px 0;">
+                     <i style="background:#2A52BE; width:15px; height:3px; display:inline-block; vertical-align:middle;"></i> 
+                     Путь: <b>{total_km:.2f} км</b><br>
+                     <i style="background:#FFD700; width:10px; height:10px; border-radius:50%; display:inline-block;"></i> 
+                     Скорость > 95: <b>{len(overspeeds)} точ.</b><br>
+                     <i style="background:#FF0000; width:10px; height:10px; border-radius:50%; display:inline-block;"></i> 
+                     Резкое тормож.: <b>{len(hard_brakes)} ед.</b><br>
+                     <hr style="margin: 5px 0;">
+                     <span style="font-size: 11px; color: #666;">Период аналитики:<br>{start_date} — {end_date}</span>
+                 </div>
+            '''
+            m.get_root().html.add_child(folium.Element(legend_html))
+
+            # Рендерим карту
+            st_folium(m, width=1300, height=700, returned_objects=[])
+        else:
+            st.warning("⚠️ Недостаточно данных для визуализации на карте за указанный период.")
 
         # --- БЛОК 5: ПРОФЕССИОНАЛЬНЫЙ ГРАФИК (БЕЗ "КАШИ") ---
         st.divider()
@@ -1959,6 +2008,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
