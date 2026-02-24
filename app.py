@@ -1484,74 +1484,115 @@ elif selected == "Аналитика":
                 st.metric("Осталось", f"{int(rem)} км")
                 st.progress(perc / 100)
 
-        # --- БЛОК 4: КАРТА С ПОЛНОЙ ЛЕГЕНДОЙ И OSM ---
         st.divider()
         st.subheader("🗺️ Геопространственный аудит маршрута")
         
         if not df_route.empty:
-            # СТРАХОВКА: Если колонки нет, создаем её прямо сейчас
-            if 'speed_kmh' in df_route.columns:
-                df_route['diff_speed'] = df_route['speed_kmh'].diff().fillna(0)
-            else:
-                st.error("Ошибка: В данных отсутствует колонка скорости.")
-                st.stop()
+            import folium
+            from folium.plugins import Fullscreen, MarkerCluster, AntPath
+            from streamlit_folium import st_folium
 
-            # Создаем карту OSM
+            # Проверка данных
+            if 'speed_kmh' not in df_route.columns:
+                df_route['speed_kmh'] = df_route['speed'] * 1.852
+            df_route['diff_speed'] = df_route['speed_kmh'].diff().fillna(0)
+
+            # Центрирование
             m = folium.Map(
                 location=[df_route['latitude'].mean(), df_route['longitude'].mean()], 
                 zoom_start=11, 
-                tiles="OpenStreetMap"
+                tiles="cartodbpositron" # Более чистый фон для аналитики
             )
-
-            # Плагин полноэкранного режима
-            from folium.plugins import Fullscreen
             Fullscreen().add_to(m)
 
-            # 1. ТРЕК
+            # 1. ДИНАМИЧЕСКИЙ ТРЕК (AntPath создает эффект движения)
             points = [[r['latitude'], r['longitude']] for _, r in df_route.iterrows()]
-            folium.PolyLine(points, color="#2A52BE", weight=5, opacity=0.85).add_to(m)
+            AntPath(
+                locations=points,
+                dash_array=[10, 20],
+                delay=1000,
+                color='#2A52BE',
+                pulse_color='#FFFFFF',
+                weight=4,
+                opacity=0.6,
+                tooltip="Маршрут движения"
+            ).add_to(m)
 
-            # 2. СТАРТ / ФИНИШ
-            folium.Marker(points[0], popup="СТАРТ", icon=folium.Icon(color='green', icon='play', prefix='fa')).add_to(m)
-            folium.Marker(points[-1], popup="ФИНИШ", icon=folium.Icon(color='red', icon='stop', prefix='fa')).add_to(m)
-
-            # 3. АНАЛИЗ (Превышения и Торможения)
+            # 2. АНАЛИЗ СОБЫТИЙ (Группировка для удобства)
+            # Превышения (> 95 км/ч) - Оранжевый
             overspeeds = df_route[df_route['speed_kmh'] > 95]
-            # Теперь diff_speed точно существует!
-            hard_brakes = df_route[df_route['diff_speed'] < -15]
+            # Резкие торможения (падение > 20 км/ч за шаг) - Красный
+            hard_brakes = df_route[df_route['diff_speed'] < -20]
+            # Стоянки (скорость 0 более 5 минут - если есть данные)
+            stops = df_route[df_route['speed_kmh'] < 1]
 
+            # Создаем кластер для нарушений, чтобы не забивать карту
+            incident_cluster = MarkerCluster(name="Нарушения и события").add_to(m)
+
+            # Маркеры превышений
             for _, row in overspeeds.iterrows():
                 folium.CircleMarker(
                     location=[row['latitude'], row['longitude']],
-                    radius=7, color='#FF8C00', fill=True, fill_opacity=0.9,
-                    popup=f"🔥 ПРЕВЫШЕНИЕ: {int(row['speed_kmh'])} км/ч"
-                ).add_to(m)
+                    radius=8, color='#FF4500', fill=True, fill_opacity=0.8,
+                    popup=folium.Popup(f"""
+                        <div style='font-family: sans-serif; font-size: 12px;'>
+                            <b style='color:red;'>🔥 ПРЕВЫШЕНИЕ</b><br>
+                            Скорость: <b>{int(row['speed_kmh'])} км/ч</b><br>
+                            Время: {row['dt'].strftime('%H:%M:%S')}
+                        </div>""", max_width=200)
+                ).add_to(incident_cluster)
 
+            # Маркеры торможений
             for _, row in hard_brakes.iterrows():
-                folium.CircleMarker(
+                folium.Marker(
                     location=[row['latitude'], row['longitude']],
-                    radius=9, color='#B22222', fill=True, fill_opacity=0.9,
-                    popup="⚠️ РЕЗКОЕ ТОРМОЖЕНИЕ"
-                ).add_to(m)
+                    icon=folium.Icon(color='red', icon='bolt', prefix='fa'),
+                    popup=f"⚠️ Резкое торможение: {int(row['diff_speed'])} км/ч"
+                ).add_to(incident_cluster)
 
-            # 4. ЛЕГЕНДА
+            # 3. СТАРТ И ФИНИШ (Яркие флаги)
+            folium.Marker(
+                points[0], 
+                popup="🚩 ТОЧКА ВЫХОДА", 
+                icon=folium.Icon(color='green', icon='play', prefix='fa')
+            ).add_to(m)
+            
+            folium.Marker(
+                points[-1], 
+                popup="🏁 КОНЕЧНАЯ ТОЧКА", 
+                icon=folium.Icon(color='black', icon='flag-checkered', prefix='fa')
+            ).add_to(m)
+
+            # 4. ПРОФЕССИОНАЛЬНАЯ ЛЕГЕНДА (HTML/CSS)
             legend_html = f'''
-                 <div style="position: fixed; top: 10px; right: 10px; width: 220px; z-index:9999; 
-                             background-color: rgba(255, 255, 255, 0.9); border: 2px solid #1a237e; 
-                             padding: 10px; border-radius: 6px; box-shadow: 3px 3px 6px rgba(0,0,0,0.2);">
-                     <b style="color: #1a237e;">📜 ОТЧЕТ МАРШРУТА</b><br>
-                     <hr style="margin: 5px 0;">
-                     Путь: <b>{total_km:.2f} км</b><br>
-                     Скорость > 95: <b>{len(overspeeds)} точ.</b><br>
-                     Резкое тормож.: <b>{len(hard_brakes)} ед.</b><br>
+                 <div style="position: fixed; bottom: 50px; left: 50px; width: 250px; z-index:9999; 
+                             background-color: white; border: 1px solid grey; font-family: sans-serif;
+                             padding: 15px; border-radius: 10px; font-size: 13px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3);">
+                     <h4 style="margin-top:0; color:#1a237e;">🔍 Аудит маршрута</h4>
+                     <div style="margin-bottom: 8px;">
+                        <span style="background:#2A52BE; width:20px; height:3px; display:inline-block; margin-right:5px;"></span> Траектория пути
+                     </div>
+                     <div style="margin-bottom: 8px;">
+                        <span style="background:#FF4500; border-radius:50%; width:10px; height:10px; display:inline-block; margin-right:5px;"></span> Превышение (>95 км/ч)
+                     </div>
+                     <div style="margin-bottom: 8px;">
+                        <span style="color:red; font-size:14px; margin-right:5px;">⚡</span> Резкое торможение
+                     </div>
+                     <hr>
+                     <table style="width:100%">
+                        <tr><td>🏁 Дистанция:</td><td style="text-align:right"><b>{total_km:.2f} км</b></td></tr>
+                        <tr><td>🔥 Нарушений:</td><td style="text-align:right; color:red;"><b>{len(overspeeds)}</b></td></tr>
+                        <tr><td>📡 Точек:</td><td style="text-align:right"><b>{len(df_route)}</b></td></tr>
+                     </table>
                  </div>
             '''
             m.get_root().html.add_child(folium.Element(legend_html))
 
-            st_folium(m, width=1300, height=700, returned_objects=[])
+            # Отображение
+            st_folium(m, width="100%", height=700)
+            
         else:
-            st.warning("⚠️ Данные маршрута отсутствуют.")
-
+            st.warning("⚠️ Нет данных для построения карты за выбранный период.")
         # --- БЛОК 5: ПРОФЕССИОНАЛЬНЫЙ ГРАФИК (БЕЗ "КАШИ") ---
         st.divider()
         st.subheader("📈 Детальный анализ скоростного режима")
@@ -1994,6 +2035,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
