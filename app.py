@@ -1051,98 +1051,59 @@ def show_map():
             st.dataframe(pd.DataFrame(log_df), use_container_width=True)
             
 def show_profile():
-    # 1. СТИЛЬ (Строгий, темный)
-    st.markdown("""
-        <style>
-        .main-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 4px; padding: 30px; color: #f1f5f9; }
-        .label { color: #64748b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
-        .value { color: #f8fafc; font-size: 1rem; margin-bottom: 16px; font-weight: 500; border-bottom: 1px solid #1e293b; padding-bottom: 6px; }
-        .name-header { color: #3b82f6; font-size: 1.8rem; font-weight: 600; margin: 0; }
-        </style>
-    """, unsafe_allow_html=True)
+    st.header("👤 Карточка сотрудника")
 
-    # 2. ПОЛУЧЕНИЕ ДАННЫХ ИЗ БАЗЫ
+    # 1. ЗАГРУЗКА ИЗ БАЗЫ
     try:
-        # Запрашиваем всё из таблицы profiles
-        response = supabase.table("profiles").select("*").order("id").execute()
-        df = pd.DataFrame(response.data)
+        res = supabase.table("profiles").select("*").order("id").execute()
+        df = pd.DataFrame(res.data)
         
-        # ГЛАВНАЯ ФУНКЦИЯ: берет значение из колонки 'value' по имени 'parameter'
-        def gv(parameter_name):
+        # Простая функция: ищем значение по имени параметра
+        def get_v(name):
             try:
-                # Ищем строку, где параметр совпадает
-                result = df[df['parameter'] == parameter_name]['value'].values[0]
-                return result if result and str(result).strip() != "" else "—"
+                return df[df['parameter'] == name]['value'].values[0]
             except:
-                return f"⚠️ {parameter_name}?" 
-
+                return "---"
     except Exception as e:
-        st.error(f"Ошибка подключения к Supabase: {e}")
+        st.error(f"Ошибка базы: {e}")
         return
 
-    # 3. ВЕРСТКА КАРТОЧКИ (ОБРАТИ ВНИМАНИЕ: ЗДЕСЬ НЕТ ИМЕН, ТОЛЬКО ПЕРЕМЕННЫЕ)
-    # Важно: f перед кавычками позволяет вставлять {gv(...)}
-    st.markdown(f"""
-    <div class="main-card">
-        <div style="display: flex; gap: 40px; align-items: flex-start;">
-            <div style="flex: 0 0 140px; text-align: center;">
-                <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="130" style="filter: grayscale(1);">
-            </div>
-            
-            <div style="flex: 1;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <h1 class="name-header">{gv('ФИО')}</h1>
-                    <span style="color: #475569; font-size: 0.8rem; background: #1e293b; padding: 2px 10px;">
-                        КОНТРАКТ: {gv('Номер Контракта')}
-                    </span>
-                </div>
-                
-                <div style="color: #94a3b8; font-size: 1.1rem; margin-bottom: 25px;">
-                    {gv('Должность')} | {gv('Департамент')}
-                </div>
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                    <div>
-                        <div class="label">Контактный телефон</div>
-                        <div class="value">{gv('Телефон')}</div>
-                    </div>
-                    <div>
-                        <div class="label">Корпоративная почта</div>
-                        <div class="value">{gv('Email')}</div>
-                    </div>
-                    <div>
-                        <div class="label">Профессиональный опыт</div>
-                        <div class="value">{gv('Опыт')}</div>
-                    </div>
-                    <div>
-                        <div class="label">Региональный офис</div>
-                        <div class="value">{gv('Офис')}</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # 2. ОТОБРАЖЕНИЕ (БЕЗ ХАРДКОДА И КРАСОТЫ)
+    # Здесь нет имен "Иванов", только ссылки на колонки из твоей таблицы
+    col1, col2 = st.columns([1, 3])
+    
+    with col1:
+        st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=120)
+    
+    with col2:
+        st.subheader(get_v('ФИО'))
+        st.write(f"**Должность:** {get_v('Должность')}")
+        st.write(f"**Департамент:** {get_v('Департамент')}")
+        st.write(f"**Контракт:** {get_v('Номер Контракта')}")
 
-    # 4. ТАБЛИЦА-РЕДАКТОР (ТО, ЧТО ТЫ ПРАВИШЬ РУКАМИ)
-    st.markdown("### 🛠️ ПАНЕЛЬ УПРАВЛЕНИЯ РЕЕСТРОМ")
+    st.markdown("---")
+    
+    # Сетка данных
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Телефон", get_v('Телефон'))
+    c2.metric("Email", get_v('Email'))
+    c3.metric("Офис", get_v('Офис'))
+
+    st.markdown("---")
+
+    # 3. РЕДАКТОР (ТО ЧТО ТЫ ПРАВИШЬ)
+    st.write("### 📝 Редактировать данные")
     edited_df = st.data_editor(
-        df[['id', 'parameter', 'value']],
-        column_config={
-            "id": None,
-            "parameter": st.column_config.TextColumn("КЛЮЧ (Не менять)", disabled=True),
-            "value": st.column_config.TextColumn("ЗНАЧЕНИЕ В БАЗЕ")
-        },
+        df[['id', 'parameter', 'value']], 
         use_container_width=True,
         hide_index=True,
-        key="prof_editor_dynamic"
+        column_config={"parameter": "Параметр", "value": "Значение"}
     )
 
-    if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ В SUPABASE", type="primary", use_container_width=True):
+    if st.button("💾 СОХРАНИТЬ ВСЁ"):
         for _, row in edited_df.iterrows():
             supabase.table("profiles").update({"value": row["value"]}).eq("id", row["id"]).execute()
-        st.success("Данные успешно синхронизированы!")
-        time.sleep(1)
+        st.success("Данные обновлены!")
         st.rerun()
             
 # --- Сайдбар и навигация остаются как у тебя, но добавляем логику вызова ---
@@ -1988,6 +1949,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
