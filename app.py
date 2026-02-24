@@ -1051,79 +1051,127 @@ def show_map():
             st.dataframe(pd.DataFrame(log_df), use_container_width=True)
             
 def show_profile():
-    # CSS для строгого стиля
+    # 1. СТРОГИЙ CSS (Enterprise Dark Style)
     st.markdown("""
         <style>
-        .main-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 4px; padding: 24px; color: #f1f5f9; }
-        .sidebar-info { border-right: 1px solid #1e293b; padding-right: 20px; }
-        .label { color: #94a3b8; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
-        .value { color: #f8fafc; font-size: 1.1rem; margin-bottom: 12px; font-weight: 500; }
-        .stButton>button { border-radius: 2px; text-transform: uppercase; font-weight: 600; letter-spacing: 1px; }
+        .main-card { 
+            background: #0f172a; 
+            border: 1px solid #1e293b; 
+            border-radius: 4px; 
+            padding: 30px; 
+            color: #f1f5f9; 
+            font-family: 'Inter', sans-serif;
+        }
+        .label { 
+            color: #64748b; 
+            font-size: 0.75rem; 
+            text-transform: uppercase; 
+            letter-spacing: 0.1em; 
+            margin-bottom: 4px;
+        }
+        .value { 
+            color: #f8fafc; 
+            font-size: 1rem; 
+            margin-bottom: 16px; 
+            font-weight: 500;
+            border-bottom: 1px solid #1e293b;
+            padding-bottom: 8px;
+        }
+        .status-tag {
+            font-size: 0.7rem;
+            color: #22c55e;
+            border: 1px solid #22c55e;
+            padding: 2px 8px;
+            border-radius: 2px;
+            display: inline-block;
+            margin-top: 10px;
+        }
         </style>
     """, unsafe_allow_html=True)
 
-    # Загрузка
-    res = supabase.table("profiles").select("*").order("id").execute()
-    df = pd.DataFrame(res.data)
-    
-    def get_data(name):
-        return df[df['parameter'] == name]['value'].values[0]
+    # 2. ЗАГРУЗКА ДАННЫХ ИЗ SUPABASE
+    try:
+        response = supabase.table("profiles").select("*").order("id").execute()
+        df = pd.DataFrame(response.data)
+        
+        # Вспомогательная функция для динамического получения данных
+        def get_val(prop_name):
+            try:
+                # Ищем значение в колонке 'value', где 'parameter' равен prop_name
+                val = df[df['parameter'] == prop_name]['value'].values[0]
+                return val if val else "—"
+            except:
+                return "Данные отсутствуют"
 
-    # Верстка карточки
-    with st.container():
-        st.markdown(f"""
-        <div class="main-card">
-            <div style="display: flex; gap: 40px;">
-                <div style="flex: 0 0 200px; text-align: center;">
-                    <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="160" style="filter: grayscale(0.2); margin-bottom: 20px;">
-                    <div style="font-size: 0.8rem; color: #22c55e;">● СИСТЕМА АКТИВНА</div>
+    except Exception as e:
+        st.error(f"Ошибка базы данных: {e}")
+        return
+
+    # 3. ВИЗУАЛЬНАЯ КАРТОЧКА (ТЕПЕРЬ ПОЛНОСТЬЮ ДИНАМИЧЕСКАЯ)
+    st.markdown(f"""
+    <div class="main-card">
+        <div style="display: flex; gap: 40px; align-items: flex-start;">
+            <div style="flex: 0 0 180px; text-align: center;">
+                <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="150" style="filter: grayscale(1); opacity: 0.8;">
+                <br>
+                <div class="status-tag">ID: {get_val('ID Сотрудника')}</div>
+            </div>
+            
+            <div style="flex: 1;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h1 style="margin: 0; color: #3b82f6; font-size: 1.8rem; letter-spacing: -0.5px;">{get_val('ФИО')}</h1>
+                    <span style="color: #475569; font-size: 0.9rem;">Личное дело №{get_val('Номер Контракта')}</span>
                 </div>
-                <div style="flex: 1;">
-                    <h1 style="margin: 0 0 5px 0; color: #3b82f6; font-size: 2rem;">{get_data('ФИО')}</h1>
-                    <div style="color: #64748b; font-size: 1.1rem; margin-bottom: 30px;">{get_data('Должность')}</div>
-                    
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                        <div>
-                            <div class="label">Контактный телефон</div>
-                            <div class="value">{get_data('Телефон')}</div>
-                        </div>
-                        <div>
-                            <div class="label">Корпоративная почта</div>
-                            <div class="value">{get_data('Email')}</div>
-                        </div>
-                        <div>
-                            <div class="label">Профессиональный опыт</div>
-                            <div class="value">{get_data('Опыт')}</div>
-                        </div>
-                        <div>
-                            <div class="label">Региональный офис</div>
-                            <div class="value">MD, Chisinau</div>
-                        </div>
+                
+                <div style="color: #94a3b8; font-size: 1.1rem; margin-bottom: 30px; font-weight: 300;">
+                    {get_val('Должность')} | {get_val('Департамент')}
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px;">
+                    <div>
+                        <div class="label">Контактный телефон</div>
+                        <div class="value">{get_val('Телефон')}</div>
+                    </div>
+                    <div>
+                        <div class="label">Корпоративная почта</div>
+                        <div class="value">{get_val('Email')}</div>
+                    </div>
+                    <div>
+                        <div class="label">Профессиональный опыт</div>
+                        <div class="value">{get_val('Опыт')}</div>
+                    </div>
+                    <div>
+                        <div class="label">Региональный офис</div>
+                        <div class="value">{get_val('Офис')}</div>
                     </div>
                 </div>
             </div>
         </div>
-        """, unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("### ⚙️ РЕДАКТИРОВАНИЕ РЕЕСТРА")
-    
-    edited_df = st.data_editor(
-        df[['id', 'parameter', 'value']],
-        column_config={
-            "id": None,
-            "parameter": st.column_config.TextColumn("ПОЛЕ", disabled=True),
-            "value": st.column_config.TextColumn("ЗНАЧЕНИЕ ДАННЫХ")
-        },
-        use_container_width=True, hide_index=True
-    )
+    # 4. РЕДАКТОР (НИЖЕ)
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.expander("⚙️ ТЕХНИЧЕСКОЕ РЕДАКТИРОВАНИЕ ПРОФИЛЯ"):
+        edited_df = st.data_editor(
+            df[['id', 'parameter', 'value']],
+            column_config={
+                "id": None,
+                "parameter": st.column_config.TextColumn("ПАРАМЕТР", disabled=True),
+                "value": st.column_config.TextColumn("ТЕКУЩЕЕ ЗНАЧЕНИЕ")
+            },
+            use_container_width=True,
+            hide_index=True,
+            key="profile_editor_new"
+        )
 
-    if st.button("💾 ЗАФИКСИРОВАТЬ ИЗМЕНЕНИЯ", type="primary"):
-        for _, row in edited_df.iterrows():
-            supabase.table("profiles").update({"value": row["value"]}).eq("id", row["id"]).execute()
-        st.success("РЕЕСТР ОБНОВЛЕН")
-        st.rerun()
-
+        if st.button("💾 ПОДТВЕРДИТЬ ИЗМЕНЕНИЯ", type="primary", use_container_width=True):
+            with st.spinner("Синхронизация..."):
+                for _, row in edited_df.iterrows():
+                    supabase.table("profiles").update({"value": row["value"]}).eq("id", row["id"]).execute()
+                st.success("Данные успешно сохранены в Supabase")
+                time.sleep(1)
+                st.rerun()
 # --- Сайдбар и навигация остаются как у тебя, но добавляем логику вызова ---
 with st.sidebar:
     st.markdown("### 📦 IMPERIA WMS")
@@ -1369,7 +1417,24 @@ elif selected == "ТС":
 elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence: Глубокий Аудит (Server Side)")
     st.markdown("---")
+    from math import radians, cos, sin, asin, sqrt
 
+    def haversine(lon1, lat1, lon2, lat2):
+        lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+        dlon, dlat = lon2 - lon1, lat2 - lat1
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        return 6371 * 2 * asin(sqrt(a))
+
+    # Расчет
+    if not df_route.empty:
+        total_km = 0
+        for i in range(1, len(df_route)):
+            total_km += haversine(df_route.iloc[i-1]['longitude'], df_route.iloc[i-1]['latitude'],
+                              df_route.iloc[i]['longitude'], df_route.iloc[i]['latitude'])
+    
+    # Теперь total_km не будет 0, даже если сервер Traccar прислал 0
+    st.metric("🏁 Реальный пробег (расчетный)", f"{total_km:.2f} км")
+    
     # --- ТЕХНИЧЕСКИЕ ФУНКЦИИ (БЕЗ СОКРАЩЕНИЙ) ---
     def get_traccar_summary(v_id, start, end):
         url = f"{TRACCAR_URL.rstrip('/')}/api/reports/summary"
@@ -1950,6 +2015,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
