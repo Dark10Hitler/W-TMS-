@@ -1475,96 +1475,69 @@ elif selected == "Аналитика":
         st.divider()
         st.subheader("🗺️ Геопространственный аудит маршрута")
         
-        # Проверка на наличие данных, чтобы не упасть
         if not df_route.empty:
-            # Создаем карту с подложкой OpenStreetMap (яркая, детальная)
+            # СТРАХОВКА: Если колонки нет, создаем её прямо сейчас
+            if 'speed_kmh' in df_route.columns:
+                df_route['diff_speed'] = df_route['speed_kmh'].diff().fillna(0)
+            else:
+                st.error("Ошибка: В данных отсутствует колонка скорости.")
+                st.stop()
+
+            # Создаем карту OSM
             m = folium.Map(
                 location=[df_route['latitude'].mean(), df_route['longitude'].mean()], 
                 zoom_start=11, 
-                tiles="OpenStreetMap",
-                control_scale=True
+                tiles="OpenStreetMap"
             )
 
-            # Добавляем плагин Fullscreen для удобства анализа
+            # Плагин полноэкранного режима
             from folium.plugins import Fullscreen
             Fullscreen().add_to(m)
 
-            # 1. ОТРИСОВКА ТРЕКА (Синий профессиональный цвет)
+            # 1. ТРЕК
             points = [[r['latitude'], r['longitude']] for _, r in df_route.iterrows()]
-            folium.PolyLine(
-                points, 
-                color="#2A52BE", # Deep Ocean Blue
-                weight=5, 
-                opacity=0.85, 
-                tooltip="Фактическая траектория ТС"
-            ).add_to(m)
+            folium.PolyLine(points, color="#2A52BE", weight=5, opacity=0.85).add_to(m)
 
-            # 2. МАРКЕРЫ СТАРТА И ФИНИША
-            folium.Marker(
-                points[0], 
-                popup="ТОЧКА ВЫХОДА", 
-                icon=folium.Icon(color='green', icon='play', prefix='fa')
-            ).add_to(m)
-            
-            folium.Marker(
-                points[-1], 
-                popup="ТОЧКА ПРИБЫТИЯ", 
-                icon=folium.Icon(color='red', icon='stop', prefix='fa')
-            ).add_to(m)
+            # 2. СТАРТ / ФИНИШ
+            folium.Marker(points[0], popup="СТАРТ", icon=folium.Icon(color='green', icon='play', prefix='fa')).add_to(m)
+            folium.Marker(points[-1], popup="ФИНИШ", icon=folium.Icon(color='red', icon='stop', prefix='fa')).add_to(m)
 
-            # 3. АНАЛИЗ НАРУШЕНИЙ (Круги с обводкой)
+            # 3. АНАЛИЗ (Превышения и Торможения)
             overspeeds = df_route[df_route['speed_kmh'] > 95]
+            # Теперь diff_speed точно существует!
             hard_brakes = df_route[df_route['diff_speed'] < -15]
 
             for _, row in overspeeds.iterrows():
                 folium.CircleMarker(
                     location=[row['latitude'], row['longitude']],
-                    radius=7,
-                    color='#FF8C00', # Dark Orange
-                    fill=True,
-                    fill_color='#FFD700',
-                    fill_opacity=0.9,
+                    radius=7, color='#FF8C00', fill=True, fill_opacity=0.9,
                     popup=f"🔥 ПРЕВЫШЕНИЕ: {int(row['speed_kmh'])} км/ч"
                 ).add_to(m)
 
             for _, row in hard_brakes.iterrows():
                 folium.CircleMarker(
                     location=[row['latitude'], row['longitude']],
-                    radius=9,
-                    color='#B22222', # Firebrick Red
-                    fill=True,
-                    fill_color='#FF0000',
-                    fill_opacity=0.9,
-                    popup="⚠️ ОПАСНОЕ ТОРМОЖЕНИЕ"
+                    radius=9, color='#B22222', fill=True, fill_opacity=0.9,
+                    popup="⚠️ РЕЗКОЕ ТОРМОЖЕНИЕ"
                 ).add_to(m)
 
-            # 4. ПРОФЕССИОНАЛЬНАЯ ЛЕГЕНДА (Overlay HTML)
+            # 4. ЛЕГЕНДА
             legend_html = f'''
-                 <div style="position: fixed; 
-                             top: 10px; right: 10px; width: 220px; height: auto; 
-                             z-index:9999; font-size:13px;
-                             background-color: rgba(255, 255, 255, 0.9);
-                             border: 2px solid #1a237e; border-radius: 6px;
-                             padding: 10px; color: #333; font-family: 'Arial';
-                             box-shadow: 3px 3px 6px rgba(0,0,0,0.2);">
-                     <b style="font-size: 14px; color: #1a237e;">📜 ОТЧЕТ МАРШРУТА</b><br>
+                 <div style="position: fixed; top: 10px; right: 10px; width: 220px; z-index:9999; 
+                             background-color: rgba(255, 255, 255, 0.9); border: 2px solid #1a237e; 
+                             padding: 10px; border-radius: 6px; box-shadow: 3px 3px 6px rgba(0,0,0,0.2);">
+                     <b style="color: #1a237e;">📜 ОТЧЕТ МАРШРУТА</b><br>
                      <hr style="margin: 5px 0;">
-                     <i style="background:#2A52BE; width:15px; height:3px; display:inline-block; vertical-align:middle;"></i> 
                      Путь: <b>{total_km:.2f} км</b><br>
-                     <i style="background:#FFD700; width:10px; height:10px; border-radius:50%; display:inline-block;"></i> 
                      Скорость > 95: <b>{len(overspeeds)} точ.</b><br>
-                     <i style="background:#FF0000; width:10px; height:10px; border-radius:50%; display:inline-block;"></i> 
                      Резкое тормож.: <b>{len(hard_brakes)} ед.</b><br>
-                     <hr style="margin: 5px 0;">
-                     <span style="font-size: 11px; color: #666;">Период аналитики:<br>{start_date} — {end_date}</span>
                  </div>
             '''
             m.get_root().html.add_child(folium.Element(legend_html))
 
-            # Рендерим карту
             st_folium(m, width=1300, height=700, returned_objects=[])
         else:
-            st.warning("⚠️ Недостаточно данных для визуализации на карте за указанный период.")
+            st.warning("⚠️ Данные маршрута отсутствуют.")
 
         # --- БЛОК 5: ПРОФЕССИОНАЛЬНЫЙ ГРАФИК (БЕЗ "КАШИ") ---
         st.divider()
@@ -2008,6 +1981,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
