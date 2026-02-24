@@ -1051,57 +1051,53 @@ def show_map():
             st.dataframe(pd.DataFrame(log_df), use_container_width=True)
             
 def show_profile():
-    # 1. СТРОГИЙ ДИЗАЙН (Enterprise Dark)
+    # 1. СТИЛЬ (Строгий, темный)
     st.markdown("""
         <style>
-        .main-card { 
-            background: #0f172a; 
-            border: 1px solid #1e293b; 
-            border-radius: 4px; 
-            padding: 30px; 
-            color: #f1f5f9; 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
+        .main-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 4px; padding: 30px; color: #f1f5f9; }
         .label { color: #64748b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
         .value { color: #f8fafc; font-size: 1rem; margin-bottom: 16px; font-weight: 500; border-bottom: 1px solid #1e293b; padding-bottom: 6px; }
         .name-header { color: #3b82f6; font-size: 1.8rem; font-weight: 600; margin: 0; }
-        .sub-header { color: #94a3b8; font-size: 1rem; margin-bottom: 25px; font-weight: 400; }
         </style>
     """, unsafe_allow_html=True)
 
-    # 2. ПОЛУЧЕНИЕ ДАННЫХ
+    # 2. ПОЛУЧЕНИЕ ДАННЫХ ИЗ БАЗЫ
     try:
+        # Запрашиваем всё из таблицы profiles
         response = supabase.table("profiles").select("*").order("id").execute()
         df = pd.DataFrame(response.data)
         
-        # Умная функция получения значения
-        def gv(p_name):
+        # ГЛАВНАЯ ФУНКЦИЯ: берет значение из колонки 'value' по имени 'parameter'
+        def gv(parameter_name):
             try:
-                # Фильтруем строку по названию параметра
-                res = df[df['parameter'] == p_name]['value'].values[0]
-                return res if res and str(res).strip() != "" else "—"
+                # Ищем строку, где параметр совпадает
+                result = df[df['parameter'] == parameter_name]['value'].values[0]
+                return result if result and str(result).strip() != "" else "—"
             except:
-                return f"⚠️ {p_name} не задан" # Это поможет тебе увидеть, чего не хватает в SQL
+                return f"⚠️ {parameter_name}?" 
+
     except Exception as e:
-        st.error(f"Ошибка БД: {e}")
+        st.error(f"Ошибка подключения к Supabase: {e}")
         return
 
-    # 3. ВЕРСТКА КАРТОЧКИ (БЕЗ ХАРДКОДА)
+    # 3. ВЕРСТКА КАРТОЧКИ (ОБРАТИ ВНИМАНИЕ: ЗДЕСЬ НЕТ ИМЕН, ТОЛЬКО ПЕРЕМЕННЫЕ)
+    # Важно: f перед кавычками позволяет вставлять {gv(...)}
     st.markdown(f"""
     <div class="main-card">
         <div style="display: flex; gap: 40px; align-items: flex-start;">
             <div style="flex: 0 0 140px; text-align: center;">
-                <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="130" style="filter: grayscale(1); border: 1px solid #1e293b; padding: 5px;">
-                <div style="margin-top:15px; font-size:0.65rem; color:#475569; border: 1px solid #1e293b; padding: 2px;">LVL: SENIOR LOGIST</div>
+                <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="130" style="filter: grayscale(1);">
             </div>
             
             <div style="flex: 1;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                     <h1 class="name-header">{gv('ФИО')}</h1>
-                    <span style="color: #475569; font-size: 0.8rem; background: #1e293b; padding: 2px 10px;">КОНТРАКТ: {gv('Номер Контракта')}</span>
+                    <span style="color: #475569; font-size: 0.8rem; background: #1e293b; padding: 2px 10px;">
+                        КОНТРАКТ: {gv('Номер Контракта')}
+                    </span>
                 </div>
                 
-                <div class="sub-header">
+                <div style="color: #94a3b8; font-size: 1.1rem; margin-bottom: 25px;">
                     {gv('Должность')} | {gv('Департамент')}
                 </div>
                 
@@ -1128,27 +1124,26 @@ def show_profile():
     </div>
     """, unsafe_allow_html=True)
 
-    # 4. РЕДАКТОР (НИЖЕ)
-    st.markdown("<br>", unsafe_allow_html=True)
-    with st.expander("🛠️ РЕДАКТИРОВАТЬ ДАННЫЕ ПРОФИЛЯ"):
-        edited_df = st.data_editor(
-            df[['id', 'parameter', 'value']],
-            column_config={
-                "id": None,
-                "parameter": st.column_config.TextColumn("КЛЮЧ", disabled=True),
-                "value": st.column_config.TextColumn("ЗНАЧЕНИЕ")
-            },
-            use_container_width=True,
-            hide_index=True,
-            key="prof_edit"
-        )
+    # 4. ТАБЛИЦА-РЕДАКТОР (ТО, ЧТО ТЫ ПРАВИШЬ РУКАМИ)
+    st.markdown("### 🛠️ ПАНЕЛЬ УПРАВЛЕНИЯ РЕЕСТРОМ")
+    edited_df = st.data_editor(
+        df[['id', 'parameter', 'value']],
+        column_config={
+            "id": None,
+            "parameter": st.column_config.TextColumn("КЛЮЧ (Не менять)", disabled=True),
+            "value": st.column_config.TextColumn("ЗНАЧЕНИЕ В БАЗЕ")
+        },
+        use_container_width=True,
+        hide_index=True,
+        key="prof_editor_dynamic"
+    )
 
-        if st.button("💾 СОХРАНИТЬ В БАЗУ", type="primary", use_container_width=True):
-            for _, row in edited_df.iterrows():
-                supabase.table("profiles").update({"value": row["value"]}).eq("id", row["id"]).execute()
-            st.success("Данные синхронизированы!")
-            time.sleep(1)
-            st.rerun()
+    if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ В SUPABASE", type="primary", use_container_width=True):
+        for _, row in edited_df.iterrows():
+            supabase.table("profiles").update({"value": row["value"]}).eq("id", row["id"]).execute()
+        st.success("Данные успешно синхронизированы!")
+        time.sleep(1)
+        st.rerun()
             
 # --- Сайдбар и навигация остаются как у тебя, но добавляем логику вызова ---
 with st.sidebar:
@@ -1993,6 +1988,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
