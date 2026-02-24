@@ -1564,26 +1564,57 @@ elif selected == "Аналитика":
             ).add_to(m)
 
             # 4. ПРОФЕССИОНАЛЬНАЯ ЛЕГЕНДА (HTML/CSS)
+            # 4. ПРОФЕССИОНАЛЬНАЯ ЛЕГЕНДА (Черный текст, высокая контрастность)
             legend_html = f'''
-                 <div style="position: fixed; bottom: 50px; left: 50px; width: 250px; z-index:9999; 
-                             background-color: white; border: 1px solid grey; font-family: sans-serif;
-                             padding: 15px; border-radius: 10px; font-size: 13px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3);">
-                     <h4 style="margin-top:0; color:#1a237e;">🔍 Аудит маршрута</h4>
-                     <div style="margin-bottom: 8px;">
-                        <span style="background:#2A52BE; width:20px; height:3px; display:inline-block; margin-right:5px;"></span> Траектория пути
+                 <div style="position: fixed; 
+                             bottom: 50px; left: 50px; width: 260px; z-index:9999; 
+                             background-color: white; 
+                             border: 2px solid #1a237e; 
+                             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                             padding: 15px; border-radius: 12px; 
+                             font-size: 14px; 
+                             color: black; 
+                             box-shadow: 5px 5px 15px rgba(0,0,0,0.4);">
+                     
+                     <h4 style="margin-top:0; margin-bottom:10px; color: #1a237e; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+                        🔍 Аудит маршрута
+                     </h4>
+                     
+                     <div style="margin-bottom: 10px; color: black; font-weight: 500;">
+                        <span style="background:#2A52BE; width:25px; height:4px; display:inline-block; margin-right:8px; vertical-align:middle;"></span> 
+                        Траектория пути
                      </div>
-                     <div style="margin-bottom: 8px;">
-                        <span style="background:#FF4500; border-radius:50%; width:10px; height:10px; display:inline-block; margin-right:5px;"></span> Превышение (>95 км/ч)
+                     
+                     <div style="margin-bottom: 10px; color: black; font-weight: 500;">
+                        <span style="background:#FF4500; border-radius:50%; width:12px; height:12px; display:inline-block; margin-right:8px; vertical-align:middle; border: 1px solid black;"></span> 
+                        Превышение (>95 км/ч)
                      </div>
-                     <div style="margin-bottom: 8px;">
-                        <span style="color:red; font-size:14px; margin-right:5px;">⚡</span> Резкое торможение
+                     
+                     <div style="margin-bottom: 10px; color: black; font-weight: 500;">
+                        <span style="font-size:16px; margin-right:8px; vertical-align:middle;">⚡</span> 
+                        Резкое торможение
                      </div>
-                     <hr>
-                     <table style="width:100%">
-                        <tr><td>🏁 Дистанция:</td><td style="text-align:right"><b>{total_km:.2f} км</b></td></tr>
-                        <tr><td>🔥 Нарушений:</td><td style="text-align:right; color:red;"><b>{len(overspeeds)}</b></td></tr>
-                        <tr><td>📡 Точек:</td><td style="text-align:right"><b>{len(df_route)}</b></td></tr>
+                     
+                     <hr style="border: 0; border-top: 1px solid #ddd; margin: 10px 0;">
+                     
+                     <table style="width:100%; color: black; border-collapse: collapse;">
+                        <tr style="height: 25px;">
+                            <td style="font-weight: bold;">🏁 Дистанция:</td>
+                            <td style="text-align:right;"><b>{total_km:.2f} км</b></td>
+                        </tr>
+                        <tr style="height: 25px;">
+                            <td style="font-weight: bold;">🔥 Нарушений:</td>
+                            <td style="text-align:right; color: #d32f2f;"><b>{len(overspeeds)}</b></td>
+                        </tr>
+                        <tr style="height: 25px;">
+                            <td style="font-weight: bold;">📡 Точек GPS:</td>
+                            <td style="text-align:right;"><b>{len(df_route)}</b></td>
+                        </tr>
                      </table>
+                     
+                     <div style="margin-top: 10px; font-size: 11px; color: #555; text-align: center; font-style: italic;">
+                        Данные синхронизированы
+                     </div>
                  </div>
             '''
             m.get_root().html.add_child(folium.Element(legend_html))
@@ -2035,6 +2066,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
