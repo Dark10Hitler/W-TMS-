@@ -1054,64 +1054,73 @@ def show_profile():
     # 1. СТРОГИЙ ДИЗАЙН (Enterprise Dark)
     st.markdown("""
         <style>
-        .main-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 4px; padding: 30px; color: #f1f5f9; }
-        .label { color: #64748b; font-size: 0.75rem; text-transform: uppercase; margin-bottom: 4px; }
-        .value { color: #f8fafc; font-size: 1rem; margin-bottom: 16px; font-weight: 500; border-bottom: 1px solid #1e293b; padding-bottom: 8px; }
+        .main-card { 
+            background: #0f172a; 
+            border: 1px solid #1e293b; 
+            border-radius: 4px; 
+            padding: 30px; 
+            color: #f1f5f9; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .label { color: #64748b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+        .value { color: #f8fafc; font-size: 1rem; margin-bottom: 16px; font-weight: 500; border-bottom: 1px solid #1e293b; padding-bottom: 6px; }
+        .name-header { color: #3b82f6; font-size: 1.8rem; font-weight: 600; margin: 0; }
+        .sub-header { color: #94a3b8; font-size: 1rem; margin-bottom: 25px; font-weight: 400; }
         </style>
     """, unsafe_allow_html=True)
 
-    # 2. ЗАГРУЗКА И ПРОВЕРКА ДАННЫХ
+    # 2. ПОЛУЧЕНИЕ ДАННЫХ
     try:
         response = supabase.table("profiles").select("*").order("id").execute()
         df = pd.DataFrame(response.data)
         
-        # Функция поиска. Если не находит - возвращает "НЕТ В БАЗЕ"
-        def get_val(prop_name):
+        # Умная функция получения значения
+        def gv(p_name):
             try:
-                val = df[df['parameter'] == prop_name]['value'].values[0]
-                return val if (val and str(val).strip() != "") else "—"
+                # Фильтруем строку по названию параметра
+                res = df[df['parameter'] == p_name]['value'].values[0]
+                return res if res and str(res).strip() != "" else "—"
             except:
-                return f"⚠️ Ключ '{prop_name}' не найден"
-
+                return f"⚠️ {p_name} не задан" # Это поможет тебе увидеть, чего не хватает в SQL
     except Exception as e:
-        st.error(f"Ошибка Supabase: {e}")
+        st.error(f"Ошибка БД: {e}")
         return
 
-    # 3. ВИЗУАЛЬНАЯ КАРТОЧКА (БЕЗ ХАРДКОДА)
+    # 3. ВЕРСТКА КАРТОЧКИ (БЕЗ ХАРДКОДА)
     st.markdown(f"""
     <div class="main-card">
         <div style="display: flex; gap: 40px; align-items: flex-start;">
-            <div style="flex: 0 0 150px; text-align: center;">
-                <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="140" style="filter: grayscale(1); opacity: 0.8;">
-                <div style="margin-top:15px; font-size:0.7rem; color:#475569;">STATUS: ACTIVE</div>
+            <div style="flex: 0 0 140px; text-align: center;">
+                <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="130" style="filter: grayscale(1); border: 1px solid #1e293b; padding: 5px;">
+                <div style="margin-top:15px; font-size:0.65rem; color:#475569; border: 1px solid #1e293b; padding: 2px;">LVL: SENIOR LOGIST</div>
             </div>
             
             <div style="flex: 1;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <h1 style="margin: 0; color: #3b82f6; font-size: 1.8rem;">{get_val('ФИО')}</h1>
-                    <span style="color: #475569; font-size: 0.8rem;">КОНТРАКТ: {get_val('Номер Контракта')}</span>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h1 class="name-header">{gv('ФИО')}</h1>
+                    <span style="color: #475569; font-size: 0.8rem; background: #1e293b; padding: 2px 10px;">КОНТРАКТ: {gv('Номер Контракта')}</span>
                 </div>
                 
-                <div style="color: #94a3b8; font-size: 1.1rem; margin-bottom: 30px;">
-                    {get_val('Должность')} | {get_val('Департамент')}
+                <div class="sub-header">
+                    {gv('Должность')} | {gv('Департамент')}
                 </div>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                     <div>
                         <div class="label">Контактный телефон</div>
-                        <div class="value">{get_val('Телефон')}</div>
+                        <div class="value">{gv('Телефон')}</div>
                     </div>
                     <div>
                         <div class="label">Корпоративная почта</div>
-                        <div class="value">{get_val('Email')}</div>
+                        <div class="value">{gv('Email')}</div>
                     </div>
                     <div>
                         <div class="label">Профессиональный опыт</div>
-                        <div class="value">{get_val('Опыт')}</div>
+                        <div class="value">{gv('Опыт')}</div>
                     </div>
                     <div>
                         <div class="label">Региональный офис</div>
-                        <div class="value">{get_val('Офис')}</div>
+                        <div class="value">{gv('Офис')}</div>
                     </div>
                 </div>
             </div>
@@ -1119,31 +1128,26 @@ def show_profile():
     </div>
     """, unsafe_allow_html=True)
 
-    # 4. ДИАГНОСТИКА И РЕДАКТОР
+    # 4. РЕДАКТОР (НИЖЕ)
     st.markdown("<br>", unsafe_allow_html=True)
-    
-    with st.expander("📝 УПРАВЛЕНИЕ ДАННЫМИ И ПРОВЕРКА КЛЮЧЕЙ"):
-        st.info("Чтобы данные отобразились в карточке, параметр в таблице ниже должен называться ТОЧНО ТАК ЖЕ (например: 'Офис', а не 'Региональный офис')")
-        
+    with st.expander("🛠️ РЕДАКТИРОВАТЬ ДАННЫЕ ПРОФИЛЯ"):
         edited_df = st.data_editor(
             df[['id', 'parameter', 'value']],
             column_config={
                 "id": None,
-                "parameter": st.column_config.TextColumn("КЛЮЧ (Parameter)", help="Это имя ищет карточка"),
-                "value": st.column_config.TextColumn("ЗНАЧЕНИЕ (Value)")
+                "parameter": st.column_config.TextColumn("КЛЮЧ", disabled=True),
+                "value": st.column_config.TextColumn("ЗНАЧЕНИЕ")
             },
             use_container_width=True,
             hide_index=True,
-            key="profile_editor_final"
+            key="prof_edit"
         )
 
-        if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", type="primary", use_container_width=True):
+        if st.button("💾 СОХРАНИТЬ В БАЗУ", type="primary", use_container_width=True):
             for _, row in edited_df.iterrows():
-                supabase.table("profiles").update({
-                    "value": row["value"],
-                    "parameter": row["parameter"] # Позволяем менять и само имя ключа
-                }).eq("id", row["id"]).execute()
-            st.success("База данных синхронизирована!")
+                supabase.table("profiles").update({"value": row["value"]}).eq("id", row["id"]).execute()
+            st.success("Данные синхронизированы!")
+            time.sleep(1)
             st.rerun()
             
 # --- Сайдбар и навигация остаются как у тебя, но добавляем логику вызова ---
@@ -1989,6 +1993,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
