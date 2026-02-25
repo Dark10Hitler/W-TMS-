@@ -139,11 +139,22 @@ def create_modal(table_key):
 
         drivers_list = ["Наемный водитель"]
         if 'drivers' in st.session_state and not st.session_state.drivers.empty:
-            drivers_list += st.session_state.drivers["Фамилия"].tolist()
-            
+        # Проверяем наличие колонки (last_name или Фамилия)
+            df_d = st.session_state.drivers
+            d_col = "Фамилия" if "Фамилия" in df_d.columns else "last_name"
+            if d_col in df_d.columns:
+                drivers_list += df_d[d_col].dropna().tolist()
+
+    # 2. Формируем список ТС
         vehicles_list = ["Стороннее ТС"]
         if 'vehicles' in st.session_state and not st.session_state.vehicles.empty:
-            vehicles_list += st.session_state.vehicles["Госномер"].tolist()
+            df_v = st.session_state.vehicles
+        # Пытаемся найти Госномер или gov_num
+            v_col = "Госномер" if "Госномер" in df_v.columns else "gov_num"
+            if v_col in df_v.columns:
+                vehicles_list += df_v[v_col].dropna().tolist()
+            else:
+                st.error(f"Колонка с госномером не найдена. Доступны: {list(df_v.columns)}")
         
         selected_driver = r2_c2.selectbox("👤 Водитель", drivers_list)
         selected_ts = r2_c3.selectbox("🚛 ТС (Госномер)", vehicles_list)
@@ -982,6 +993,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
