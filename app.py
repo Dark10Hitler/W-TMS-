@@ -1353,6 +1353,7 @@ elif selected == "Аналитика":
     st.markdown("---")
     
     # --- ТЕХНИЧЕСКИЕ ФУНКЦИИ (БЕЗ СОКРАЩЕНИЙ) ---
+    # --- ТЕХНИЧЕСКИЕ ФУНКЦИИ (С АКТИВНОЙ ДИАГНОСТИКОЙ) ---
     def get_traccar_summary(v_id, start, end):
         url = f"{TRACCAR_URL.rstrip('/')}/api/reports/summary"
         params = {
@@ -1361,11 +1362,37 @@ elif selected == "Аналитика":
             "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z",
             "daily": "true"
         }
-        headers = {'ngrok-skip-browser-warning': 'true'}
+        # Добавили Accept: application/json
+        headers = {'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json'}
         try:
             resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
-            return resp.json() if resp.status_code == 200 else []
-        except: return []
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                st.error(f"🛑 Ошибка Summary API (Код {resp.status_code}): {resp.text}")
+                return []
+        except Exception as e: 
+            st.error(f"🛑 Сетевая ошибка Summary: {e}")
+            return []
+
+    def get_traccar_route(v_id, start, end):
+        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
+        params = {
+            "deviceId": v_id,
+            "from": f"{start.strftime('%Y-%m-%d')}T00:00:00Z",
+            "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z"
+        }
+        headers = {'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json'}
+        try:
+            resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                st.error(f"🛑 Ошибка Route API (Код {resp.status_code}): {resp.text}")
+                return []
+        except Exception as e: 
+            st.error(f"🛑 Сетевая ошибка Route: {e}")
+            return []
 
     def get_traccar_route(v_id, start, end):
         url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
@@ -2066,6 +2093,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
