@@ -1331,18 +1331,31 @@ elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence: Глубокий Аудит")
     st.markdown("---")
     
-    # --- ТЕХНИЧЕСКИЕ ФУНКЦИИ ---
-    def get_traccar_summary(v_id, start, end):
-        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/summary"
-        params = {"deviceId": v_id, "from": f"{start}T00:00:00Z", "to": f"{end}T23:59:59Z"}
-        resp = requests.get(url, auth=TRACCAR_AUTH, params=params, timeout=30)
-        return resp.json() if resp.status_code == 200 else []
-
-    def get_traccar_route(v_id, start, end):
-        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
-        params = {"deviceId": v_id, "from": f"{start}T00:00:00Z", "to": f"{end}T23:59:59Z"}
-        resp = requests.get(url, auth=TRACCAR_AUTH, params=params, timeout=30)
-        return resp.json() if resp.status_code == 200 else []
+    # --- ТЕХНИЧЕСКИЕ ФУНКЦИИ (БРОНИРОВАННЫЕ) ---
+    def get_traccar_data_safe(endpoint, v_id, start_date, end_date):
+        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/{endpoint}"
+        # Исправляем формат даты под строгий стандарт Traccar
+        params = {
+            "deviceId": v_id,
+            "from": f"{start_date.strftime('%Y-%m-%d')}T00:00:00Z",
+            "to": f"{end_date.strftime('%Y-%m-%d')}T23:59:59Z"
+        }
+        headers = {'Accept': 'application/json', 'ngrok-skip-browser-warning': 'true'}
+        
+        try:
+            resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
+            if resp.status_code == 200:
+                try:
+                    return resp.json()
+                except Exception:
+                    st.error(f"⚠️ Сервер прислал не JSON. Ответ: {resp.text[:100]}")
+                    return []
+            else:
+                st.error(f"🛑 Ошибка сервера {resp.status_code}: {resp.text[:100]}")
+                return []
+        except Exception as e:
+            st.error(f"📡 Ошибка сети: {e}")
+            return []
 
     # --- ИНТЕРФЕЙС ---
     devices_dict, _ = get_detailed_traccar_data()
@@ -1356,89 +1369,69 @@ elif selected == "Аналитика":
         end_date = st.date_input("Конец", datetime.now())
 
     if st.button("📑 СФОРМИРОВАТЬ ОТЧЕТ", type="primary", use_container_width=True):
-        route_data = get_traccar_route(v_id, start_date.isoformat(), end_date.isoformat())
+        with st.spinner('📡 Запрос данных с сервера Traccar...'):
+            route_data = get_traccar_data_safe("route", v_id, start_date, end_date)
         
         if not route_data:
-            st.error("❌ Сервер не вернул точек за этот период.")
+            st.warning("⚠️ Нет данных для отображения. Проверьте период или работу трекера.")
         else:
-            # --- 1. ОБРАБОТКА ДАННЫХ (Берем то, что дает сервер) ---
+            # --- 1. ОБРАБОТКА (ЧИСТЫЙ ОДОМЕТР) ---
             df = pd.DataFrame(route_data)
             df['dt'] = pd.to_datetime(df['deviceTime'])
             df['speed_kmh'] = round(df['speed'] * 1.852, 1)
-            
-            # Извлекаем totalDistance из вложенного словаря attributes
-            # Traccar обычно отдает его в метрах или км. Проверяем оба варианта.
-            def get_dist(attr):
-                d = attr.get('totalDistance', 0)
-                # Если значение слишком огромное (миллионы), значит это метры -> в км
-                return d / 1000 if d > 500000 else d
 
-            df['total_dist_km'] = df['attributes'].apply(get_dist)
+            # Извлекаем totalDistance (одометр)
+            def extract_total_dist(attr):
+                val = attr.get('totalDistance', 0)
+                # Если сервер шлет метры (большие числа), переводим в км
+                return val / 1000 if val > 100000 else val
 
-            # Честный расчет пробега за период
-            # Последний одометр минус первый одометр
-            start_odo = df.iloc[0]['total_dist_km']
-            end_odo = df.iloc[-1]['total_dist_km']
-            actual_mileage = end_odo - start_odo
+            df['odo_km'] = df['attributes'].apply(extract_total_dist)
 
-            # Если разница 0 (например, одометр не обновился), берем атрибут 'distance' и суммируем
-            if actual_mileage <= 0:
-                actual_mileage = df['attributes'].apply(lambda x: x.get('distance', 0)).sum() / 1000
+            # Итоговый пробег по разнице одометра (самый точный метод)
+            start_odo = df['odo_km'].iloc[0]
+            end_odo = df['odo_km'].iloc[-1]
+            total_km = end_odo - start_odo
 
-            # --- 2. ВЕРХНИЕ МЕТРИКИ ---
-            st.subheader(f"📊 Отчет по ТС: {v_name}")
+            # Если разница одометра 0, считаем сумму отрезков 'distance'
+            if total_km <= 0:
+                total_km = df['attributes'].apply(lambda x: x.get('distance', 0)).sum() / 1000
+
+            # --- 2. МЕТРИКИ ---
+            st.subheader(f"📊 Результаты аудита: {v_name}")
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("🏁 Пробег (Сервер)", f"{actual_mileage:.2f} км")
-            m2.metric("⏱️ Ср. скорость", f"{round(df[df.speed_kmh > 2]['speed_kmh'].mean(), 1)} км/ч")
-            m3.metric("🚀 Макс. скорость", f"{df['speed_kmh'].max()} км/ч")
-            m4.metric("📡 Точек GPS", f"{len(df)}")
+            m1.metric("🏁 Итоговый пробег", f"{total_km:.2f} км")
+            m2.metric("🚀 Макс. скорость", f"{df['speed_kmh'].max()} км/ч")
+            m3.metric("⏱️ Ср. скорость", f"{round(df[df.speed_kmh > 3]['speed_kmh'].mean(), 1)} км/ч")
+            m4.metric("📡 Точек за период", len(df))
 
-            # --- 3. КАРТА (РИСУЕМ ВСЕ БЕЗ ИСКЛЮЧЕНИЯ) ---
-            st.subheader("🗺️ Фактический маршрут")
+            # --- 3. КАРТА ---
+            st.subheader("🗺️ Маршрут движения")
             import folium
             from streamlit_folium import st_folium
             
-            # Центрируем карту
-            m = folium.Map(location=[df['latitude'].mean(), df['longitude'].mean()], zoom_start=13)
+            m = folium.Map(location=[df['latitude'].mean(), df['longitude'].mean()], zoom_start=12)
+            points = [[r['latitude'], r['longitude']] for _, r in df.iterrows()]
             
-            # Рисуем путь (PolyLine - самая точная передача координат)
-            path_points = [[r['latitude'], r['longitude']] for _, r in df.iterrows()]
-            folium.PolyLine(path_points, color="#0000FF", weight=5, opacity=0.8).add_to(m)
+            folium.PolyLine(points, color="#29b5e8", weight=5, opacity=0.8).add_to(m)
+            folium.Marker(points[0], icon=folium.Icon(color='green', icon='play'), tooltip="Старт").add_to(m)
+            folium.Marker(points[-1], icon=folium.Icon(color='red', icon='flag'), tooltip="Финиш").add_to(m)
             
-            # Маркеры Старт/Финиш
-            folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
-            folium.Marker(path_points[-1], icon=folium.Icon(color='red', icon='flag')).add_to(m)
-            
-            st_folium(m, width=1300, height=600)
+            st_folium(m, width=1300, height=500)
 
-            # --- 4. ГРАФИК СКОРОСТИ ---
-            st.subheader("📈 График скорости (км/ч)")
-            import altair as alt
-            chart = alt.Chart(df).mark_area(
-                line={'color':'#1f77b4'},
-                color=alt.Gradient(
-                    gradient='linear',
-                    stops=[alt.GradientStop(color='white', offset=0),
-                           alt.GradientStop(color='#1f77b4', offset=1)],
-                    x1=1, x2=1, y1=1, y2=0
-                )
-            ).encode(
-                x=alt.X('dt:T', title='Время'),
-                y=alt.Y('speed_kmh:Q', title='Скорость'),
-                tooltip=['dt', 'speed_kmh']
-            ).properties(width='stretch', height=300)
-            st.altair_chart(chart, use_container_width=True)
-
-            # --- 5. ТЕХОБСЛУЖИВАНИЕ (На основе реального одометра) ---
+            # --- 4. ТЕХОБСЛУЖИВАНИЕ ---
             st.divider()
-            st.subheader("🔧 Ресурс агрегатов")
-            current_odo = end_odo
-            m_items = [("🛢️ Масло ДВС", 10000), ("🛑 Колодки", 30000), ("🧪 Фильтры", 15000)]
+            st.subheader("🔧 Ресурс до обслуживания")
+            
+            # Берем текущий полный одометр
+            current_total_odo = end_odo 
+            
+            m_items = [("🛢️ Масло ДВС", 10000), ("🛑 Тормоза", 30000), ("🧪 Фильтры", 15000)]
             cols = st.columns(3)
             for i, (name, limit) in enumerate(m_items):
                 with cols[i]:
-                    rem = limit - (current_odo % limit)
-                    st.metric(name, f"{int(rem)} км до ТО")
+                    rem = limit - (current_total_odo % limit)
+                    st.metric(name, f"{int(rem)} км")
                     st.progress(max(0.0, min(1.0, rem/limit)))
             
             
@@ -1793,6 +1786,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
