@@ -1352,7 +1352,6 @@ elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence: Глубокий Аудит (Server Side)")
     st.markdown("---")
     
-    # --- ТЕХНИЧЕСКИЕ ФУНКЦИИ (БЕЗ СОКРАЩЕНИЙ) ---
     # --- ТЕХНИЧЕСКИЕ ФУНКЦИИ (С АКТИВНОЙ ДИАГНОСТИКОЙ) ---
     def get_traccar_summary(v_id, start, end):
         url = f"{TRACCAR_URL.rstrip('/')}/api/reports/summary"
@@ -1362,14 +1361,13 @@ elif selected == "Аналитика":
             "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z",
             "daily": "true"
         }
-        # Добавили Accept: application/json
         headers = {'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json'}
         try:
             resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
             if resp.status_code == 200:
                 return resp.json()
             else:
-                st.error(f"🛑 Ошибка Summary API (Код {resp.status_code}): {resp.text}")
+                st.error(f"🛑 Ошибка Summary (Код {resp.status_code}): {resp.text}")
                 return []
         except Exception as e: 
             st.error(f"🛑 Сетевая ошибка Summary: {e}")
@@ -1388,24 +1386,11 @@ elif selected == "Аналитика":
             if resp.status_code == 200:
                 return resp.json()
             else:
-                st.error(f"🛑 Ошибка Route API (Код {resp.status_code}): {resp.text}")
+                st.error(f"🛑 Ошибка Route (Код {resp.status_code}): {resp.text}")
                 return []
         except Exception as e: 
             st.error(f"🛑 Сетевая ошибка Route: {e}")
             return []
-
-    def get_traccar_route(v_id, start, end):
-        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
-        params = {
-            "deviceId": v_id,
-            "from": f"{start.strftime('%Y-%m-%d')}T00:00:00Z",
-            "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z"
-        }
-        headers = {'ngrok-skip-browser-warning': 'true'}
-        try:
-            resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
-            return resp.json() if resp.status_code == 200 else []
-        except: return []
 
     # --- ИНТЕРФЕЙС ВЫБОРА ---
     devices_dict, _ = get_detailed_traccar_data()
@@ -1423,12 +1408,28 @@ elif selected == "Аналитика":
         st.session_state.show_report = True
 
     if st.session_state.get('show_report'):
+        
+        # 🐛 ПРОВЕРКА №1: Нашли ли мы вообще ID машины?
+        if not v_id:
+            st.error(f"🛑 КРИТИЧЕСКАЯ ОШИБКА: ID для машины '{v_name}' не найден в словаре devices_dict!")
+            st.stop()
+
+        # 🐛 ПРОВЕРКА №2: Что именно мы шлем на сервер? (Желтый блок)
+        st.warning(f"🛠 ДЕБАГ: Отправляем запрос -> ID={v_id}, С: {start_date}T00:00:00Z ПО: {end_date}T23:59:59Z")
+
         with st.spinner('📡 Глубокое сканирование данных сервера...'):
             summary_data = get_traccar_summary(v_id, start_date, end_date)
             route_data = get_traccar_route(v_id, start_date, end_date)
 
-        if not summary_data or not route_data:
-            st.error("❌ Сервер не вернул данные. Проверьте выбранный период.")
+        # Если данные пустые, проверим кто именно пустой
+        if not summary_data and not route_data:
+            st.error("❌ И Summary, и Route вернули ПУСТЫЕ списки []. Сервер ответил 200 ОК, но данных за этот период физически нет в БД Traccar.")
+            st.stop()
+        elif not summary_data:
+            st.error("❌ Summary вернул пустой список (маршрут при этом есть).")
+            st.stop()
+        elif not route_data:
+            st.error("❌ Route (точки GPS) вернул пустой список (Summary при этом есть).")
             st.stop()
 
         # --- ПОДГОТОВКА ДАННЫХ (ФИКС ВСЕХ ОШИБОК) ---
@@ -2093,6 +2094,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
