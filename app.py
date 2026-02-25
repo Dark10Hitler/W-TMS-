@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from streamlit_option_menu import option_menu
 import uuid
 import time
+import pytz
+import requests
 import io
 import folium
 from streamlit_folium import st_folium
@@ -1352,8 +1354,15 @@ elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence: Глубокий Аудит (Server Side)")
     st.markdown("---")
     
-    # --- ТЕХНИЧЕСКИЕ ФУНКЦИИ (С АКТИВНОЙ ДИАГНОСТИКОЙ) ---
+    # === КОНСТАНТЫ И КОНФИГУРАЦИЯ ===
+    MOSCOW_TZ = pytz.timezone('Europe/Moscow')
+    MIN_SPEED_THRESHOLD = 5  # км/ч - минимальная скорость для движения
+    MAX_SPEED_LIMIT = 95  # км/ч - лимит скорости
+    GPS_JUMP_THRESHOLD = 7.0  # км - максимум для отдельной точки
+    
+    # === ФУНКЦИИ ПОЛУЧЕНИЯ ДАННЫХ С ТОЧНОЙ ДИАГНОСТИКОЙ ===
     def get_traccar_summary(v_id, start, end):
+        """Получить сводку с Traccar с полной диагностикой"""
         url = f"{TRACCAR_URL.rstrip('/')}/api/reports/summary"
         params = {
             "deviceId": v_id,
@@ -1362,18 +1371,19 @@ elif selected == "Аналитика":
             "daily": "true"
         }
         headers = {'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json'}
+        
         try:
             resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
-            if resp.status_code == 200:
-                return resp.json()
-            else:
-                st.error(f"🛑 Ошибка Summary (Код {resp.status_code}): {resp.text}")
-                return []
-        except Exception as e: 
-            st.error(f"🛑 Сетевая ошибка Summary: {e}")
+            resp.raise_for_status()
+            data = resp.json()
+            st.info(f"✅ Summary: получено {len(data)} записей")
+            return data
+        except requests.exceptions.RequestException as e:
+            st.error(f"🛑 Ошибка Summary: {e}")
             return []
 
     def get_traccar_route(v_id, start, end):
+        """Получить маршрут с максимальной детализацией"""
         url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
         params = {
             "deviceId": v_id,
@@ -1381,18 +1391,39 @@ elif selected == "Аналитика":
             "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z"
         }
         headers = {'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json'}
+        
         try:
             resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
-            if resp.status_code == 200:
-                return resp.json()
-            else:
-                st.error(f"🛑 Ошибка Route (Код {resp.status_code}): {resp.text}")
-                return []
-        except Exception as e: 
-            st.error(f"🛑 Сетевая ошибка Route: {e}")
+            resp.raise_for_status()
+            data = resp.json()
+            st.info(f"✅ Route: получено {len(data)} точек GPS")
+            return data
+        except requests.exceptions.RequestException as e:
+            st.error(f"🛑 Ошибка Route: {e}")
             return []
 
-    # --- ИНТЕРФЕЙС ВЫБОРА ---
+    def get_traccar_positions(v_id, start, end):
+        """Получить все позиции (дополнительные детали)"""
+        url = f"{TRACCAR_URL.rstrip('/')}/api/positions"
+        params = {
+            "deviceId": v_id,
+            "from": f"{start.strftime('%Y-%m-%dT%H:%M:%S')}Z",
+            "to": f"{end.strftime('%Y-%m-%dT%H:%M:%S')}Z",
+            "limit": 100000
+        }
+        headers = {'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json'}
+        
+        try:
+            resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            st.info(f"✅ Positions: получено {len(data)} детальных записей")
+            return data
+        except requests.exceptions.RequestException as e:
+            st.warning(f"⚠️ Positions не доступны: {e}")
+            return []
+
+    # === ИНТЕРФЕЙС ВЫБОРА ===
     devices_dict, _ = get_detailed_traccar_data()
     
     col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
@@ -1409,160 +1440,306 @@ elif selected == "Аналитика":
 
     if st.session_state.get('show_report'):
         
-        # 🐛 ПРОВЕРКА №1: Нашли ли мы вообще ID машины?
+        # === ПРОВЕРКИ ===
         if not v_id:
-            st.error(f"🛑 КРИТИЧЕСКАЯ ОШИБКА: ID для машины '{v_name}' не найден в словаре devices_dict!")
+            st.error(f"🛑 КРИТИЧЕСКАЯ ОШИБКА: ID для '{v_name}' не найден!")
             st.stop()
 
-        # 🐛 ПРОВЕРКА №2: Что именно мы шлем на сервер? (Желтый блок)
-        st.warning(f"🛠 ДЕБАГ: Отправляем запрос -> ID={v_id}, С: {start_date}T00:00:00Z ПО: {end_date}T23:59:59Z")
+        st.warning(f"🛠 ЗАПРОС: ID={v_id}, С: {start_date} ПО: {end_date}")
 
-        with st.spinner('📡 Глубокое сканирование данных сервера...'):
+        with st.spinner('📡 Глубокое сканирование всех данны�� Traccar...'):
             summary_data = get_traccar_summary(v_id, start_date, end_date)
             route_data = get_traccar_route(v_id, start_date, end_date)
+            positions_data = get_traccar_positions(v_id, start_date, end_date)
 
-        # Если данные пустые, проверим кто именно пустой
-        if not summary_data and not route_data:
-            st.error("❌ И Summary, и Route вернули ПУСТЫЕ списки []. Сервер ответил 200 ОК, но данных за этот период физически нет в БД Traccar.")
-            st.stop()
-        elif not summary_data:
-            st.error("❌ Summary вернул пустой список (маршрут при этом есть).")
-            st.stop()
-        elif not route_data:
-            st.error("❌ Route (точки GPS) вернул пустой список (Summary при этом есть).")
+        if not route_data:
+            st.error("❌ Нет данных маршрута за выбранный период!")
             st.stop()
 
-        # --- 1. ОБРАБОТКА И ОЧИСТКА ДАННЫХ (АНТИ-ГЛЮК) ---
+        # === ОБРАБОТКА ДАННЫХ С МАКСИМАЛЬНОЙ ТОЧНОСТЬЮ ===
         df_raw = pd.DataFrame(route_data)
-        if df_raw.empty:
-            st.warning("⚠️ За выбранный период нет данных о перемещении.")
-            st.stop()
-
-        df_raw['dt'] = pd.to_datetime(df_raw['deviceTime'])
-        df_raw['speed_kmh'] = round(df_raw['speed'] * 1.852, 1)
-        df_raw['date_only'] = df_raw['dt'].dt.date
-        df_raw['diff_speed'] = df_raw['speed_kmh'].diff().fillna(0)
-
-        # Функция расчета расстояния (Haversine)
+        
+        # Конвертируем время в московский таймзон
+        df_raw['dt_utc'] = pd.to_datetime(df_raw['deviceTime'], utc=True)
+        df_raw['dt_msk'] = df_raw['dt_utc'].dt.tz_convert(MOSCOW_TZ)
+        df_raw['speed_kmh'] = round(df_raw['speed'] * 1.852, 2)  # knots -> km/h
+        df_raw['date_only'] = df_raw['dt_msk'].dt.date
+        df_raw['time_only'] = df_raw['dt_msk'].dt.time
+        
+        # === РАСЧЕТ РАССТОЯНИЯ МЕЖДУ ТОЧКАМИ ===
         from math import radians, cos, sin, asin, sqrt
+        
         def haversine(lon1, lat1, lon2, lat2):
+            """Расчет расстояния между двумя точками (км)"""
             lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-            dlon, dlat = lon2 - lon1, lat2 - lat1
+            dlon = lon2 - lon1
+            dlat = lat2 - lat1
             a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-            return 6371 * 2 * asin(sqrt(a))
+            c = 2 * asin(sqrt(a))
+            return 6371 * c  # Радиус Земли = 6371 км
 
-        # Фильтрация прыжков GPS (> 7 км между точками игнорируем)
+        # === ФИЛЬТРАЦИЯ АНОМАЛИЙ GPS ===
         clean_rows = []
-        first_row = df_raw.iloc[0].copy()
-        first_row['dist_km'] = 0.0
-        clean_rows.append(first_row)
         
-        for i in range(1, len(df_raw)):
-            d = haversine(df_raw.iloc[i-1]['longitude'], df_raw.iloc[i-1]['latitude'],
-                          df_raw.iloc[i]['longitude'], df_raw.iloc[i]['latitude'])
-            if d < 7.0: # Если не прыжок, записываем дистанцию
-                new_row = df_raw.iloc[i].copy()
-                new_row['dist_km'] = d
-                clean_rows.append(new_row)
-        
+        for i in range(len(df_raw)):
+            row = df_raw.iloc[i].copy()
+            
+            if i == 0:
+                row['dist_km'] = 0.0
+                row['time_diff_sec'] = 0
+                clean_rows.append(row)
+            else:
+                prev_row = df_raw.iloc[i-1]
+                
+                # Расчет расстояния
+                distance = haversine(
+                    prev_row['longitude'], prev_row['latitude'],
+                    row['longitude'], row['latitude']
+                )
+                
+                # Расчет времени между точками
+                time_diff = (row['dt_utc'] - prev_row['dt_utc']).total_seconds()
+                
+                # Фильтруем GPS прыжки (> 7 км за короткий промежуток)
+                if distance < GPS_JUMP_THRESHOLD or time_diff > 300:  # 5 минут максимум
+                    row['dist_km'] = distance if distance < GPS_JUMP_THRESHOLD else 0
+                    row['time_diff_sec'] = time_diff
+                    clean_rows.append(row)
+
         df_clean = pd.DataFrame(clean_rows)
+        
+        # === РАСЧЕТ ИТОГОВЫХ МЕТРИК ===
         total_km = df_clean['dist_km'].sum()
-
-        # --- 2. ГЛАВНЫЕ МЕТРИКИ ---
+        total_time_sec = df_clean['time_diff_sec'].sum()
+        total_time_hours = total_time_sec / 3600
+        
         st.subheader(f"📊 Итоговый аудит: {v_name}")
+        
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🏁 Итоговый пробег", f"{total_km:.2f} км")
-        m2.metric("⛽ Расход (прогноз)", f"{int(total_km * 0.12)} л", delta=f"{int(total_km * 0.12 * 24)} MDL")
-        m3.metric("📡 Качество трека", f"{len(df_clean)} точ.")
+        m1.metric("🏁 Пробег", f"{total_km:.3f} км", help="Точный расчет по GPS")
+        m2.metric("⏱️ Время в движении", f"{total_time_hours:.2f} ч", help="Сумма интервалов между точками")
+        m3.metric("📡 Точек данных", f"{len(df_clean)}", help="Валидных GPS точек")
         
-        overspeeds = df_clean[df_clean['speed_kmh'] > 95]
-        m4.metric("⚠️ Нарушения", f"{len(overspeeds)}", delta="Скорость > 95", delta_color="inverse")
+        overspeeds = df_clean[df_clean['speed_kmh'] > MAX_SPEED_LIMIT]
+        m4.metric("⚠️ Нарушения скорости", f"{len(overspeeds)}", delta=f"> {MAX_SPEED_LIMIT} км/ч", delta_color="inverse")
 
-        # --- 3. ТАБЛИЦА ПО ДНЯМ ---
-        daily_report = df_clean.groupby('date_only').agg(
-            Real_Distance=('dist_km', 'sum'),
-            Avg_Speed=('speed_kmh', lambda x: x[x > 5].mean()),
-            Max_Speed=('speed_kmh', 'max'),
-            Points_Count=('dt', 'count')
-        ).reset_index()
-        daily_report.columns = ['Дата', 'Пробег (км)', 'Ср. скорость', 'Макс. скорость', 'Точек']
-        
-        with st.expander("📅 ДЕТАЛИЗАЦИЯ ПО ДНЯМ", expanded=True):
-            st.dataframe(daily_report.round(2), width="stretch", hide_index=True)
-
-        # --- 4. ТЕХОБСЛУЖИВАНИЕ (Используем одометр из последней точки) ---
+        # === ТАБЛИЦА ДЕТАЛИЗАЦИИ ПО ДНЯМ ===
         st.divider()
-        st.subheader("🔧 Состояние узлов")
+        st.subheader("📅 Детализация по дням")
         
-        # Безопасное получение одометра
-        last_point_attr = df_clean.iloc[-1].get('attributes', {})
-        last_odo = last_point_attr.get('totalDistance', 0) / 1000
+        daily_report = df_clean.groupby('date_only').agg(
+            Пробег_км=('dist_km', 'sum'),
+            Ср_скорость_кмч=('speed_kmh', lambda x: round(x[x > MIN_SPEED_THRESHOLD].mean(), 2)),
+            Макс_скорость_кмч=('speed_kmh', 'max'),
+            Мин_скорость_кмч=('speed_kmh', lambda x: x[x > 0].min()),
+            Время_ч=('time_diff_sec', lambda x: round(x.sum() / 3600, 2)),
+            Точек=('dt_msk', 'count')
+        ).reset_index()
+        daily_report.columns = ['Дата', 'Пробег (км)', 'Ср. скорость', 'Макс. скорость', 'Мин. скорость', 'Время (ч)', 'Точек']
         
-        if last_odo == 0: # Если в атрибутах пусто, считаем по пробегу трека
-            last_odo = total_km 
+        with st.expander("📋 Таблица по дням", expanded=True):
+            st.dataframe(daily_report.round(3), use_container_width=True, hide_index=True)
 
-        m_items = [("🛢️ Масло", 10000), ("🛑 Колодки", 30000), ("🧪 Фильтры", 15000), ("⚙️ ГРМ", 80000)]
-        cols = st.columns(4)
-        for i, (name, limit) in enumerate(m_items):
+        # === ТАБЛИЦА ДЕТАЛЬНЫХ ТОЧЕК МАРШРУТА ===
+        st.divider()
+        st.subheader("🔍 Детальные точки маршрута")
+        
+        df_detailed = df_clean[[
+            'dt_msk', 'latitude', 'longitude', 'speed_kmh', 'dist_km', 
+            'accuracy', 'altitude', 'time_diff_sec'
+        ]].copy()
+        
+        df_detailed.columns = ['Время (МСК)', 'Широта', 'Долгота', 'Скорость (км/ч)', 
+                               'Расстояние (км)', 'Точность (м)', 'Высота (м)', 'Интервал (сек)']
+        
+        with st.expander("📍 Все точки маршрута", expanded=False):
+            st.dataframe(df_detailed.round(6), use_container_width=True, hide_index=True, height=400)
+
+        # === ТЕХНИЧЕСКОЕ ОБСЛУЖИВАНИЕ ===
+        st.divider()
+        st.subheader("🔧 Состояние узлов ТО")
+        
+        # Получение одометра из последней точки или расчет по пробегу
+        last_point = df_clean.iloc[-1]
+        last_odo = last_point.get('attributes', {}) or {}
+        last_odo = last_odo.get('totalDistance', total_km * 1000) / 1000
+        
+        maintenance_items = [
+            ("🛢️ Масло", 10000, "Плановое ТО-1"),
+            ("🛑 Колодки", 30000, "Замена тормозных колодок"),
+            ("🧪 Фильтры", 15000, "Масло и воздушный фильтр"),
+            ("⚙️ ГРМ", 80000, "Техническое обслуживание ГРМ")
+        ]
+        
+        cols = st.columns(len(maintenance_items))
+        for i, (name, limit, description) in enumerate(maintenance_items):
             with cols[i]:
-                rem = limit - (last_odo % limit)
-                perc = max(0, min(100, int((rem/limit)*100)))
+                remaining = limit - (last_odo % limit)
+                percentage = max(0, min(100, int((remaining / limit) * 100)))
+                
                 st.write(f"**{name}**")
-                st.metric("Осталось", f"{int(rem)} км")
-                st.progress(perc / 100)
+                st.metric("Осталось", f"{int(remaining)} км")
+                st.progress(percentage / 100)
+                st.caption(description)
 
-        # --- 5. КАРТА (ТОЧНАЯ И ОЧИЩЕННАЯ) ---
-        st.subheader("🗺️ Геопространственный аудит")
+        # === КАРТА С ВЫСОКОЙ ДЕТАЛИЗАЦИЕЙ ===
+        st.divider()
+        st.subheader("🗺️ Маршрут (Детализированная карта)")
+        
         import folium
+        from folium import plugins
         from streamlit_folium import st_folium
         
-        m = folium.Map(location=[df_clean['latitude'].mean(), df_clean['longitude'].mean()], zoom_start=13)
-        path_points = [[r['latitude'], r['longitude']] for _, r in df_clean.iterrows()]
+        # Создание карты с правильным центром
+        center_lat = df_clean['latitude'].mean()
+        center_lon = df_clean['longitude'].mean()
+        m = folium.Map(
+            location=[center_lat, center_lon],
+            zoom_start=14,
+            tiles='OpenStreetMap'
+        )
         
-        # Рисуем путь сплошной линией
-        folium.PolyLine(path_points, color="#1E90FF", weight=5, opacity=0.8).add_to(m)
-        folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play'), tooltip="Старт").add_to(m)
-        folium.Marker(path_points[-1], icon=folium.Icon(color='red', icon='flag'), tooltip="Финиш").add_to(m)
+        # === ДОБАВЛЯЕМ МАРШРУТ С ДЕТАЛЯМИ ===
+        route_points = df_clean[['latitude', 'longitude', 'speed_kmh', 'dt_msk']].values.tolist()
         
-        st_folium(m, width=1300, height=600)
+        # Основной путь (толстая синяя линия)
+        coordinates = [[point[0], point[1]] for point in route_points]
+        folium.PolyLine(
+            coordinates,
+            color='#1E90FF',
+            weight=4,
+            opacity=0.9,
+            popup='Маршрут',
+            dash_array='5, 5'
+        ).add_to(m)
+        
+        # === ТОЧКИ С ИНФОРМАЦИЕЙ О СКОРОСТИ ===
+        for idx, (lat, lon, speed, time_msk) in enumerate(route_points):
+            if idx % max(1, len(route_points) // 50) == 0:  # Показываем ~50 маркеров
+                if speed > MAX_SPEED_LIMIT:
+                    color = 'red'
+                    icon = '⚠️'
+                elif speed > 50:
+                    color = 'orange'
+                    icon = '▶'
+                else:
+                    color = 'blue'
+                    icon = '●'
+                
+                folium.CircleMarker(
+                    location=[lat, lon],
+                    radius=4,
+                    popup=f"Скорость: {speed:.1f} км/ч<br>Время: {time_msk}",
+                    color=color,
+                    fill=True,
+                    fillColor=color,
+                    fillOpacity=0.7,
+                    weight=2
+                ).add_to(m)
+        
+        # === МАРКЕРЫ СТАРТА И ФИНИША ===
+        start_point = route_points[0]
+        end_point = route_points[-1]
+        
+        folium.Marker(
+            location=[start_point[0], start_point[1]],
+            popup=f"СТАРТ<br>{start_point[3]}",
+            icon=folium.Icon(color='green', icon='play', prefix='fa')
+        ).add_to(m)
+        
+        folium.Marker(
+            location=[end_point[0], end_point[1]],
+            popup=f"ФИНИШ<br>{end_point[3]}",
+            icon=folium.Icon(color='red', icon='flag', prefix='fa')
+        ).add_to(m)
+        
+        # === ХИТМАП СКОРОСТИ ===
+        try:
+            from folium.plugins import HeatMap
+            heat_data = [[point[0], point[1], point[2] / 100] for point in route_points]
+            HeatMap(heat_data, radius=25, blur=15, max_zoom=1).add_to(m)
+        except:
+            pass
+        
+        st_folium(m, width=1400, height=700)
 
-        # --- 6. ГРАФИК И КАЧЕСТВО ВОЖДЕНИЯ ---
+        # === ГРАФИК СКОРОСТИ ===
         st.divider()
         st.subheader("📈 Анализ скоростного режима")
+        
         import altair as alt
         
-        chart = alt.Chart(df_clean).mark_area(
-            line={'color':'#29b5e8'},
-            color=alt.Gradient(
-                gradient='linear',
-                stops=[alt.GradientStop(color='white', offset=0),
-                       alt.GradientStop(color='#29b5e8', offset=1)],
-                x1=1, x2=1, y1=1, y2=0
-            ),
-            opacity=0.3
-        ).encode(
-            x=alt.X('dt:T', title='Время'),
-            y=alt.Y('speed_kmh:Q', title='Скорость (км/ч)'),
-            tooltip=['dt', 'speed_kmh']
-        ).properties(width="stretch", height=400).interactive()
+        df_chart = df_clean[['dt_msk', 'speed_kmh']].copy()
+        df_chart.columns = ['Время', 'Скорость (км/ч)']
         
-        st.altair_chart(chart, use_container_width=True)
+        chart = alt.Chart(df_chart).mark_line(
+            color='#1E90FF',
+            size=2
+        ).encode(
+            x=alt.X('Время:T', title='Время (МСК)'),
+            y=alt.Y('Скорость (км/ч):Q', title='Скорость (км/ч)'),
+            tooltip=['Время', 'Скорость (км/ч)']
+        ).properties(
+            width='stretch',
+            height=400
+        ).interactive()
+        
+        # Линия лимита скорости
+        limit_line = alt.DataFrame({'y': [MAX_SPEED_LIMIT]}).mark_rule(
+            color='red',
+            strokeDash=[5, 5],
+            size=2
+        ).encode(y='y:Q')
+        
+        st.altair_chart(chart + limit_line, use_container_width=True)
 
-        # Итоговая панель качества
-        st.markdown("#### 🔍 Сводка по водителю")
+        # === ИТОГОВАЯ СВОДКА ===
+        st.divider()
+        st.subheader("🎯 Сводка по качеству вождения")
+        
         s1, s2, s3, s4 = st.columns(4)
+        
         max_v = df_clean['speed_kmh'].max()
         with s1:
-            st.metric("🚀 Максимум", f"{max_v} км/ч")
+            st.metric(
+                "🚀 Максимальная скорость",
+                f"{max_v:.1f} км/ч",
+                delta=f"{int(max_v - MAX_SPEED_LIMIT)} км/ч" if max_v > MAX_SPEED_LIMIT else "Норма",
+                delta_color="inverse" if max_v > MAX_SPEED_LIMIT else "normal"
+            )
+        
+        real_avg = df_clean[df_clean['speed_kmh'] > MIN_SPEED_THRESHOLD]['speed_kmh'].mean()
         with s2:
-            real_avg = round(df_clean[df_clean.speed_kmh > 5]['speed_kmh'].mean(), 1)
-            st.metric("⏱️ Ср. в движении", f"{real_avg} км/ч")
+            st.metric(
+                "⏱️ Средняя скорость (в движении)",
+                f"{real_avg:.1f} км/ч"
+            )
+        
+        aggressive = len(df_clean[df_clean['diff_speed'].abs() > 15]) if 'diff_speed' in df_clean.columns else 0
         with s3:
-            aggressive = len(df_clean[df_clean['diff_speed'].abs() > 15])
-            st.metric("📉 Резкие маневры", f"{aggressive}")
+            st.metric(
+                "📉 Резкие маневры",
+                f"{aggressive}",
+                delta="Требует внимания" if aggressive > 10 else "ОК",
+                delta_color="inverse" if aggressive > 10 else "normal"
+            )
+        
+        # Статус безопасности
+        status = "✅ НОРМА" if max_v <= MAX_SPEED_LIMIT and aggressive <= 10 else "⚠️ ТРЕБУЕТ ВНИМАНИЯ"
         with s4:
-            status = "Критично" if max_v > 105 else "Норма"
-            st.metric("🛡️ Статус", status, delta="Требует внимания" if status == "Критично" else "ОК", delta_color="inverse" if status == "Критично" else "normal")
+            st.metric("🛡️ Статус безопасности", status)
+        
+        # === ФИНАЛЬНЫЙ ОТЧЕТ ===
+        st.divider()
+        st.success(f"""
+        **✅ Отчет сформирован успешно**
+        
+        - Пробег: {total_km:.3f} км
+        - Время в движении: {total_time_hours:.2f} часов
+        - Среднее: {total_km/total_time_hours:.2f} км/ч
+        - Точек данных: {len(df_clean)}
+        - Период: {start_date} по {end_date} (МСК)
+        """)
             
             
 # Замени этот блок в разделе РОУТИНГ:
@@ -1916,6 +2093,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
