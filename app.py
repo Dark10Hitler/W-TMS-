@@ -1328,97 +1328,214 @@ elif selected == "ТС":
         st.info("ℹ️ В автопарке пока нет записей.")
 
 elif selected == "Аналитика":
-    st.title("🛡️ Logistics Intelligence: Глубокий Аудит")
+    st.title("🛡️ Logistics Intelligence: Глубокий Аудит (Optimized + Real-Time)")
     st.markdown("---")
-    
-    # 1. Инициализируем хранилище в памяти (session_state), если его нет
-    if 'report_data' not in st.session_state:
-        st.session_state.report_data = None
 
-    # --- ФУНКЦИИ ---
-    def get_traccar_data_safe(v_id, start_date, end_date):
-        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
+    import numpy as np
+    import time
+
+    # =========================
+    # 🔧 CACHE LAYER
+    # =========================
+    @st.cache_data(ttl=300, show_spinner=False)
+    def cached_summary(v_id, start, end):
+        return get_traccar_summary(v_id, start, end)
+
+    @st.cache_data(ttl=300, show_spinner=False)
+    def cached_route(v_id, start, end):
+        return get_traccar_route(v_id, start, end)
+
+    # =========================
+    # 📡 API FUNCTIONS
+    # =========================
+    def get_traccar_summary(v_id, start, end):
+        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/summary"
         params = {
             "deviceId": v_id,
-            "from": f"{start_date.strftime('%Y-%m-%d')}T00:00:00Z",
-            "to": f"{end_date.strftime('%Y-%m-%d')}T23:59:59Z"
+            "from": f"{start.strftime('%Y-%m-%d')}T00:00:00Z",
+            "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z",
+            "daily": "true"
         }
-        headers = {'Accept': 'application/json', 'ngrok-skip-browser-warning': 'true'}
+        headers = {'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json'}
+
         try:
-            resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
-            if resp.status_code == 200:
-                return resp.json()
-            return []
+            r = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=20)
+            return r.json() if r.status_code == 200 else []
         except:
             return []
 
-    # --- ИНТЕРФЕЙС УПРАВЛЕНИЯ ---
+    def get_traccar_route(v_id, start, end):
+        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
+        params = {
+            "deviceId": v_id,
+            "from": f"{start.strftime('%Y-%m-%d')}T00:00:00Z",
+            "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z"
+        }
+        headers = {'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json'}
+
+        try:
+            r = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=20)
+            return r.json() if r.status_code == 200 else []
+        except:
+            return []
+
+    # =========================
+    # 🎯 UI
+    # =========================
     devices_dict, _ = get_detailed_traccar_data()
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        v_name = st.selectbox("🎯 Выберите ТС", options=[d['name'] for d in devices_dict.values()])
-        v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
-    with col2:
-        start_dt = st.date_input("Начало", datetime.now() - timedelta(days=1))
-    with col3:
-        end_dt = st.date_input("Конец", datetime.now())
 
-    # Кнопка теперь просто ГЕНЕРИРУЕТ данные и сохраняет их
-    if st.button("📑 СФОРМИРОВАТЬ ОТЧЕТ", type="primary", use_container_width=True):
-        with st.spinner('📡 Запрос данных...'):
-            raw_data = get_traccar_data_safe(v_id, start_dt, end_dt)
-            if raw_data:
-                # Сохраняем всё в сессию, чтобы не исчезало
-                st.session_state.report_data = raw_data
-                st.session_state.v_name = v_name
-            else:
-                st.error("❌ Нет данных за этот период.")
-                st.session_state.report_data = None
+    c1, c2, c3 = st.columns([2, 1, 1])
 
-    # --- ОТРИСОВКА (Происходит всегда, если в сессии есть данные) ---
-    if st.session_state.report_data:
-        df = pd.DataFrame(st.session_state.report_data)
-        df['dt'] = pd.to_datetime(df['deviceTime'])
-        df['speed_kmh'] = round(df['speed'] * 1.852, 1)
+    with c1:
+        v_name = st.selectbox("ТС", [d['name'] for d in devices_dict.values()])
+        v_id = next((i for i, d in devices_dict.items() if d['name'] == v_name), None)
 
-        # Расчет пробега через атрибуты (одометр)
-        def get_odo(attr): return attr.get('totalDistance', 0) / 1000
-        dist_start = get_odo(df.iloc[0]['attributes'])
-        dist_end = get_odo(df.iloc[-1]['attributes'])
-        total_km = dist_end - dist_start
+    with c2:
+        start_date = st.date_input("От", datetime.now() - timedelta(days=3))
 
-        if total_km <= 0: # Страховка
-            total_km = df['attributes'].apply(lambda x: x.get('distance', 0)).sum() / 1000
+    with c3:
+        end_date = st.date_input("До", datetime.now())
 
-        # Визуализация
-        st.success(f"✅ Отчет сформирован для {st.session_state.v_name}")
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("🏁 Пробег", f"{total_km:.2f} км")
-        m2.metric("🚀 Макс. скорость", f"{df['speed_kmh'].max()} км/ч")
-        m3.metric("📡 Точек GPS", len(df))
+    # =========================
+    # 🎮 CONTROL
+    # =========================
+    col_btn1, col_btn2, col_btn3 = st.columns(3)
 
-        # КАРТА
-        import folium
-        from streamlit_folium import st_folium
-        st.subheader("🗺️ Маршрут на карте")
-        
-        avg_lat = df['latitude'].mean()
-        avg_lon = df['longitude'].mean()
-        m = folium.Map(location=[avg_lat, avg_lon], zoom_start=12)
-        
-        points = [[r['latitude'], r['longitude']] for _, r in df.iterrows()]
-        folium.PolyLine(points, color="#29b5e8", weight=5, opacity=0.8).add_to(m)
-        folium.Marker(points[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
-        folium.Marker(points[-1], icon=folium.Icon(color='red', icon='flag')).add_to(m)
-        
-        # Важно: используем key, чтобы карта не перерисовывалась при каждом клике
-        st_folium(m, width=1300, height=500, key="report_map")
+    with col_btn1:
+        if st.button("📊 Анализ"):
+            st.session_state.run = True
 
-        # Кнопка сброса (чтобы очистить отчет)
-        if st.button("🗑️ Очистить отчет"):
-            st.session_state.report_data = None
-            st.rerun()
+    with col_btn2:
+        if st.button("▶️ Live"):
+            st.session_state.live = True
+
+    with col_btn3:
+        if st.button("⏹ Stop"):
+            st.session_state.live = False
+
+    if not st.session_state.get("run") and not st.session_state.get("live"):
+        st.stop()
+
+    # =========================
+    # ⚡ HAVERSINE (VECTORIZED)
+    # =========================
+    def haversine_np(lon1, lat1, lon2, lat2):
+        lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+
+        a = np.sin(dlat/2)**2 + np.cos(lat1)*np.cos(lat2)*np.sin(dlon/2)**2
+        return 6371 * 2 * np.arcsin(np.sqrt(a))
+
+    # =========================
+    # 📊 STATIC ANALYSIS
+    # =========================
+    if st.session_state.get("run"):
+        with st.spinner("Загрузка..."):
+            summary = cached_summary(v_id, start_date, end_date)
+            route = cached_route(v_id, start_date, end_date)
+
+        if not route:
+            st.error("❌ Сервер не вернул данные")
+            st.stop()
+
+        df = pd.DataFrame(route)
+
+        df["dt"] = pd.to_datetime(df["deviceTime"])
+        df["speed_kmh"] = df["speed"] * 1.852
+        df["diff_speed"] = df["speed_kmh"].diff().fillna(0)
+
+        # ⚡ vector distance
+        df["dist_km"] = haversine_np(
+            df["longitude"].shift(),
+            df["latitude"].shift(),
+            df["longitude"],
+            df["latitude"]
+        ).fillna(0)
+
+        df.loc[df["dist_km"] < 0.03, "dist_km"] = 0
+
+        total_km = df["dist_km"].sum()
+
+        # =========================
+        # 🧩 TABS (LAZY LOAD)
+        # =========================
+        tab1, tab2, tab3 = st.tabs(["📊 Метрики", "📈 Скорость", "🗺️ Карта"])
+
+        # ---- METRICS ----
+        with tab1:
+            c1, c2, c3, c4 = st.columns(4)
+
+            c1.metric("Пробег", f"{total_km:.2f} км")
+            c2.metric("Топливо", f"{int(total_km * 0.12)} л")
+            c3.metric("GPS точки", len(df))
+            c4.metric("Нарушения", len(df[df["speed_kmh"] > 95]))
+
+            daily = df.groupby(df["dt"].dt.date).agg({
+                "dist_km": "sum",
+                "speed_kmh": "max"
+            }).reset_index()
+
+            st.dataframe(daily, use_container_width=True)
+
+        # ---- CHART ----
+        with tab2:
+            import altair as alt
+
+            df_small = df.iloc[::5]
+
+            chart = alt.Chart(df_small).mark_line().encode(
+                x="dt:T",
+                y="speed_kmh:Q"
+            ).interactive()
+
+            st.altair_chart(chart, use_container_width=True)
+
+        # ---- MAP ----
+        with tab3:
+            import folium
+            from streamlit_folium import st_folium
+
+            m = folium.Map(
+                location=[df["latitude"].mean(), df["longitude"].mean()],
+                zoom_start=11
+            )
+
+            points = df[["latitude", "longitude"]].values.tolist()
+            folium.PolyLine(points).add_to(m)
+
+            st_folium(m, width=1200, height=600)
+
+    # =========================
+    # 🔴 REAL-TIME MODE
+    # =========================
+    if st.session_state.get("live"):
+        placeholder = st.empty()
+
+        while st.session_state.get("live"):
+            data = get_traccar_route(v_id, start_date, end_date)
+
+            if not data:
+                st.warning("Нет данных")
+                break
+
+            df = pd.DataFrame(data)
+            df["speed_kmh"] = df["speed"] * 1.852
+
+            last = df.iloc[-1]
+
+            with placeholder.container():
+                c1, c2, c3 = st.columns(3)
+
+                c1.metric("🚗 Скорость", f"{last['speed_kmh']:.1f}")
+                c2.metric("📍 Lat", round(last["latitude"], 5))
+                c3.metric("📍 Lon", round(last["longitude"], 5))
+
+                st.line_chart(
+                    df.tail(100).set_index("deviceTime")["speed_kmh"]
+                )
+
+            time.sleep(5)
             
             
 # Замени этот блок в разделе РОУТИНГ:
@@ -1772,6 +1889,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
