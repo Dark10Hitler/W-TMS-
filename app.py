@@ -1439,14 +1439,13 @@ elif selected == "Аналитика":
         summary_df['engine_hours'] = round(summary_df['engineHours'] / 3600000, 1)
         summary_df['day_label'] = pd.to_datetime(summary_df['startTime']).dt.strftime('%d.%m.%Y')
         
-        # --- 1. ОБРАБОТКА GPS-ТОЧЕК (df_route) ---
+        # --- 1. ОБРАБОТКА GPS-ТОЧЕК (Максимальная точность) ---
         df_route = pd.DataFrame(route_data)
         df_route['dt'] = pd.to_datetime(df_route['deviceTime'])
         df_route['speed_kmh'] = round(df_route['speed'] * 1.852, 1)
-        df_route['date_only'] = df_route['dt'].dt.date  # Группировка
-        df_route['diff_speed'] = df_route['speed_kmh'].diff().fillna(0)
+        df_route['date_only'] = df_route['dt'].dt.date
 
-        # --- 2. ТОЧНЫЙ РАСЧЕТ ДИСТАНЦИИ (Haversine) ---
+        # --- 2. ЧЕСТНЫЙ РАСЧЕТ ДИСТАНЦИИ БЕЗ ФИЛЬТРОВ ---
         from math import radians, cos, sin, asin, sqrt
         def haversine(lon1, lat1, lon2, lat2):
             lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
@@ -1454,13 +1453,11 @@ elif selected == "Аналитика":
             a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
             return 6371 * 2 * asin(sqrt(a))
 
-        # Считаем шаги между точками
         step_distances = [0.0]
         for i in range(1, len(df_route)):
             d = haversine(df_route.iloc[i-1]['longitude'], df_route.iloc[i-1]['latitude'],
                           df_route.iloc[i]['longitude'], df_route.iloc[i]['latitude'])
-            # Игнорируем "дребезг" GPS (меньше 30 метров)
-            step_distances.append(d if d > 0.03 else 0.0)
+            step_distances.append(d) # Считаем каждый метр движения
         
         df_route['dist_km'] = step_distances
         total_km = df_route['dist_km'].sum()
@@ -1512,146 +1509,43 @@ elif selected == "Аналитика":
                 st.metric("Осталось", f"{int(rem)} км")
                 st.progress(perc / 100)
 
-        st.divider()
-        st.subheader("🗺️ Геопространственный аудит маршрута")
+        # --- 3. ГЕОПРОСТРАНСТВЕННЫЙ АУДИТ (Классический вид) ---
+        st.subheader("🗺️ Точный маршрут движения")
         
         if not df_route.empty:
             import folium
-            from folium.plugins import Fullscreen, MarkerCluster, AntPath
             from streamlit_folium import st_folium
 
-            # Проверка данных
-            if 'speed_kmh' not in df_route.columns:
-                df_route['speed_kmh'] = df_route['speed'] * 1.852
-            df_route['diff_speed'] = df_route['speed_kmh'].diff().fillna(0)
-
-            # Центрирование
+            # Центрируем карту строго по точкам
             m = folium.Map(
                 location=[df_route['latitude'].mean(), df_route['longitude'].mean()], 
-                zoom_start=11, 
-                tiles="cartodbpositron" # Более чистый фон для аналитики
+                zoom_start=14, 
+                tiles="OpenStreetMap" # Используем OSM, там лучше видны мелкие проезды
             )
-            Fullscreen().add_to(m)
 
-            # 1. ДИНАМИЧЕСКИЙ ТРЕК (AntPath создает эффект движения)
+            # Обычная сплошная линия по ВСЕМ точкам (без упрощений)
             points = [[r['latitude'], r['longitude']] for _, r in df_route.iterrows()]
-            AntPath(
-                locations=points,
-                dash_array=[10, 20],
-                delay=1000,
-                color='#2A52BE',
-                pulse_color='#FFFFFF',
-                weight=4,
-                opacity=0.6,
-                tooltip="Маршрут движения"
+            folium.PolyLine(
+                points, 
+                color="#0000FF", 
+                weight=5, 
+                opacity=0.8,
+                tooltip="Фактический путь"
             ).add_to(m)
 
-            # 2. АНАЛИЗ СОБЫТИЙ (Группировка для удобства)
-            # Превышения (> 95 км/ч) - Оранжевый
-            overspeeds = df_route[df_route['speed_kmh'] > 95]
-            # Резкие торможения (падение > 20 км/ч за шаг) - Красный
-            hard_brakes = df_route[df_route['diff_speed'] < -20]
-            # Стоянки (скорость 0 более 5 минут - если есть данные)
-            stops = df_route[df_route['speed_kmh'] < 1]
-
-            # Создаем кластер для нарушений, чтобы не забивать карту
-            incident_cluster = MarkerCluster(name="Нарушения и события").add_to(m)
-
-            # Маркеры превышений
-            for _, row in overspeeds.iterrows():
+            # Добавляем точки (узлы), чтобы видеть, где именно GPS давал сигнал
+            for _, row in df_route[::5].iterrows(): # Каждая 5-я точка для контроля
                 folium.CircleMarker(
                     location=[row['latitude'], row['longitude']],
-                    radius=8, color='#FF4500', fill=True, fill_opacity=0.8,
-                    popup=folium.Popup(f"""
-                        <div style='font-family: sans-serif; font-size: 12px;'>
-                            <b style='color:red;'>🔥 ПРЕВЫШЕНИЕ</b><br>
-                            Скорость: <b>{int(row['speed_kmh'])} км/ч</b><br>
-                            Время: {row['dt'].strftime('%H:%M:%S')}
-                        </div>""", max_width=200)
-                ).add_to(incident_cluster)
+                    radius=2, color='black', fill=True
+                ).add_to(m)
 
-            # Маркеры торможений
-            for _, row in hard_brakes.iterrows():
-                folium.Marker(
-                    location=[row['latitude'], row['longitude']],
-                    icon=folium.Icon(color='red', icon='bolt', prefix='fa'),
-                    popup=f"⚠️ Резкое торможение: {int(row['diff_speed'])} км/ч"
-                ).add_to(incident_cluster)
+            # Старт и Финиш
+            folium.Marker(points[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
+            folium.Marker(points[-1], icon=folium.Icon(color='red', icon='stop')).add_to(m)
 
-            # 3. СТАРТ И ФИНИШ (Яркие флаги)
-            folium.Marker(
-                points[0], 
-                popup="🚩 ТОЧКА ВЫХОДА", 
-                icon=folium.Icon(color='green', icon='play', prefix='fa')
-            ).add_to(m)
+            st_folium(m, width="100%", height=600)
             
-            folium.Marker(
-                points[-1], 
-                popup="🏁 КОНЕЧНАЯ ТОЧКА", 
-                icon=folium.Icon(color='black', icon='flag-checkered', prefix='fa')
-            ).add_to(m)
-
-            # 4. ПРОФЕССИОНАЛЬНАЯ ЛЕГЕНДА (HTML/CSS)
-            # 4. ПРОФЕССИОНАЛЬНАЯ ЛЕГЕНДА (Черный текст, высокая контрастность)
-            legend_html = f'''
-                 <div style="position: fixed; 
-                             bottom: 50px; left: 50px; width: 260px; z-index:9999; 
-                             background-color: white; 
-                             border: 2px solid #1a237e; 
-                             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                             padding: 15px; border-radius: 12px; 
-                             font-size: 14px; 
-                             color: black; 
-                             box-shadow: 5px 5px 15px rgba(0,0,0,0.4);">
-                     
-                     <h4 style="margin-top:0; margin-bottom:10px; color: #1a237e; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
-                        🔍 Аудит маршрута
-                     </h4>
-                     
-                     <div style="margin-bottom: 10px; color: black; font-weight: 500;">
-                        <span style="background:#2A52BE; width:25px; height:4px; display:inline-block; margin-right:8px; vertical-align:middle;"></span> 
-                        Траектория пути
-                     </div>
-                     
-                     <div style="margin-bottom: 10px; color: black; font-weight: 500;">
-                        <span style="background:#FF4500; border-radius:50%; width:12px; height:12px; display:inline-block; margin-right:8px; vertical-align:middle; border: 1px solid black;"></span> 
-                        Превышение (>95 км/ч)
-                     </div>
-                     
-                     <div style="margin-bottom: 10px; color: black; font-weight: 500;">
-                        <span style="font-size:16px; margin-right:8px; vertical-align:middle;">⚡</span> 
-                        Резкое торможение
-                     </div>
-                     
-                     <hr style="border: 0; border-top: 1px solid #ddd; margin: 10px 0;">
-                     
-                     <table style="width:100%; color: black; border-collapse: collapse;">
-                        <tr style="height: 25px;">
-                            <td style="font-weight: bold;">🏁 Дистанция:</td>
-                            <td style="text-align:right;"><b>{total_km:.2f} км</b></td>
-                        </tr>
-                        <tr style="height: 25px;">
-                            <td style="font-weight: bold;">🔥 Нарушений:</td>
-                            <td style="text-align:right; color: #d32f2f;"><b>{len(overspeeds)}</b></td>
-                        </tr>
-                        <tr style="height: 25px;">
-                            <td style="font-weight: bold;">📡 Точек GPS:</td>
-                            <td style="text-align:right;"><b>{len(df_route)}</b></td>
-                        </tr>
-                     </table>
-                     
-                     <div style="margin-top: 10px; font-size: 11px; color: #555; text-align: center; font-style: italic;">
-                        Данные синхронизированы
-                     </div>
-                 </div>
-            '''
-            m.get_root().html.add_child(folium.Element(legend_html))
-
-            # Отображение
-            st_folium(m, width="100%", height=700)
-            
-        else:
-            st.warning("⚠️ Нет данных для построения карты за выбранный период.")
         # --- БЛОК 5: ПРОФЕССИОНАЛЬНЫЙ ГРАФИК (БЕЗ "КАШИ") ---
         st.divider()
         st.subheader("📈 Детальный анализ скоростного режима")
@@ -2094,6 +1988,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
