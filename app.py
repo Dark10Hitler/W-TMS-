@@ -275,29 +275,52 @@ def process_route_data(route_data: List[Dict], positions_data: List[Dict]) -> pd
     return df_clean
 
 def calculate_route_metrics(df: pd.DataFrame) -> Dict:
-    """Расчет всех метрик"""
+    """Расчет всех метрик с ПРАВИЛЬНЫМ использованием одометра из Traccar"""
     
     if df.empty:
         return {}
     
     moving_mask = df['speed_kmh'] > SPEED_LIMITS['SLOW']
     
+    # === КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: ОДОМЕТР ИЗ TRACCAR ===
+    # Проверяем наличие одометра из сервера
+    if 'odometer_server' in df.columns and len(df) > 0:
+        # Берем ПОСЛЕДНЕЕ значение одометра (финальное)
+        final_odometer = float(df['odometer_server'].iloc[-1])
+        # Если это одометр машины (непрерывный счетчик), берем его как есть
+        # Если нужно считать за период - берем разницу
+        total_distance_km = final_odometer
+    else:
+        # Резерв: если одометра нет, считаем через GPS
+        total_distance_km = float(df['distance_km'].sum())
+    
     metrics = {
-        'total_distance_km': float(df['distance_km'].sum()),
+        # === РАССТОЯНИЕ (ИСПРАВЛЕНО) ===
+        'total_distance_km': total_distance_km,  # ← ТУТ ЗНАЧЕНИЕ ИЗ TRACCAR!
+        
+        # === ТОЧКИ GPS ===
         'valid_points': len(df[df['is_valid']]),
         'total_points': len(df),
+        
+        # === СКОРОСТЬ ===
         'max_speed_kmh': float(df['speed_kmh'].max()),
         'min_speed_kmh': float(df[moving_mask]['speed_kmh'].min()) if moving_mask.any() else 0,
         'avg_speed_moving': float(df[moving_mask]['speed_kmh'].mean()) if moving_mask.any() else 0,
         'avg_speed_total': float(df['speed_kmh'].mean()),
+        
+        # === НАРУШЕНИЯ ===
         'overspeeds': len(df[df['speed_kmh'] > SPEED_LIMITS['OVERSPEED']]),
         'critical_speeds': len(df[df['speed_kmh'] > SPEED_LIMITS['CRITICAL']]),
         'harsh_acceleration': len(df[df['speed_diff'] > 15]),
         'harsh_deceleration': len(df[df['speed_diff'] < -15]),
+        
+        # === ВРЕМЯ ===
         'total_time_minutes': float(df['time_diff_sec'].sum() / 60),
-        'moving_time_minutes': float(len(df[moving_mask]) * (df['time_diff_sec'].mean() / 60)),
-        'idle_time_minutes': float(len(df[~moving_mask]) * (df['time_diff_sec'].mean() / 60)),
-        'odometer_km': float(df['odometer_server'].iloc[-1]) if 'odometer_server' in df.columns else float(df['distance_km'].sum()),
+        'moving_time_minutes': float(len(df[moving_mask]) * (df['time_diff_sec'].mean() / 60)) if len(df) > 0 else 0,
+        'idle_time_minutes': float(len(df[~moving_mask]) * (df['time_diff_sec'].mean() / 60)) if len(df) > 0 else 0,
+        
+        # === ОДОМЕТР ===
+        'odometer_km': total_distance_km,  # Используем тот же источник
     }
     
     return metrics
@@ -2419,6 +2442,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
