@@ -795,6 +795,7 @@ def create_vehicle_modal():
     import uuid
     from datetime import datetime
     import time
+    import pandas as pd # Не забудь импорт pandas
 
     st.subheader("📋 Технический паспорт автомобиля")
     uploaded_v_photo = st.file_uploader("📸 Фото автомобиля", type=["jpg", "png"], key="upload_v_new")
@@ -821,70 +822,68 @@ def create_vehicle_modal():
             l_to = r3_c1.date_input("Дата ТО", value=datetime.now())
             ins = r3_c2.date_input("Страховка до", value=datetime.now())
 
+        # КНОПКА ДОЛЖНА БЫТЬ ТУТ (внутри with st.form)
         submitted = st.form_submit_button("✅ ВНЕСТИ ТС В РЕЕСТР", use_container_width=True)
 
-    if submitted:
-        if not gov_num or not brand:
-            st.error("🚨 Заполните обязательные поля: Госномер и Марка!")
-            return
-        
-        clean_gov_num = gov_num.strip().upper()
+        if submitted:
+            if not gov_num or not brand:
+                st.error("🚨 Заполните обязательные поля: Госномер и Марка!")
+            else:
+                clean_gov_num = gov_num.strip().upper()
 
-        try:
-            # Проверка на дубликат
-            existing = supabase.table("vehicles").select("id").eq("gov_num", clean_gov_num).execute()
-            if existing.data:
-                st.warning(f"⚠️ Автомобиль с госномером **{clean_gov_num}** уже существует!")
-                return
-            
-            vehicle_id = f"VEH-{str(uuid.uuid4())[:4].upper()}"
-            
-            # Обработка фото (fallback на иконку, если функции нет или она вернула None)
-            final_v_photo = None
-            try:
-                final_v_photo = process_image(uploaded_v_photo)
-            except:
-                pass
-            
-            if not final_v_photo:
-                # Пытаемся взять из img_map или ставим дефолт
-                final_v_photo = globals().get('img_map', {}).get(v_type, "https://cdn-icons-png.flaticon.com/512/2554/2554977.png")
+                try:
+                    # Проверка на дубликат
+                    existing = supabase.table("vehicles").select("id").eq("gov_num", clean_gov_num).execute()
+                    if existing.data:
+                        st.warning(f"⚠️ Автомобиль с госномером **{clean_gov_num}** уже существует!")
+                    else:
+                        vehicle_id = f"VEH-{str(uuid.uuid4())[:4].upper()}"
+                        
+                        # Обработка фото
+                        final_v_photo = None
+                        try:
+                            final_v_photo = process_image(uploaded_v_photo)
+                        except:
+                            pass
+                        
+                        if not final_v_photo:
+                            final_v_photo = globals().get('img_map', {}).get(v_type, "https://cdn-icons-png.flaticon.com/512/2554/2554977.png")
 
-            db_payload = {
-                "id": vehicle_id,
-                "brand": brand,
-                "gov_num": clean_gov_num, 
-                "vin": vin.strip().upper() if vin else None,
-                "body_type": v_type,
-                "capacity": float(cap),
-                "volume": float(vol),
-                "pallets": int(pal),
-                "last_service": l_to.strftime("%Y-%m-%d"),
-                "insurance_expiry": ins.strftime("%Y-%m-%d"),
-                "photo_url": final_v_photo,
-                "status": "На линии"
-            }
+                        db_payload = {
+                            "id": vehicle_id,
+                            "brand": brand,
+                            "gov_num": clean_gov_num, 
+                            "vin": vin.strip().upper() if vin else None,
+                            "body_type": v_type,
+                            "capacity": float(cap),
+                            "volume": float(vol),
+                            "pallets": int(pal),
+                            "last_service": l_to.strftime("%Y-%m-%d"),
+                            "insurance_expiry": ins.strftime("%Y-%m-%d"),
+                            "photo_url": final_v_photo,
+                            "status": "На линии"
+                        }
 
-            supabase.table("vehicles").insert(db_payload).execute()
-            
-            # Обновляем локальный список для UI
-            new_v_ui = {
-                "id": vehicle_id, 
-                "Марка": brand, "Госномер": clean_gov_num, "Тип": v_type, 
-                "Грузоподъемность": cap, "Объем": vol, "Паллеты": pal,
-                "ТО": l_to.strftime("%Y-%m-%d"), "Страховка": ins.strftime("%Y-%m-%d"),
-                "Фото": final_v_photo, "Статус": "На линии"
-            }
-            
-            if "vehicles" in st.session_state:
-                st.session_state.vehicles = pd.concat([st.session_state.vehicles, pd.DataFrame([new_v_ui])], ignore_index=True)
+                        supabase.table("vehicles").insert(db_payload).execute()
+                        
+                        # Обновляем локальный список для UI
+                        new_v_ui = {
+                            "id": vehicle_id, 
+                            "Марка": brand, "Госномер": clean_gov_num, "Тип": v_type, 
+                            "Грузоподъемность": cap, "Объем": vol, "Паллеты": pal,
+                            "ТО": l_to.strftime("%Y-%m-%d"), "Страховка": ins.strftime("%Y-%m-%d"),
+                            "Фото": final_v_photo, "Статус": "На линии"
+                        }
+                        
+                        if "vehicles" in st.session_state:
+                            st.session_state.vehicles = pd.concat([st.session_state.vehicles, pd.DataFrame([new_v_ui])], ignore_index=True)
 
-            st.success(f"✅ ТС {clean_gov_num} добавлено!")
-            time.sleep(1)
-            st.rerun()
-            
-        except Exception as e:
-            st.error(f"Ошибка: {e}")
+                        st.success(f"✅ ТС {clean_gov_num} добавлено!")
+                        time.sleep(1)
+                        st.rerun()
+                        
+                except Exception as e:
+                    st.error(f"Ошибка: {e}")
 
 @st.dialog("⚙️ Редактирование ТС", width="large")
 def edit_vehicle_modal():
@@ -983,6 +982,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
