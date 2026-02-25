@@ -1432,20 +1432,17 @@ elif selected == "Аналитика":
             st.error("❌ Route (точки GPS) вернул пустой список (Summary при этом есть).")
             st.stop()
 
-        # --- ПОДГОТОВКА ДАННЫХ (ФИКС ВСЕХ ОШИБОК) ---
-        summary_df = pd.DataFrame(summary_data)
-        summary_df['distance_km'] = round(summary_df['distance'] / 1000, 2)
-        summary_df['spent_fuel'] = round(summary_df.get('spentFuel', summary_df['distance_km'] * 0.12), 1)
-        summary_df['engine_hours'] = round(summary_df['engineHours'] / 3600000, 1)
-        summary_df['day_label'] = pd.to_datetime(summary_df['startTime']).dt.strftime('%d.%m.%Y')
-        
-        # --- 1. ОБРАБОТКА GPS-ТОЧЕК (Максимальная точность) ---
+        # --- 1. ОБРАБОТКА И ОЧИСТКА ДАННЫХ ---
         df_route = pd.DataFrame(route_data)
         df_route['dt'] = pd.to_datetime(df_route['deviceTime'])
         df_route['speed_kmh'] = round(df_route['speed'] * 1.852, 1)
         df_route['date_only'] = df_route['dt'].dt.date
+        
+        # ВОЗВРАЩАЕМ diff_speed (чтобы не было ошибки KeyError)
+        df_route['diff_speed'] = df_route['speed_kmh'].diff().fillna(0)
 
-        # --- 2. ЧЕСТНЫЙ РАСЧЕТ ДИСТАНЦИИ БЕЗ ФИЛЬТРОВ ---
+        # --- 2. ФИЛЬТР "АНТИ-ПРЫЖОК" ---
+        # Удаляем точки, которые создают нереальные линии (расстояние > 5 км за один шаг)
         from math import radians, cos, sin, asin, sqrt
         def haversine(lon1, lat1, lon2, lat2):
             lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
@@ -1453,14 +1450,24 @@ elif selected == "Аналитика":
             a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
             return 6371 * 2 * asin(sqrt(a))
 
+        clean_points = []
         step_distances = [0.0]
-        for i in range(1, len(df_route)):
-            d = haversine(df_route.iloc[i-1]['longitude'], df_route.iloc[i-1]['latitude'],
-                          df_route.iloc[i]['longitude'], df_route.iloc[i]['latitude'])
-            step_distances.append(d) # Считаем каждый метр движения
         
-        df_route['dist_km'] = step_distances
-        total_km = df_route['dist_km'].sum()
+        if len(df_route) > 0:
+            clean_points.append(df_route.iloc[0])
+            for i in range(1, len(df_route)):
+                d = haversine(df_route.iloc[i-1]['longitude'], df_route.iloc[i-1]['latitude'],
+                              df_route.iloc[i]['longitude'], df_route.iloc[i]['latitude'])
+                
+                # Если между точками больше 7 км (глюк GPS) — игнорируем эту точку
+                if d < 7.0: 
+                    step_distances.append(d)
+                    clean_points.append(df_route.iloc[i])
+                else:
+                    step_distances.append(0.0) # Пропускаем прыжок
+        
+        df_clean = pd.DataFrame(clean_points)
+        total_km = sum(step_distances)
 
         # --- 3. СИНХРОНИЗАЦИЯ ТАБЛИЦЫ (Группируем наши расчеты, а не Traccar) ---
         # Теперь данные в таблице ВСЕГДА будут биться с итоговой суммой
@@ -1509,40 +1516,26 @@ elif selected == "Аналитика":
                 st.metric("Осталось", f"{int(rem)} км")
                 st.progress(perc / 100)
 
-        # --- 3. ГЕОПРОСТРАНСТВЕННЫЙ АУДИТ (Классический вид) ---
-        st.subheader("🗺️ Точный маршрут движения")
+        # --- 3. КАРТА БЕЗ ЛИШНИХ ЛИНИЙ ---
+        st.subheader("🗺️ Проверенный маршрут (Очищен от помех)")
         
-        if not df_route.empty:
+        if not df_clean.empty:
             import folium
             from streamlit_folium import st_folium
 
-            # Центрируем карту строго по точкам
             m = folium.Map(
-                location=[df_route['latitude'].mean(), df_route['longitude'].mean()], 
-                zoom_start=14, 
-                tiles="OpenStreetMap" # Используем OSM, там лучше видны мелкие проезды
+                location=[df_clean['latitude'].mean(), df_clean['longitude'].mean()], 
+                zoom_start=13, 
+                tiles="OpenStreetMap"
             )
 
-            # Обычная сплошная линия по ВСЕМ точкам (без упрощений)
-            points = [[r['latitude'], r['longitude']] for _, r in df_route.iterrows()]
-            folium.PolyLine(
-                points, 
-                color="#0000FF", 
-                weight=5, 
-                opacity=0.8,
-                tooltip="Фактический путь"
-            ).add_to(m)
+            # Рисуем только чистый путь
+            path_points = [[r['latitude'], r['longitude']] for _, r in df_clean.iterrows()]
+            folium.PolyLine(path_points, color="blue", weight=4, opacity=0.7).add_to(m)
 
-            # Добавляем точки (узлы), чтобы видеть, где именно GPS давал сигнал
-            for _, row in df_route[::5].iterrows(): # Каждая 5-я точка для контроля
-                folium.CircleMarker(
-                    location=[row['latitude'], row['longitude']],
-                    radius=2, color='black', fill=True
-                ).add_to(m)
-
-            # Старт и Финиш
-            folium.Marker(points[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
-            folium.Marker(points[-1], icon=folium.Icon(color='red', icon='stop')).add_to(m)
+            # Старт/Финиш
+            folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
+            folium.Marker(path_points[-1], icon=folium.Icon(color='red', icon='flag')).add_to(m)
 
             st_folium(m, width="100%", height=600)
             
@@ -1988,6 +1981,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
