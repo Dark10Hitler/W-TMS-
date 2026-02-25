@@ -1403,7 +1403,7 @@ elif selected == "Аналитика":
             return []
 
     def get_traccar_positions(v_id, start, end):
-        """Получить все позиции (дополнительные детали)"""
+        """Получить все позиции (дополнительные детали с одометром)"""
         url = f"{TRACCAR_URL.rstrip('/')}/api/positions"
         params = {
             "deviceId": v_id,
@@ -1417,7 +1417,7 @@ elif selected == "Аналитика":
             resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
             resp.raise_for_status()
             data = resp.json()
-            st.info(f"✅ Positions: получено {len(data)} детальных записей")
+            st.info(f"✅ Positions: получено {len(data)} детальных записей с одометром")
             return data
         except requests.exceptions.RequestException as e:
             st.warning(f"⚠️ Positions не доступны: {e}")
@@ -1447,7 +1447,7 @@ elif selected == "Аналитика":
 
         st.warning(f"🛠 ЗАПРОС: ID={v_id}, С: {start_date} ПО: {end_date}")
 
-        with st.spinner('📡 Глубокое сканирование всех данны�� Traccar...'):
+        with st.spinner('📡 Глубокое сканирование всех данных Traccar...'):
             summary_data = get_traccar_summary(v_id, start_date, end_date)
             route_data = get_traccar_route(v_id, start_date, end_date)
             positions_data = get_traccar_positions(v_id, start_date, end_date)
@@ -1465,6 +1465,22 @@ elif selected == "Аналитика":
         df_raw['speed_kmh'] = round(df_raw['speed'] * 1.852, 2)  # knots -> km/h
         df_raw['date_only'] = df_raw['dt_msk'].dt.date
         df_raw['time_only'] = df_raw['dt_msk'].dt.time
+        
+        # === ПОЛУЧЕНИЕ ОДОМЕТРА ИЗ POSITIONS ===
+        odometer_km = 0
+        if positions_data:
+            df_pos = pd.DataFrame(positions_data)
+            if not df_pos.empty and 'attributes' in df_pos.columns:
+                # Берем последнюю запись с одометром
+                for idx in range(len(df_pos) - 1, -1, -1):
+                    attrs = df_pos.iloc[idx]['attributes']
+                    if isinstance(attrs, dict) and 'totalDistance' in attrs:
+                        odometer_km = attrs['totalDistance'] / 1000  # конвертируем в км
+                        st.info(f"✅ Одометр из Traccar: {odometer_km:.2f} км")
+                        break
+        
+        if odometer_km == 0:
+            st.warning("⚠️ Одометр из Traccar недоступен, используем расчет по маршруту")
         
         # === РАСЧЕТ РАССТОЯНИЯ МЕЖДУ ТОЧКАМИ ===
         from math import radians, cos, sin, asin, sqrt
@@ -1487,6 +1503,7 @@ elif selected == "Аналитика":
             if i == 0:
                 row['dist_km'] = 0.0
                 row['time_diff_sec'] = 0
+                row['diff_speed'] = 0
                 clean_rows.append(row)
             else:
                 prev_row = df_raw.iloc[i-1]
@@ -1500,28 +1517,48 @@ elif selected == "Аналитика":
                 # Расчет времени между точками
                 time_diff = (row['dt_utc'] - prev_row['dt_utc']).total_seconds()
                 
+                # Расчет изменения скорости
+                speed_diff = row['speed_kmh'] - prev_row['speed_kmh']
+                
                 # Фильтруем GPS прыжки (> 7 км за короткий промежуток)
                 if distance < GPS_JUMP_THRESHOLD or time_diff > 300:  # 5 минут максимум
                     row['dist_km'] = distance if distance < GPS_JUMP_THRESHOLD else 0
                     row['time_diff_sec'] = time_diff
+                    row['diff_speed'] = speed_diff
                     clean_rows.append(row)
 
         df_clean = pd.DataFrame(clean_rows)
         
         # === РАСЧЕТ ИТОГОВЫХ МЕТРИК ===
-        total_km = df_clean['dist_km'].sum()
+        total_km_calculated = df_clean['dist_km'].sum()
         total_time_sec = df_clean['time_diff_sec'].sum()
         total_time_hours = total_time_sec / 3600
+        
+        # Используем одометр из Traccar, если доступен
+        total_km = odometer_km if odometer_km > 0 else total_km_calculated
         
         st.subheader(f"📊 Итоговый аудит: {v_name}")
         
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🏁 Пробег", f"{total_km:.3f} км", help="Точный расчет по GPS")
-        m2.metric("⏱️ Время в движении", f"{total_time_hours:.2f} ч", help="Сумма интервалов между точками")
+        m1.metric(
+            "🏁 Пробег (из Traccar)", 
+            f"{total_km:.3f} км", 
+            help=f"Источник: {'Одометр сервера' if odometer_km > 0 else 'Расчет по маршруту'}"
+        )
+        m2.metric(
+            "⏱️ Время в движении", 
+            f"{total_time_hours:.2f} ч", 
+            help="Сумма интервалов между GPS точками"
+        )
         m3.metric("📡 Точек данных", f"{len(df_clean)}", help="Валидных GPS точек")
         
         overspeeds = df_clean[df_clean['speed_kmh'] > MAX_SPEED_LIMIT]
-        m4.metric("⚠️ Нарушения скорости", f"{len(overspeeds)}", delta=f"> {MAX_SPEED_LIMIT} км/ч", delta_color="inverse")
+        m4.metric(
+            "⚠️ Нарушения скорости", 
+            f"{len(overspeeds)}", 
+            delta=f"> {MAX_SPEED_LIMIT} км/ч", 
+            delta_color="inverse"
+        )
 
         # === ТАБЛИЦА ДЕТАЛИЗАЦИИ ПО ДНЯМ ===
         st.divider()
@@ -1531,7 +1568,7 @@ elif selected == "Аналитика":
             Пробег_км=('dist_km', 'sum'),
             Ср_скорость_кмч=('speed_kmh', lambda x: round(x[x > MIN_SPEED_THRESHOLD].mean(), 2)),
             Макс_скорость_кмч=('speed_kmh', 'max'),
-            Мин_скорость_кмч=('speed_kmh', lambda x: x[x > 0].min()),
+            Мин_скорость_кмч=('speed_kmh', lambda x: x[x > 0].min() if (x > 0).any() else 0),
             Время_ч=('time_diff_sec', lambda x: round(x.sum() / 3600, 2)),
             Точек=('dt_msk', 'count')
         ).reset_index()
@@ -1559,11 +1596,6 @@ elif selected == "Аналитика":
         st.divider()
         st.subheader("🔧 Состояние узлов ТО")
         
-        # Получение одометра из последней точки или расчет по пробегу
-        last_point = df_clean.iloc[-1]
-        last_odo = last_point.get('attributes', {}) or {}
-        last_odo = last_odo.get('totalDistance', total_km * 1000) / 1000
-        
         maintenance_items = [
             ("🛢️ Масло", 10000, "Плановое ТО-1"),
             ("🛑 Колодки", 30000, "Замена тормозных колодок"),
@@ -1574,7 +1606,7 @@ elif selected == "Аналитика":
         cols = st.columns(len(maintenance_items))
         for i, (name, limit, description) in enumerate(maintenance_items):
             with cols[i]:
-                remaining = limit - (last_odo % limit)
+                remaining = limit - (total_km % limit)
                 percentage = max(0, min(100, int((remaining / limit) * 100)))
                 
                 st.write(f"**{name}**")
@@ -1582,7 +1614,7 @@ elif selected == "Аналитика":
                 st.progress(percentage / 100)
                 st.caption(description)
 
-        # === КАРТА С ВЫСОКОЙ ДЕТАЛИЗАЦИЕЙ ===
+        # === КАРТА С ВЫСОКОЙ ДЕТАЛИЗАЦИЕЙ И ЛЕГЕНДОЙ ===
         st.divider()
         st.subheader("🗺️ Маршрут (Детализированная карта)")
         
@@ -1596,8 +1628,31 @@ elif selected == "Аналитика":
         m = folium.Map(
             location=[center_lat, center_lon],
             zoom_start=14,
-            tiles='OpenStreetMap'
+            tiles='OpenStreetMap',
+            prefer_canvas=True
         )
+        
+        # === ЛЕГЕНДА ===
+        legend_html = '''
+        <div style="position: fixed; 
+                    bottom: 50px; right: 50px; width: 280px; height: auto; 
+                    background-color: white; border:2px solid grey; z-index:9999; 
+                    font-size:14px; padding: 15px; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.2)">
+        <p style="margin: 0 0 10px 0; font-weight: bold;">🗺️ ЛЕГЕНДА КАРТЫ</p>
+        <p style="margin: 5px 0;"><i style="background-color: red; width: 20px; height: 20px; border-radius: 50%; display: inline-block;"></i> <b>🔴 Скорость > 95 км/ч (Опасно)</b></p>
+        <p style="margin: 5px 0;"><i style="background-color: orange; width: 20px; height: 20px; border-radius: 50%; display: inline-block;"></i> <b>🟠 50-95 км/ч (Нормально)</b></p>
+        <p style="margin: 5px 0;"><i style="background-color: blue; width: 20px; height: 20px; border-radius: 50%; display: inline-block;"></i> <b>🔵 < 50 км/ч (Медленно)</b></p>
+        <p style="margin: 5px 0;"><i style="background-color: green; width: 20px; height: 20px; display: inline-block;"></i> <b>▶️ СТАРТ маршрута</b></p>
+        <p style="margin: 5px 0;"><i style="background-color: red; width: 20px; height: 20px; display: inline-block;"></i> <b>🚩 ФИНИШ маршрута</b></p>
+        <hr style="margin: 10px 0;">
+        <p style="margin: 5px 0; font-size: 12px;"><b>📊 Статистика:</b></p>
+        <p style="margin: 3px 0; font-size: 12px;">Пробег: {:.2f} км</p>
+        <p style="margin: 3px 0; font-size: 12px;">Точек: {}</p>
+        <p style="margin: 3px 0; font-size: 12px;">Время: {:.1f} ч</p>
+        </div>
+        '''.format(total_km, len(df_clean), total_time_hours)
+        
+        m.get_root().html.add_child(folium.Element(legend_html))
         
         # === ДОБАВЛЯЕМ МАРШРУТ С ДЕТАЛЯМИ ===
         route_points = df_clean[['latitude', 'longitude', 'speed_kmh', 'dt_msk']].values.tolist()
@@ -1607,34 +1662,48 @@ elif selected == "Аналитика":
         folium.PolyLine(
             coordinates,
             color='#1E90FF',
-            weight=4,
-            opacity=0.9,
-            popup='Маршрут',
-            dash_array='5, 5'
+            weight=5,
+            opacity=0.85,
+            popup='Основной маршрут',
+            dash_array='0'
         ).add_to(m)
         
-        # === ТОЧКИ С ИНФОРМАЦИЕЙ О СКОРОСТИ ===
+        # === ТОЧКИ С ИНФОРМАЦИЕЙ О СКОРОСТИ (КАЖДАЯ 10-я ТОЧКА) ===
+        step = max(1, len(route_points) // 100)  # Показываем ~100 маркеров для лучшей видимости
+        
         for idx, (lat, lon, speed, time_msk) in enumerate(route_points):
-            if idx % max(1, len(route_points) // 50) == 0:  # Показываем ~50 маркеров
+            if idx % step == 0:
                 if speed > MAX_SPEED_LIMIT:
                     color = 'red'
-                    icon = '⚠️'
+                    icon_color = 'white'
+                    prefix_icon = '⚠️'
                 elif speed > 50:
                     color = 'orange'
-                    icon = '▶'
-                else:
+                    icon_color = 'white'
+                    prefix_icon = '▶'
+                elif speed > MIN_SPEED_THRESHOLD:
                     color = 'blue'
-                    icon = '●'
+                    icon_color = 'white'
+                    prefix_icon = '●'
+                else:
+                    color = 'gray'
+                    icon_color = 'white'
+                    prefix_icon = '⊙'
                 
                 folium.CircleMarker(
                     location=[lat, lon],
-                    radius=4,
-                    popup=f"Скорость: {speed:.1f} км/ч<br>Время: {time_msk}",
+                    radius=6,
+                    popup=f"""
+                    <b>Скорость:</b> {speed:.1f} км/ч<br>
+                    <b>Время:</b> {time_msk}<br>
+                    <b>Координаты:</b> {lat:.6f}, {lon:.6f}
+                    """,
                     color=color,
                     fill=True,
                     fillColor=color,
-                    fillOpacity=0.7,
-                    weight=2
+                    fillOpacity=0.8,
+                    weight=2,
+                    tooltip=f"{speed:.1f} км/ч | {time_msk}"
                 ).add_to(m)
         
         # === МАРКЕРЫ СТАРТА И ФИНИША ===
@@ -1643,27 +1712,25 @@ elif selected == "Аналитика":
         
         folium.Marker(
             location=[start_point[0], start_point[1]],
-            popup=f"СТАРТ<br>{start_point[3]}",
-            icon=folium.Icon(color='green', icon='play', prefix='fa')
+            popup=f"<b>✅ СТАРТ</b><br>{start_point[3]}",
+            icon=folium.Icon(color='green', icon='play', prefix='fa'),
+            tooltip="НАЧАЛО МАРШРУТА"
         ).add_to(m)
         
         folium.Marker(
             location=[end_point[0], end_point[1]],
-            popup=f"ФИНИШ<br>{end_point[3]}",
-            icon=folium.Icon(color='red', icon='flag', prefix='fa')
+            popup=f"<b>🛑 ФИНИШ</b><br>{end_point[3]}",
+            icon=folium.Icon(color='red', icon='flag', prefix='fa'),
+            tooltip="КОНЕЦ МАРШРУТА"
         ).add_to(m)
         
-        # === ХИТМАП СКОРОСТИ ===
-        try:
-            from folium.plugins import HeatMap
-            heat_data = [[point[0], point[1], point[2] / 100] for point in route_points]
-            HeatMap(heat_data, radius=25, blur=15, max_zoom=1).add_to(m)
-        except:
-            pass
+        # === ДОБАВЛЯЕМ МАСШТАБИРОВАНИЕ ===
+        folium.plugins.MiniMap(toggle_button=True).add_to(m)
+        folium.plugins.Fullscreen(position='topright').add_to(m)
         
-        st_folium(m, width=1400, height=700)
+        st_folium(m, width=1400, height=750)
 
-        # === ГРАФИК СКОРОСТИ ===
+        # === ГРАФИК СКОРОСТИ (ИСПРАВЛЕН) ===
         st.divider()
         st.subheader("📈 Анализ скоростного режима")
         
@@ -1672,15 +1739,17 @@ elif selected == "Аналитика":
         df_chart = df_clean[['dt_msk', 'speed_kmh']].copy()
         df_chart.columns = ['Время', 'Скорость (км/ч)']
         
+        # Исправлено: используем числовые значения вместо 'stretch'
         chart = alt.Chart(df_chart).mark_line(
             color='#1E90FF',
-            size=2
+            size=2,
+            point=False
         ).encode(
             x=alt.X('Время:T', title='Время (МСК)'),
-            y=alt.Y('Скорость (км/ч):Q', title='Скорость (км/ч)'),
-            tooltip=['Время', 'Скорость (км/ч)']
+            y=alt.Y('Скорость (км/ч):Q', title='Скорость (км/ч)', scale=alt.Scale(domain=[0, df_clean['speed_kmh'].max() + 10])),
+            tooltip=['Время:T', 'Скорость (км/ч):Q']
         ).properties(
-            width='stretch',
+            width=1300,  # числовое значение вместо 'stretch'
             height=400
         ).interactive()
         
@@ -1688,8 +1757,11 @@ elif selected == "Аналитика":
         limit_line = alt.DataFrame({'y': [MAX_SPEED_LIMIT]}).mark_rule(
             color='red',
             strokeDash=[5, 5],
-            size=2
-        ).encode(y='y:Q')
+            size=2,
+            opacity=0.8
+        ).encode(
+            y='y:Q'
+        )
         
         st.altair_chart(chart + limit_line, use_container_width=True)
 
@@ -1734,11 +1806,12 @@ elif selected == "Аналитика":
         st.success(f"""
         **✅ Отчет сформирован успешно**
         
-        - Пробег: {total_km:.3f} км
-        - Время в движении: {total_time_hours:.2f} часов
-        - Среднее: {total_km/total_time_hours:.2f} км/ч
-        - Точек данных: {len(df_clean)}
-        - Период: {start_date} по {end_date} (МСК)
+        📍 **Маршрут:** {v_name}
+        🏁 **Пробег:** {total_km:.3f} км (из Traccar сервера)
+        ⏱️ **Время в движении:** {total_time_hours:.2f} часов
+        📊 **Средняя скорость:** {total_km/total_time_hours:.2f} км/ч
+        📡 **Точек данных:** {len(df_clean)}
+        📅 **Период:** {start_date} по {end_date} (МСК)
         """)
             
             
@@ -2093,6 +2166,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
