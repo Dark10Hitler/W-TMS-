@@ -1360,7 +1360,7 @@ elif selected == "Аналитика":
         a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
         return 6371 * 2 * asin(sqrt(a))
 
-    # --- 1. ПАНЕЛЬ УПРАВЛЕНИЯ (СИНХРОНИЗИРОВАННАЯ) ---
+    # --- 2. ПАНЕЛЬ УПРАВЛЕНИЯ ---
     devices_dict, _ = get_detailed_traccar_data()
     
     with st.sidebar:
@@ -1368,15 +1368,13 @@ elif selected == "Аналитика":
         v_name = st.selectbox("🎯 Выберите ТС", options=[d['name'] for d in devices_dict.values()])
         v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
         
-        # Устанавливаем точное время для API (от начала суток до конца)
+        # Интервалы дат
         start_d = st.date_input("Начало периода", datetime.now() - timedelta(days=1))
         end_d = st.date_input("Конец периода", datetime.now())
         
-        if st.button("🔄 СИНХРОНИЗИРОВАТЬ ДАННЫЕ", type="primary", use_container_width=True):
-            st.session_state.audit_results = None # Очистка старых маршрутов
-            
-            with st.spinner("📡 Запрос к Traccar Server..."):
-                # Формируем запрос с учетом времени (полные сутки)
+        if st.button("🔄 ЗАПУСТИТЬ СИНХРОНИЗАЦИЮ", type="primary", use_container_width=True):
+            with st.spinner("📡 Получение данных из БД и API..."):
+                # Формируем время для API
                 iso_start = f"{start_d.strftime('%Y-%m-%d')}T00:00:00Z"
                 iso_end = f"{end_d.strftime('%Y-%m-%d')}T23:59:59Z"
                 
@@ -1391,16 +1389,20 @@ elif selected == "Аналитика":
                             df = pd.DataFrame(raw_data)
                             df['dt'] = pd.to_datetime(df['deviceTime'])
                             
-                            # СИНХРОНИЗАЦИЯ ОДОМЕТРА: вытаскиваем totalDistance из attributes
-                            # Мы берем именно totalDistance, так как это эталон на сервере
-                            def get_total_dist(attr):
-                                return attr.get('totalDistance', attr.get('odometer', 0)) / 1000.0
-                            
-                            df['odo_raw'] = df['attributes'].apply(get_total_dist)
+                            # СИНХРОНИЗАЦИЯ С ТВОЕЙ КОЛОНКОЙ ИЛИ АТРИБУТАМИ
+                            # Проверяем наличие 'odo_km' в ответе (если API его уже отдает) 
+                            # или вытаскиваем из attributes
+                            def sync_odometer(row):
+                                attrs = row.get('attributes', {})
+                                # Приоритет: твоя колонка odo_km > totalDistance > odometer
+                                val = row.get('odo_km') or attrs.get('totalDistance') or attrs.get('odometer', 0)
+                                return float(val) / 1000.0 if val > 1000 else float(val)
+
+                            df['odo_final'] = df.apply(sync_odometer, axis=1)
                             df['speed_kmh'] = round(df['speed'] * 1.852, 1)
                             df['diff_speed'] = df['speed_kmh'].diff().fillna(0)
+                            # Время между точками
                             df['dt_diff_sec'] = df['dt'].diff(-1).dt.total_seconds().abs().fillna(0)
-                            df['date_only'] = df['dt'].dt.date
                             
                             st.session_state.audit_results = {
                                 'df': df.sort_values('dt'),
@@ -1410,100 +1412,114 @@ elif selected == "Аналитика":
                             }
                             st.rerun()
                         else:
-                            st.warning("📭 За этот период данных нет.")
+                            st.warning("📭 Данные за этот период не найдены.")
                     else:
-                        st.error(f"Ошибка сервера: {resp.status_code}")
+                        st.error(f"Ошибка API: {resp.status_code}")
                 except Exception as e:
-                    st.error(f"Ошибка связи: {e}")
+                    st.error(f"Ошибка системы: {e}")
 
-    # --- 2. ВЫВОД ОТЧЕТА ---
+    # --- 3. ВЫВОД ОТЧЕТА (СИНХРОНИЗИРОВАННЫЙ) ---
     if st.session_state.audit_results:
         res = st.session_state.audit_results
-        df_clean = res['df']
+        df = res['df']
         
-        # ТОЧНЫЕ ЦИФРЫ КАК НА СЕРВЕРЕ
-        current_server_odo = df_clean['odo_km'].iloc[-1] # Последняя точка = текущее состояние сервера
-        period_start_odo = df_clean['odo_km'].iloc[0]
-        trip_distance = current_server_odo - period_start_odo
+        # РАСЧЕТЫ ПО ОДОМЕТРУ
+        odo_start = df['odo_final'].iloc[0]
+        odo_end = df['odo_final'].iloc[-1]
+        total_km = odo_end - odo_start
         
-        st.title(f"🛡️ Аудит ТС: {res['v_name']}")
-        st.info(f"📅 Синхронизировано за период: {res['start']} — {res['end']}")
+        # Если одометр на сервере барахлит, считаем по GPS дистанциям
+        if total_km <= 0:
+            total_km = df['attributes'].apply(lambda x: x.get('distance', 0)).sum() / 1000.0
 
-        # ГЛАВНЫЕ МЕТРИКИ (СИНХРОНИЗИРОВАННЫЕ)
+        st.subheader(f"📊 Результаты аудита: {res['v_name']}")
+        
+        # Ряд метрик №1
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🏁 Одометр (SERVER)", f"{current_server_odo:.2f} км", 
-                  delta=f"+{trip_distance:.2f} за период", help="Значение totalDistance из Traccar")
+        m1.metric("🏁 Текущий Одометр", f"{odo_end:.2f} км", help="Последнее значение с сервера")
+        m2.metric("🛣️ Пробег за период", f"{total_km:.2f} км", delta=f"от {odo_start:.1f}")
         
-        # Средний расход на весь пробег периода
-        total_liters = (trip_distance / 100) * 12
-        m2.metric("⛽ Расход за период", f"{total_liters:.1f} л", delta=f"{int(total_liters * 24)} MDL")
+        fuel_consumed = (total_km / 100) * 12 # Твоя норма 12л/100км
+        m3.metric("⛽ Расход (12л/100)", f"{fuel_consumed:.1f} л", delta=f"{int(fuel_consumed * 24)} MDL")
         
-        # Нарушения
-        overspeeds = df_clean[df_clean['speed_kmh'] > 95]
-        m3.metric("⚠️ Нарушения", f"{len(overspeeds)} шт", delta="Превышения > 95", delta_color="inverse")
-        
-        # Время в движении
-        driving_df = df_clean[df_clean['speed_kmh'] > 10]
-        total_sec = driving_df['dt_diff_sec'].sum()
-        m4.metric("⏱️ В движении", f"{int(total_sec // 3600)}ч {int((total_sec % 3600) // 60)}м")
+        overspeeds = df[df['speed_kmh'] > 95]
+        m4.metric("⚠️ Нарушения", f"{len(overspeeds)}", delta="Скорость > 95", delta_color="inverse")
 
-        # --- 3. КАРТА (ТОЛЬКО ВЫБРАННЫЙ ПЕРИОД) ---
+        # --- 4. КАРТА С ФИЛЬТРАЦИЕЙ ---
+        st.write("### 🗺️ Интерактивная карта маршрута")
         import folium
         from streamlit_folium import st_folium
-        from folium.plugins import AntPath
-        
-        st.subheader("🗺️ Маршрут и события")
-        avg_lat, avg_lon = df_clean['latitude'].mean(), df_clean['longitude'].mean()
+        from folium.plugins import AntPath, MarkerCluster
+
+        avg_lat, avg_lon = df['latitude'].mean(), df['longitude'].mean()
         m = folium.Map(location=[avg_lat, avg_lon], zoom_start=13, tiles="cartodbpositron")
         
-        # Рисуем путь
-        path = [[r['latitude'], r['longitude']] for _, r in df_clean.iterrows()]
-        AntPath(path, color='#1E90FF', weight=5, opacity=0.8, delay=1000).add_to(m)
-        
-        # Маркеры нарушений
-        for _, row in df_clean[df_clean['speed_kmh'] > 105].iterrows():
-            folium.CircleMarker([row['latitude'], row['longitude']], radius=7, color='red', fill=True, 
-                                popup=f"СКОРОСТЬ: {row['speed_kmh']}").add_to(m)
-        
-        st_folium(m, width=1300, height=500, key=f"map_{res['v_name']}_{res['start']}")
+        # Траектория
+        points = [[r['latitude'], r['longitude']] for _, r in df.iterrows()]
+        AntPath(points, color='#1E90FF', weight=4, delay=1000).add_to(m)
 
-        # --- 4. СУПЕР-АНАЛИЗ СКОРОСТИ (ДЕТАЛЬНЫЙ) ---
+        # Кластер нарушений
+        mc = MarkerCluster(name="События").add_to(m)
+        for _, row in overspeeds.iterrows():
+            folium.CircleMarker(
+                [row['latitude'], row['longitude']], 
+                radius=5, color='red', fill=True,
+                popup=f"Скорость: {row['speed_kmh']} км/ч"
+            ).add_to(mc)
+
+        # Рендер карты с уникальным ключом для синхронизации
+        st_folium(m, width=1300, height=500, key=f"audit_map_{res['v_name']}_{res['start']}")
+
+        # --- 5. АНАЛИЗ ВОЖДЕНИЯ ---
         st.divider()
-        st.subheader("📈 Детальный анализ скоростного режима")
+        col_left, col_right = st.columns([2, 1])
         
-        import altair as alt
-        # Создаем график с "зумом"
-        chart = alt.Chart(df_clean).mark_area(
-            line={'color':'#29b5e8', 'size': 2},
-            color=alt.Gradient(
-                gradient='linear',
-                stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#29b5e8', offset=1)],
-                x1=1, x2=1, y1=1, y2=0
-            ),
-            opacity=0.3
-        ).encode(
-            x=alt.X('dt:T', title='Точное время'),
-            y=alt.Y('speed_kmh:Q', title='Скорость км/ч', scale=alt.Scale(domain=[0, df_clean['speed_kmh'].max() + 10])),
-            tooltip=['dt', 'speed_kmh']
-        ).properties(height=450).interactive()
-        
-        # Линия порога
-        limit = alt.Chart(pd.DataFrame({'y': [95]})).mark_rule(color='red', strokeDash=[5,5]).encode(y='y:Q')
-        
-        st.altair_chart(chart + limit, use_container_width=True)
+        with col_left:
+            st.write("### 📈 Динамика скорости")
+            import altair as alt
+            chart = alt.Chart(df).mark_area(
+                line={'color':'#29b5e8'},
+                color=alt.Gradient(
+                    gradient='linear',
+                    stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#29b5e8', offset=1)],
+                    x1=1, x2=1, y1=1, y2=0
+                )
+            ).encode(
+                x='dt:T',
+                y=alt.Y('speed_kmh:Q', title="км/ч"),
+                tooltip=['dt', 'speed_kmh']
+            ).properties(height=300).interactive()
+            st.altair_chart(chart, use_container_width=True)
 
-        # --- 5. ТАБЛИЦА АГРЕССИВНЫХ ДЕЙСТВИЙ ---
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.write("🛑 **Резкие торможения**")
-            brakes = df_clean[df_clean['diff_speed'] < -15][['dt', 'speed_kmh', 'diff_speed']]
-            st.dataframe(brakes, use_container_width=True)
-        with col_b:
-            st.write("⚡ **Резкие ускорения**")
-            accels = df_clean[df_clean['diff_speed'] > 15][['dt', 'speed_kmh', 'diff_speed']]
-            st.dataframe(accels, use_container_width=True)
+        with col_right:
+            st.write("### ⏱️ Эффективность")
+            moving = df[df['speed_kmh'] > 5]
+            total_time_sec = moving['dt_diff_sec'].sum()
+            h = int(total_time_sec // 3600)
+            m = int((total_time_sec % 3600) // 60)
+            
+            st.info(f"**В движении:** {h}ч {m}мин")
+            st.success(f"**Средняя скорость:** {round(moving['speed_kmh'].mean(),1)} км/ч")
+            st.warning(f"**Макс. скорость:** {df['speed_kmh'].max()} км/ч")
 
-        if st.button("🗑️ ОЧИСТИТЬ ИСТОРИЮ АУДИТА"):
+        # --- 6. ТАБЛИЦА НАРУШЕНИЙ (СИНХРОНИЗАЦИЯ ПО ВРЕМЕНИ) ---
+        st.write("### 📋 Детализация инцидентов")
+        incidents = df[(df['speed_kmh'] > 95) | (df['diff_speed'].abs() > 15)].copy()
+        incidents['Тип'] = incidents.apply(lambda x: "Превышение" if x['speed_kmh'] > 95 else "Резкий маневр", axis=1)
+        
+        st.dataframe(
+            incidents[['dt', 'speed_kmh', 'diff_speed', 'Тип', 'latitude', 'longitude']],
+            use_container_width=True,
+            column_config={
+                "dt": "Время",
+                "speed_kmh": "Скорость",
+                "diff_speed": "Ускорение",
+                "latitude": "Широта",
+                "longitude": "Долгота"
+            }
+        )
+
+        if st.button("🗑️ СБРОСИТЬ ОТЧЕТ"):
             st.session_state.audit_results = None
             st.rerun()
             
@@ -1857,6 +1873,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
