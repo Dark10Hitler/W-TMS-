@@ -1344,11 +1344,16 @@ elif selected == "ТС":
 
 elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence & Tech Audit")
-    # --- 1. ФУНКЦИЯ СИНХРОНИЗАЦИИ (Исправленная) ---
-    def get_traccar_reports_sync(v_id, s_date, e_date):
-        # Формат ISO 8601 с миллисекундами для точности
-        iso_start = s_date.strftime('%Y-%m-%dT00:00:00Z')
-        iso_end = e_date.strftime('%Y-%m-%dT23:59:59Z')
+    
+    # --- 1. ФУНКЦИЯ СИНХРОНИЗАЦИИ (Автоматический период: последние 24 часа) ---
+    def get_traccar_reports_sync(v_id):
+        # Автоматический расчет интервала: от (сейчас - 24ч) до (сейчас)
+        now = datetime.now()
+        yesterday = now - timedelta(days=1)
+        
+        # Формат ISO 8601 для API Traccar
+        iso_start = yesterday.strftime('%Y-%m-%dT%H:%M:%SZ')
+        iso_end = now.strftime('%Y-%m-%dT%H:%M:%SZ')
         
         api_url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
         params = {
@@ -1358,7 +1363,7 @@ elif selected == "Аналитика":
         }
         headers = {
             "Accept": "application/json",
-            "ngrok-skip-browser-warning": "true" # Пропуск окна Ngrok
+            "ngrok-skip-browser-warning": "true"
         }
         
         try:
@@ -1366,22 +1371,42 @@ elif selected == "Аналитика":
             if resp.status_code == 200:
                 data = resp.json()
                 if not data:
-                    return None, "Данные за этот период не найдены на сервере."
+                    return None, "Данные за последние 24 часа не найдены."
                 return data, None
             return None, f"Ошибка сервера Traccar: {resp.status_code}"
         except Exception as e:
             return None, f"Ошибка соединения: {str(e)}"
 
-    # --- 2. ПАНЕЛЬ УПРАВЛЕНИЯ ---
+    # --- 2. ПАНЕЛЬ УПРАВЛЕНИЯ (БЕЗ ВЫБОРА ПЕРИОДА) ---
     devices_dict, _ = get_detailed_traccar_data()
-    c1, c2, c3 = st.columns([2, 1, 1])
-    with c1:
-        v_name = st.selectbox("🎯 Выберите ТС для аудита", options=[d['name'] for d in devices_dict.values()])
-        v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
-    with c2:
-        start_d = st.date_input("Дата начала", datetime.now() - timedelta(days=1))
-    with c3:
-        end_d = st.date_input("Дата конца", datetime.now())
+    
+    # Оставляем только выбор ТС и кнопку запуска на всю ширину
+    v_name = st.selectbox("🎯 Выберите ТС для мгновенного аудита", 
+                          options=[d['name'] for d in devices_dict.values()])
+    v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
+
+    if st.button("🚀 ЗАПУСТИТЬ ИНЖЕНЕРНЫЙ АУДИТ (24ч)", type="primary", use_container_width=True):
+        with st.spinner(f"Синхронизация систем {v_name}..."):
+            raw_data, error = get_traccar_reports_sync(v_id)
+            
+            if error:
+                st.error(f"🛑 {error}")
+            else:
+                # Превращаем в DataFrame и сохраняем в сессию для отображения
+                import pandas as pd
+                df = pd.DataFrame(raw_data)
+                df['dt'] = pd.to_datetime(df['deviceTime'])
+                df = df.sort_values('dt')
+                
+                # Извлечение тех. данных для расчета расхода
+                df['total_dist_km'] = df['attributes'].apply(lambda x: x.get('totalDistance', 0) / 1000.0)
+                df['speed_kmh'] = round(df['speed'] * 1.852, 1)
+                
+                st.session_state.audit_results = {
+                    'df': df,
+                    'v_name': v_name
+                }
+                st.rerun()
 
     if st.button("📑 ЗАПУСТИТЬ ПОЛНУЮ СИНХРОНИЗАЦИЮ", type="primary", use_container_width=True):
         with st.spinner("🔄 Соединение с Traccar Cloud..."):
@@ -2084,6 +2109,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
