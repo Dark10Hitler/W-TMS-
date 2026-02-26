@@ -1422,8 +1422,8 @@ elif selected == "Аналитика":
         df_clean = res['df']
         
         # ТОЧНЫЕ ЦИФРЫ КАК НА СЕРВЕРЕ
-        current_server_odo = df_clean['odo_raw'].iloc[-1] # Последняя точка = текущее состояние сервера
-        period_start_odo = df_clean['odo_raw'].iloc[0]
+        current_server_odo = df_clean['odo_km'].iloc[-1] # Последняя точка = текущее состояние сервера
+        period_start_odo = df_clean['odo_km'].iloc[0]
         trip_distance = current_server_odo - period_start_odo
         
         st.title(f"🛡️ Аудит ТС: {res['v_name']}")
@@ -1857,6 +1857,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
