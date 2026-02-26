@@ -1331,15 +1331,12 @@ elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence: Глубокий Аудит")
     st.markdown("---")
 
-    # --- 1. ИНИЦИАЛИЗАЦИЯ (чтобы данные не пропадали) ---
-    if 'report_df' not in st.session_state:
-        st.session_state.report_df = None
-    if 'report_info' not in st.session_state:
-        st.session_state.report_info = {}
+    # --- 1. ИНИЦИАЛИЗАЦИЯ (чтобы данные не пропадали при кликах на карту) ---
+    if 'audit_results' not in st.session_state:
+        st.session_state.audit_results = None
 
     # --- 2. ФУНКЦИИ ЗАПРОСА ---
     def get_traccar_data_safe(v_id, s_date, e_date):
-        # Исправляем формат даты: Traccar требует T00:00:00Z
         iso_start = f"{s_date.strftime('%Y-%m-%d')}T00:00:00Z"
         iso_end = f"{e_date.strftime('%Y-%m-%d')}T23:59:59Z"
         
@@ -1350,13 +1347,18 @@ elif selected == "Аналитика":
         try:
             resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
             if resp.status_code == 200:
-                try:
-                    return resp.json(), None
-                except:
-                    return None, "Сервер вернул не JSON (вероятно, ошибка авторизации или базы)"
+                return resp.json(), None
             return None, f"Ошибка сервера: {resp.status_code}"
         except Exception as e:
             return None, f"Ошибка связи: {str(e)}"
+
+    # Функция Haversine для расчета пробега вручную (на случай сбоя одометра)
+    from math import radians, cos, sin, asin, sqrt
+    def haversine(lon1, lat1, lon2, lat2):
+        lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+        dlon, dlat = lon2 - lon1, lat2 - lat1
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        return 6371 * 2 * asin(sqrt(a))
 
     # --- 3. ПАНЕЛЬ УПРАВЛЕНИЯ ---
     devices_dict, _ = get_detailed_traccar_data()
@@ -1371,144 +1373,97 @@ elif selected == "Аналитика":
 
     if st.button("📑 СФОРМИРОВАТЬ ГЛУБОКИЙ ОТЧЕТ", type="primary", use_container_width=True):
         with st.spinner("📡 Проводим аудит данных..."):
-            data, error = get_traccar_data_safe(v_id, start_d, end_d)
+            raw_data, error = get_traccar_data_safe(v_id, start_d, end_d)
             
             if error:
                 st.error(f"🛑 {error}")
-            elif not data:
+            elif not raw_data:
                 st.warning("📭 За этот период точек не найдено.")
             else:
-                # --- 1. ОБРАБОТКА И ОЧИСТКА ДАННЫХ (АНТИ-ГЛЮК) ---
-        df_raw = pd.DataFrame(route_data)
-        if df_raw.empty:
-            st.warning("⚠️ За выбранный период нет данных о перемещении.")
-            st.stop()
+                # --- 4. ОБРАБОТКА И ОЧИСТКА ---
+                df_raw = pd.DataFrame(raw_data)
+                df_raw['dt'] = pd.to_datetime(df_raw['deviceTime'])
+                df_raw['speed_kmh'] = round(df_raw['speed'] * 1.852, 1)
+                df_raw['date_only'] = df_raw['dt'].dt.date
+                df_raw['diff_speed'] = df_raw['speed_kmh'].diff().fillna(0)
 
-        df_raw['dt'] = pd.to_datetime(df_raw['deviceTime'])
-        df_raw['speed_kmh'] = round(df_raw['speed'] * 1.852, 1)
-        df_raw['date_only'] = df_raw['dt'].dt.date
-        df_raw['diff_speed'] = df_raw['speed_kmh'].diff().fillna(0)
+                # Фильтрация GPS-прыжков
+                clean_rows = []
+                for i in range(len(df_raw)):
+                    if i == 0:
+                        dist = 0.0
+                    else:
+                        dist = haversine(df_raw.iloc[i-1]['longitude'], df_raw.iloc[i-1]['latitude'],
+                                         df_raw.iloc[i]['longitude'], df_raw.iloc[i]['latitude'])
+                    
+                    if dist < 7.0: # Игнорируем скачки более 7км между точками
+                        row = df_raw.iloc[i].to_dict()
+                        row['dist_km'] = dist
+                        clean_rows.append(row)
+                
+                # Сохраняем результат в сессию
+                st.session_state.audit_results = {
+                    'df': pd.DataFrame(clean_rows),
+                    'v_name': v_name
+                }
+                st.rerun()
 
-        # Функция расчета расстояния (Haversine)
-        from math import radians, cos, sin, asin, sqrt
-        def haversine(lon1, lat1, lon2, lat2):
-            lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-            dlon, dlat = lon2 - lon1, lat2 - lat1
-            a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-            return 6371 * 2 * asin(sqrt(a))
-
-        # Фильтрация прыжков GPS (> 7 км между точками игнорируем)
-        clean_rows = []
-        first_row = df_raw.iloc[0].copy()
-        first_row['dist_km'] = 0.0
-        clean_rows.append(first_row)
+    # --- 5. ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ (Вне блока кнопки) ---
+    if st.session_state.audit_results:
+        res = st.session_state.audit_results
+        df_clean = res['df']
+        v_name = res['v_name']
         
-        for i in range(1, len(df_raw)):
-            d = haversine(df_raw.iloc[i-1]['longitude'], df_raw.iloc[i-1]['latitude'],
-                          df_raw.iloc[i]['longitude'], df_raw.iloc[i]['latitude'])
-            if d < 7.0: # Если не прыжок, записываем дистанцию
-                new_row = df_raw.iloc[i].copy()
-                new_row['dist_km'] = d
-                clean_rows.append(new_row)
-        
-        df_clean = pd.DataFrame(clean_rows)
         total_km = df_clean['dist_km'].sum()
 
-        # --- 2. ГЛАВНЫЕ МЕТРИКИ ---
+        # Метрики
         st.subheader(f"📊 Итоговый аудит: {v_name}")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("🏁 Итоговый пробег", f"{total_km:.2f} км")
         m2.metric("⛽ Расход (прогноз)", f"{int(total_km * 0.12)} л", delta=f"{int(total_km * 0.12 * 24)} MDL")
         m3.metric("📡 Качество трека", f"{len(df_clean)} точ.")
-        
         overspeeds = df_clean[df_clean['speed_kmh'] > 95]
         m4.metric("⚠️ Нарушения", f"{len(overspeeds)}", delta="Скорость > 95", delta_color="inverse")
 
-        # --- 3. ТАБЛИЦА ПО ДНЯМ ---
+        # Таблица по дням
         daily_report = df_clean.groupby('date_only').agg(
-            Real_Distance=('dist_km', 'sum'),
-            Avg_Speed=('speed_kmh', lambda x: x[x > 5].mean()),
+            Distance=('dist_km', 'sum'),
             Max_Speed=('speed_kmh', 'max'),
-            Points_Count=('dt', 'count')
+            Points=('dt', 'count')
         ).reset_index()
-        daily_report.columns = ['Дата', 'Пробег (км)', 'Ср. скорость', 'Макс. скорость', 'Точек']
+        daily_report.columns = ['Дата', 'Пробег (км)', 'Макс. скорость', 'Точек']
         
         with st.expander("📅 ДЕТАЛИЗАЦИЯ ПО ДНЯМ", expanded=True):
-            st.dataframe(daily_report.round(2), width="stretch", hide_index=True)
+            st.dataframe(daily_report.round(2), use_container_width=True, hide_index=True)
 
-        # --- 4. ТЕХОБСЛУЖИВАНИЕ (Используем одометр из последней точки) ---
-        st.divider()
-        st.subheader("🔧 Состояние узлов")
-        
-        # Безопасное получение одометра
-        last_point_attr = df_clean.iloc[-1].get('attributes', {})
-        last_odo = last_point_attr.get('totalDistance', 0) / 1000
-        
-        if last_odo == 0: # Если в атрибутах пусто, считаем по пробегу трека
-            last_odo = total_km 
-
-        m_items = [("🛢️ Масло", 10000), ("🛑 Колодки", 30000), ("🧪 Фильтры", 15000), ("⚙️ ГРМ", 80000)]
-        cols = st.columns(4)
-        for i, (name, limit) in enumerate(m_items):
-            with cols[i]:
-                rem = limit - (last_odo % limit)
-                perc = max(0, min(100, int((rem/limit)*100)))
-                st.write(f"**{name}**")
-                st.metric("Осталось", f"{int(rem)} км")
-                st.progress(perc / 100)
-
-        # --- 5. КАРТА (ТОЧНАЯ И ОЧИЩЕННАЯ) ---
+        # Карта
         st.subheader("🗺️ Геопространственный аудит")
         import folium
         from streamlit_folium import st_folium
         
-        m = folium.Map(location=[df_clean['latitude'].mean(), df_clean['longitude'].mean()], zoom_start=13)
+        avg_lat, avg_lon = df_clean['latitude'].mean(), df_clean['longitude'].mean()
+        m = folium.Map(location=[avg_lat, avg_lon], zoom_start=12)
         path_points = [[r['latitude'], r['longitude']] for _, r in df_clean.iterrows()]
         
-        # Рисуем путь сплошной линией
         folium.PolyLine(path_points, color="#1E90FF", weight=5, opacity=0.8).add_to(m)
-        folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play'), tooltip="Старт").add_to(m)
-        folium.Marker(path_points[-1], icon=folium.Icon(color='red', icon='flag'), tooltip="Финиш").add_to(m)
+        folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
+        folium.Marker(path_points[-1], icon=folium.Icon(color='red', icon='flag')).add_to(m)
         
-        st_folium(m, width=1300, height=600)
+        st_folium(m, width=1300, height=500, key="audit_map")
 
-        # --- 6. ГРАФИК И КАЧЕСТВО ВОЖДЕНИЯ ---
-        st.divider()
+        # График скорости
         st.subheader("📈 Анализ скоростного режима")
         import altair as alt
-        
-        chart = alt.Chart(df_clean).mark_area(
-            line={'color':'#29b5e8'},
-            color=alt.Gradient(
-                gradient='linear',
-                stops=[alt.GradientStop(color='white', offset=0),
-                       alt.GradientStop(color='#29b5e8', offset=1)],
-                x1=1, x2=1, y1=1, y2=0
-            ),
-            opacity=0.3
-        ).encode(
+        chart = alt.Chart(df_clean).mark_area(opacity=0.3, color='#29b5e8').encode(
             x=alt.X('dt:T', title='Время'),
             y=alt.Y('speed_kmh:Q', title='Скорость (км/ч)'),
             tooltip=['dt', 'speed_kmh']
-        ).properties(width="stretch", height=400).interactive()
-        
+        ).properties(width="stretch", height=300).interactive()
         st.altair_chart(chart, use_container_width=True)
 
-        # Итоговая панель качества
-        st.markdown("#### 🔍 Сводка по водителю")
-        s1, s2, s3, s4 = st.columns(4)
-        max_v = df_clean['speed_kmh'].max()
-        with s1:
-            st.metric("🚀 Максимум", f"{max_v} км/ч")
-        with s2:
-            real_avg = round(df_clean[df_clean.speed_kmh > 5]['speed_kmh'].mean(), 1)
-            st.metric("⏱️ Ср. в движении", f"{real_avg} км/ч")
-        with s3:
-            aggressive = len(df_clean[df_clean['diff_speed'].abs() > 15])
-            st.metric("📉 Резкие маневры", f"{aggressive}")
-        with s4:
-            status = "Критично" if max_v > 105 else "Норма"
-            st.metric("🛡️ Статус", status, delta="Требует внимания" if status == "Критично" else "ОК", delta_color="inverse" if status == "Критично" else "normal")
+        if st.button("🗑️ СБРОСИТЬ ОТЧЕТ"):
+            st.session_state.audit_results = None
+            st.rerun()
             
 elif selected == "База Данных":
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
@@ -1860,6 +1815,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
