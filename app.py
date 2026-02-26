@@ -36,6 +36,39 @@ import json
 from geopy.geocoders import Nominatim # Для получения адреса по координатам
 import math
 
+
+from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderTimedOut, GeocoderServiceError
+
+# Инициализация геокодера (User_agent обязателен!)
+geolocator = Nominatim(user_agent="imperia_logistics_monitor_2026")
+
+@st.cache_data(ttl=3600)  # Кэшируем адрес на 1 час для одних и тех же координат
+def get_address_cached(lat, lon):
+    """
+    Преобразует координаты в читаемый адрес с кэшированием.
+    """
+    if lat is None or lon is None:
+        return "Координаты отсутствуют"
+        
+    try:
+        # Округляем до 4 знаков (точность ~11 метров), чтобы улучшить попадание в кэш
+        location = geolocator.reverse((lat, lon), timeout=3, language='ru')
+        if location:
+            # Извлекаем только важную часть адреса (улица, номер, город)
+            address = location.address
+            # Можно сократить адрес, если он слишком длинный
+            parts = address.split(', ')
+            short_address = ", ".join(parts[:3]) 
+            return short_address
+        return "Адрес не определен"
+        
+    except (GeocoderTimedOut, GeocoderServiceError):
+        # Если сервис недоступен, возвращаем координаты, чтобы приложение не падало
+        return f"📍 {lat:.4f}, {lon:.4f} (Ошибка связи)"
+    except Exception as e:
+        return "Ошибка геокодирования"
+        
 def upload_driver_photo(file):
     from database import supabase
     import time
@@ -2100,6 +2133,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
