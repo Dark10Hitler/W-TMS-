@@ -1541,33 +1541,96 @@ elif selected == "Аналитика":
         # Рендерим карту
         st_folium(m, width=1300, height=600, key="audit_map_premium")
 
-        # --- 6. ГРАФИК СКОРОСТИ (ИСПРАВЛЕННЫЙ) ---
+        # --- 6. ДЕТАЛЬНЫЙ АНАЛИЗ НАРУШЕНИЙ И ТАЙМИНГОВ ---
         st.divider()
-        st.subheader("📈 Анализ скоростного режима")
-        import altair as alt
-        
-        # Исправлено: ширина установлена в 'container' для валидности схемы
-        chart = alt.Chart(df_clean).mark_area(
-            line={'color':'#29b5e8'},
-            color=alt.Gradient(
-                gradient='linear',
-                stops=[alt.GradientStop(color='white', offset=0),
-                       alt.GradientStop(color='#29b5e8', offset=1)],
-                x1=1, x2=1, y1=1, y2=0
-            ),
-            opacity=0.3
-        ).encode(
-            x=alt.X('dt:T', title='Время'),
-            y=alt.Y('speed_kmh:Q', title='Скорость (км/ч)'),
-            tooltip=[alt.Tooltip('dt:T', title='Время'), alt.Tooltip('speed_kmh:Q', title='Скорость')]
-        ).properties(width='container', height=400).interactive()
-        
-        limit_line = alt.Chart(pd.DataFrame({'y': [95]})).mark_rule(color='red', strokeDash=[5, 5]).encode(y='y:Q')
-        
-        # Отрисовка с явным указанием ширины контейнера
-        st.altair_chart(chart + limit_line, use_container_width=True)
+        st.subheader("📋 Сводный отчет по качеству вождения")
 
-        if st.button("🗑️ СБРОСИТЬ ОТЧЕТ"):
+        # Расчет метрик
+        max_speed = df_clean['speed_kmh'].max()
+        overspeeds_count = len(overspeeds)
+        brakes_count = len(hard_brakes)
+        accels_count = len(hard_accels)
+        
+        # Расчет времени в движении (скорость > 10 км/ч)
+        # Суммируем разницу во времени между точками, где была скорость
+        driving_df = df_clean[df_clean['speed_kmh'] > 10]
+        total_seconds = driving_df['dt_diff_sec'].sum()
+        hours = int(total_seconds // 3600)
+        minutes = int((total_seconds % 3600) // 60)
+        driving_time_str = f"{hours}ч {minutes}мин"
+
+        # Визуальные плашки (Метрики)
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.metric("⏱️ Время в пути", driving_time_str, help="Чистое время движения со скоростью > 10 км/ч")
+        with m2:
+            st.metric("🚀 Пиковая скорость", f"{max_speed} км/ч", 
+                      delta=f"{max_speed - 90} км/ч" if max_speed > 90 else None, 
+                      delta_color="inverse")
+        with m3:
+            st.metric("🛑 Резкие торможения", f"{brakes_count} шт", 
+                      delta="Критично" if brakes_count > 5 else "ОК", 
+                      delta_color="inverse" if brakes_count > 5 else "normal")
+        with m4:
+            st.metric("⚡ Резкие старты", f"{accels_count} шт")
+
+        # --- 7. ГРАФИК СКОРОСТИ (ULTRA DETAILED) ---
+        st.markdown("### 📈 Детальный график скоростного режима")
+        import altair as alt
+
+        # Создаем основной график (площадь)
+        base = alt.Chart(df_clean).encode(
+            x=alt.X('dt:T', title='Хронология (Время)', axis=alt.Axis(format='%H:%M', grid=True))
+        )
+
+        # 1. Линия скорости (делаем её жирной и заметной)
+        line = base.mark_line(color='#29b5e8', size=3, interpolate='monotone').encode(
+            y=alt.Y('speed_kmh:Q', title='Скорость (км/ч)', scale=alt.Scale(domain=[0, max(110, max_speed + 10)]))
+        )
+
+        # 2. Подсвечиваем точки превышения (Красные точки там, где > 95)
+        danger_points = base.mark_point(color='red', size=60, filled=True).encode(
+            y='speed_kmh:Q',
+            tooltip=[
+                alt.Tooltip('dt:T', title='Время'),
+                alt.Tooltip('speed_kmh:Q', title='Скорость'),
+                alt.Tooltip('diff_speed:Q', title='Ускорение/Торм.')
+            ]
+        ).transform_filter(alt.datum.speed_kmh > 95)
+
+        # 3. Линия лимита (Красный пунктир)
+        limit_line = alt.Chart(pd.DataFrame({'y': [95]})).mark_rule(
+            color='red', 
+            strokeDash=[5, 5], 
+            size=2
+        ).encode(y='y:Q')
+
+        # 4. Текстовая метка лимита
+        limit_label = limit_line.mark_text(
+            align='left', dx=5, dy=-10, text='Лимит 95 км/ч', color='red'
+        ).encode(x=alt.value(0)) # Прижимаем к левому краю
+
+        # Собираем всё в один большой график
+        final_chart = (line + danger_points + limit_line + limit_label).properties(
+            width='container',
+            height=500,  # Увеличили высоту для детальности
+            title=f"Телеметрия скорости ТС: {v_name}"
+        ).interactive()
+
+        st.altair_chart(final_chart, use_container_width=True)
+
+        # --- 8. ТАБЛИЦА НАРУШЕНИЙ ---
+        if overspeeds_count > 0 or brakes_count > 0:
+            with st.expander("⚠️ РЕЕСТР КРИТИЧЕСКИХ СОБЫТИЙ", expanded=False):
+                # Собираем все аномалии в одну таблицу
+                anomalies = df_clean[(df_clean['speed_kmh'] > 95) | (df_clean['diff_speed'].abs() > 15)].copy()
+                anomalies['Тип'] = anomalies.apply(
+                    lambda x: "Превышение" if x['speed_kmh'] > 95 else ("Резкое торможение" if x['diff_speed'] < -15 else "Резкий старт"), 
+                    axis=1
+                )
+                st.table(anomalies[['dt', 'speed_kmh', 'diff_speed', 'Тип']].tail(20))
+
+        if st.button("🗑️ ОЧИСТИТЬ ВСЕ ДАННЫЕ АУДИТА"):
             st.session_state.audit_results = None
             st.rerun()
             
@@ -1921,6 +1984,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
