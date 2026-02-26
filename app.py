@@ -1494,8 +1494,10 @@ elif selected == "Аналитика":
                 <i class="fa fa-pause" style="color: blue; width: 20px;"></i> Остановка (> 5 мин)
             </div>
         </div>
-        {% end macro %}
+        {% endmacro %}
         '''
+        # ^^^ ЗДЕСЬ ИСПРАВЛЕН ПРОБЕЛ: endmacro слитно!
+        
         macro = MacroElement()
         macro._template = Template(legend_html)
         m.get_root().add_child(macro)
@@ -1881,6 +1883,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
