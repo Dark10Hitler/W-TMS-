@@ -1344,16 +1344,6 @@ elif selected == "ТС":
 
 elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence & Tech Audit")
-    
-    # 1. Загрузка данных
-    devices, _ = get_detailed_traccar_data()
-    v_name = st.selectbox("🔍 Выберите ТС для глубокого анализа", options=[d['name'] for d in devices.values()])
-    v_id = [id for id, d in devices.items() if d['name'] == v_name][0]
-
-    col_t1, col_t2 = st.columns(2)
-    start_date = col_t1.date_input("Начало анализа", datetime.now() - timedelta(days=1))
-    end_date = col_t2.date_input("Конец анализа", datetime.now())
-
     # --- 1. ФУНКЦИЯ СИНХРОНИЗАЦИИ (Исправленная) ---
     def get_traccar_reports_sync(v_id, s_date, e_date):
         # Формат ISO 8601 с миллисекундами для точности
@@ -1452,49 +1442,127 @@ elif selected == "Аналитика":
         overspeeds = len(df[df['speed_kmh'] > 90])
         m4.metric("⚠️ Нарушения", overspeeds, delta="Скорость > 90", delta_color="inverse")
 
-        # --- КАРТА С ФИЛЬТРОМ ПЕРИОДА ---
+        # --- БЛОК УЛУЧШЕННОЙ КАРТЫ (PREMIUM AUDIT) ---
         import folium
         from streamlit_folium import st_folium
-        from folium.plugins import AntPath
+        from folium.plugins import MarkerCluster, AntPath, Fullscreen
+        from branca.element import Template, MacroElement
 
-        st.markdown("### 🗺️ Фактическая траектория за период")
-        
-        # Центрируем карту по маршруту
-        m = folium.Map(location=[df['latitude'].mean(), df['longitude'].mean()], zoom_start=13, tiles="cartodbpositron")
-        
-        # Отрисовка пути
+        st.markdown("### 🗺️ Детальный гео-аудит маршрута")
+
+        # 1. Центрирование и база
+        avg_lat, avg_lon = df['latitude'].mean(), df['longitude'].mean()
+        m = folium.Map(location=[avg_lat, avg_lon], zoom_start=13, tiles="cartodbpositron", control_scale=True)
+        Fullscreen().add_to(m)
+
+        # 2. Отрисовка траектории (AntPath)
         path_points = df[['latitude', 'longitude']].values.tolist()
-        AntPath(locations=path_points, color="#0078ff", weight=5, opacity=0.8, delay=1000).add_to(m)
+        AntPath(
+            locations=path_points,
+            color="#1E90FF",
+            pulse_color="#ffffff",
+            weight=4,
+            opacity=0.7,
+            delay=1000,
+            tooltip="Маршрут движения ТС"
+        ).add_to(m)
 
-        # Маркеры критических событий
-        for _, row in df[df['speed_kmh'] > 100].iterrows():
-            folium.CircleMarker([row['latitude'], row['longitude']], radius=7, color='red', fill=True, 
-                               popup=f"Скорость: {row['speed_kmh']} км/ч").add_to(m)
+        # 3. Подготовка кластеров для нарушений
+        # icon_create_function=None задействует стандартные красивые кластеры (синий/желтый/оранжевый)
+        marker_cluster = MarkerCluster(name="Группы нарушений", control=True).add_to(m)
 
-        st_folium(m, width=1300, height=500, key="sync_map")
+        # --- ЛОГИКА СОБЫТИЙ ---
+        
+        # А. Превышения скорости (> 90 км/ч)
+        overspeeds = df[df['speed_kmh'] > 90]
+        for _, row in overspeeds.iterrows():
+            folium.Marker(
+                location=[row['latitude'], row['longitude']],
+                icon=folium.Icon(color='orange', icon='gauge-high', prefix='fa'),
+                popup=f"<b>Превышение:</b> {row['speed_kmh']} км/ч<br>Время: {row['dt'].strftime('%H:%M:%S')}",
+                tooltip="Скорость"
+            ).add_to(marker_cluster)
 
-        # --- АНАЛИЗ ИЗНОСА (СУПЕР-АНАЛИЗ) ---
-        st.divider()
-        st.subheader("🛠️ Анализ технического состояния и износа")
+        # Б. Резкие маневры (Торможение и ускорение)
+        # Считаем разницу скоростей между соседними точками
+        df['speed_delta'] = df['speed_kmh'].diff().fillna(0)
         
-        # Считаем резкие перепады (ускорение/торможение)
-        df['accel'] = df['speed_kmh'].diff().fillna(0)
-        hard_brakes = len(df[df['accel'] < -15])
-        hard_accels = len(df[df['accel'] > 15])
+        # Резкое торможение (падение > 18 км/ч за шаг)
+        brakes = df[df['speed_delta'] < -18]
+        for _, row in brakes.iterrows():
+            folium.Marker(
+                location=[row['latitude'], row['longitude']],
+                icon=folium.Icon(color='red', icon='triangle-exclamation', prefix='fa'),
+                popup=f"<b>Резкий тормоз!</b><br>Сброс: {row['speed_delta']:.1f} км/ч",
+            ).add_to(marker_cluster)
+
+        # Резкий старт (прирост > 15 км/ч за шаг)
+        accels = df[df['speed_delta'] > 15]
+        for _, row in accels.iterrows():
+            folium.Marker(
+                location=[row['latitude'], row['longitude']],
+                icon=folium.Icon(color='darkpurple', icon='bolt', prefix='fa'),
+                popup=f"<b>Агрессивный старт</b><br>Прирост: +{row['speed_delta']:.1f} км/ч",
+            ).add_to(marker_cluster)
+
+        # В. Остановки и Стоянки (> 5 минут)
+        # Группируем последовательные точки со скоростью 0
+        df['is_stopped'] = df['speed_kmh'] < 2
+        df['stop_group'] = (df['is_stopped'] != df['is_stopped'].shift()).cumsum()
         
-        col_a, col_b = st.columns(2)
-        
-        with col_a:
-            st.write("**🚨 Оценка агрессивности вождения**")
-            score = max(0, 100 - (hard_brakes * 2) - (overspeeds * 0.5))
-            st.progress(score / 100)
-            st.caption(f"Резких торможений: {hard_brakes} | Резких стартов: {hard_accels}")
-            
-        with col_b:
-            st.write("**🔧 Прогноз до ТО**")
-            to_limit = 10000
-            remains = to_limit - (current_total_odo % to_limit)
-            st.info(f"До следующего регламентного ТО (масло/фильтры) осталось: **{int(remains)} км**")
+        stops_summary = df[df['is_stopped']].groupby('stop_group').agg({
+            'dt': ['min', 'max'],
+            'latitude': 'first',
+            'longitude': 'first'
+        })
+
+        for _, stop in stops_summary.iterrows():
+            duration = (stop[('dt', 'max')] - stop[('dt', 'min')]).total_seconds() / 60
+            if duration >= 5: # Только если стояли дольше 5 минут
+                folium.Marker(
+                    location=[stop[('latitude', 'first')], stop[('longitude', 'first')]],
+                    icon=folium.Icon(color='blue', icon='clock', prefix='fa'),
+                    popup=f"<b>Длительная стоянка</b><br>Длительность: {int(duration)} мин.<br>Начало: {stop[('dt', 'min')].strftime('%H:%M')}",
+                    tooltip="Стоянка"
+                ).add_to(m)
+
+        # Г. Старт и Финиш
+        folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play', prefix='fa'), tooltip="Точка выхода на маршрут").add_to(m)
+        folium.Marker(path_points[-1], icon=folium.Icon(color='black', icon='flag-checkered', prefix='fa'), tooltip="Последняя позиция").add_to(m)
+
+        # 4. ПРЕМИАЛЬНАЯ ЛЕГЕНДА С ЧЕРНЫМ ТЕКСТОМ
+        legend_html = '''
+        {% macro html(this, kwargs) %}
+        <div style="position: fixed; 
+                    bottom: 30px; left: 30px; width: 260px; height: auto; 
+                    background-color: white; border: 2px solid #2c3e50; border-radius: 10px; 
+                    z-index:9999; font-size:14px; padding: 12px;
+                    box-shadow: 2px 2px 15px rgba(0,0,0,0.3);
+                    font-family: 'Arial', sans-serif;
+                    color: black !important;">
+            <p style="margin: 0 0 8px 0; font-weight: bold; border-bottom: 1px solid #ccc; padding-bottom: 5px; color: black;">
+                🔍 Легенда аудита
+            </p>
+            <div style="line-height: 1.8; color: black;">
+                <i class="fa fa-minus" style="color: #1E90FF; margin-right: 8px;"></i> <span style="color: black;">Маршрут (AntPath)</span><br>
+                <i class="fa fa-circle" style="color: #3498db; margin-right: 8px;"></i> <span style="color: black;">Кластер нарушений (Цифра)</span><br>
+                <i class="fa fa-gauge-high" style="color: orange; margin-right: 8px;"></i> <span style="color: black;">Скорость > 90 км/ч</span><br>
+                <i class="fa fa-triangle-exclamation" style="color: #e74c3c; margin-right: 8px;"></i> <span style="color: black;">Резкое торможение</span><br>
+                <i class="fa fa-bolt" style="color: #9b59b6; margin-right: 8px;"></i> <span style="color: black;">Резкое ускорение</span><br>
+                <i class="fa fa-clock" style="color: #2980b9; margin-right: 8px;"></i> <span style="color: black;">Стоянка (> 5 мин)</span>
+            </div>
+            <p style="margin: 8px 0 0 0; font-size: 11px; color: #666; font-style: italic;">
+                * Кликните на цифру для раскрытия группы
+            </p>
+        </div>
+        {% endmacro %}
+        '''
+        macro = MacroElement()
+        macro._template = Template(legend_html)
+        m.get_root().add_child(macro)
+
+        # Рендеринг
+        st_folium(m, width=1300, height=600, key="audit_premium_map")
 
         # График скорости
         st.markdown("### 📈 Пульс рейса (Скорость/Время)")
@@ -1855,6 +1923,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
