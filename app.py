@@ -1374,7 +1374,6 @@ elif selected == "Аналитика":
         
         if st.button("🔄 ЗАПУСТИТЬ СИНХРОНИЗАЦИЮ", type="primary", use_container_width=True):
             with st.spinner("📡 Получение данных из БД и API..."):
-                # Формируем время для API
                 iso_start = f"{start_d.strftime('%Y-%m-%d')}T00:00:00Z"
                 iso_end = f"{end_d.strftime('%Y-%m-%d')}T23:59:59Z"
                 
@@ -1389,19 +1388,23 @@ elif selected == "Аналитика":
                             df = pd.DataFrame(raw_data)
                             df['dt'] = pd.to_datetime(df['deviceTime'])
                             
-                            # СИНХРОНИЗАЦИЯ С ТВОЕЙ КОЛОНКОЙ ИЛИ АТРИБУТАМИ
-                            # Проверяем наличие 'odo_km' в ответе (если API его уже отдает) 
-                            # или вытаскиваем из attributes
-                            def sync_odometer(row):
+                            # --- ВОТ ТУТ РЕШЕНИЕ ПРОБЛЕМЫ KeyError ---
+                            def extract_odometer_safe(row):
+                                # 1. Пытаемся взять напрямую (если колонка пришла из SQL/API)
+                                if 'odo_km' in row and pd.notnull(row['odo_km']):
+                                    return float(row['odo_km'])
+                                
+                                # 2. Если колонки нет, лезем в attributes (стандарт Traccar)
                                 attrs = row.get('attributes', {})
-                                # Приоритет: твоя колонка odo_km > totalDistance > odometer
-                                val = row.get('odo_km') or attrs.get('totalDistance') or attrs.get('odometer', 0)
-                                return float(val) / 1000.0 if val > 1000 else float(val)
+                                # Берем totalDistance (метры) и превращаем в КМ
+                                val = attrs.get('totalDistance') or attrs.get('odometer') or 0
+                                return float(val) / 1000.0
 
-                            df['odo_final'] = df.apply(sync_odometer, axis=1)
+                            # Создаем колонку odo_final ГАРАНТИРОВАННО
+                            df['odo_final'] = df.apply(extract_odometer_safe, axis=1)
+                            
                             df['speed_kmh'] = round(df['speed'] * 1.852, 1)
                             df['diff_speed'] = df['speed_kmh'].diff().fillna(0)
-                            # Время между точками
                             df['dt_diff_sec'] = df['dt'].diff(-1).dt.total_seconds().abs().fillna(0)
                             
                             st.session_state.audit_results = {
@@ -1411,12 +1414,6 @@ elif selected == "Аналитика":
                                 'end': end_d
                             }
                             st.rerun()
-                        else:
-                            st.warning("📭 Данные за этот период не найдены.")
-                    else:
-                        st.error(f"Ошибка API: {resp.status_code}")
-                except Exception as e:
-                    st.error(f"Ошибка системы: {e}")
 
     # --- 3. ВЫВОД ОТЧЕТА (СИНХРОНИЗИРОВАННЫЙ) ---
     if st.session_state.audit_results:
@@ -1873,6 +1870,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
