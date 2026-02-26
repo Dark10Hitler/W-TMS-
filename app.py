@@ -1412,8 +1412,8 @@ elif selected == "Аналитика":
         v_name = res['v_name']
         
         # 1. РАСЧЕТ ПРОБЕГА ПО ОДОМЕТРУ СЕРВЕРА (Разница между концом и началом периода)
-        start_odo = df_clean['total_distance_km'].iloc[0]
-        end_odo = df_clean['total_distance_km'].iloc[-1]
+        start_odo = df_clean['odo_km'].iloc[0]
+        end_odo = df_clean['odo_km'].iloc[-1]
         total_km = end_odo - start_odo
         
         # Если одометр сбросился или некорректен (меньше 0), страхуемся суммой дистанций
@@ -1951,6 +1951,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
