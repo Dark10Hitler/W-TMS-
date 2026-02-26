@@ -1330,8 +1330,9 @@ elif selected == "ТС":
 elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence: Глубокий Аудит (Server Side)")
     st.markdown("---")
-
-    # --- API FUNCTIONS ---
+    
+    # --- ТЕХНИЧЕСКИЕ ФУНКЦИИ (БЕЗ СОКРАЩЕНИЙ) ---
+    # --- ТЕХНИЧЕСКИЕ ФУНКЦИИ (С АКТИВНОЙ ДИАГНОСТИКОЙ) ---
     def get_traccar_summary(v_id, start, end):
         url = f"{TRACCAR_URL.rstrip('/')}/api/reports/summary"
         params = {
@@ -1340,19 +1341,17 @@ elif selected == "Аналитика":
             "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z",
             "daily": "true"
         }
-        headers = {
-            'ngrok-skip-browser-warning': 'true',
-            'Accept': 'application/json'
-        }
-
+        headers = {'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json'}
         try:
             resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
             if resp.status_code == 200:
                 return resp.json()
-            st.error(f"🛑 Ошибка Summary API ({resp.status_code}): {resp.text}")
+            else:
+                st.error(f"🛑 Ошибка Summary API (Код {resp.status_code}): {resp.text}")
+                return []
         except Exception as e:
             st.error(f"🛑 Сетевая ошибка Summary: {e}")
-        return []
+            return []
 
     def get_traccar_route(v_id, start, end):
         url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
@@ -1361,115 +1360,332 @@ elif selected == "Аналитика":
             "from": f"{start.strftime('%Y-%m-%d')}T00:00:00Z",
             "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z"
         }
-        headers = {
-            'ngrok-skip-browser-warning': 'true',
-            'Accept': 'application/json'
-        }
-
+        headers = {'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json'}
         try:
             resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
             if resp.status_code == 200:
                 return resp.json()
-            st.error(f"🛑 Ошибка Route API ({resp.status_code}): {resp.text}")
+            else:
+                st.error(f"🛑 Ошибка Route API (Код {resp.status_code}): {resp.text}")
+                return []
         except Exception as e:
             st.error(f"🛑 Сетевая ошибка Route: {e}")
-        return []
+            return []
 
-    # --- UI ---
+    def get_traccar_route(v_id, start, end):
+        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
+        params = {
+            "deviceId": v_id,
+            "from": f"{start.strftime('%Y-%m-%d')}T00:00:00Z",
+            "to": f"{end.strftime('%Y-%m-%d')}T23:59:59Z"
+        }
+        headers = {'ngrok-skip-browser-warning': 'true'}
+        try:
+            resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
+            return resp.json() if resp.status_code == 200 else []
+        except:
+            return []
+
+    # --- ИНТЕРФЕЙС ВЫБОРА ---
     devices_dict, _ = get_detailed_traccar_data()
-
-    col1, col2, col3 = st.columns([2, 1, 1])
-
-    with col1:
-        v_name = st.selectbox("🎯 ТС для аудита", [d['name'] for d in devices_dict.values()])
-        v_id = next((i for i, d in devices_dict.items() if d['name'] == v_name), None)
-
-    with col2:
+    
+    col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
+    with col_v1:
+        v_name = st.selectbox("🎯 ТС для аудита", options=[d['name'] for d in devices_dict.values()])
+        v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
+    with col_v2:
         start_date = st.date_input("Дата начала", datetime.now() - timedelta(days=3))
-
-    with col3:
+    with col_v3:
         end_date = st.date_input("Дата конца", datetime.now())
 
     if st.button("📑 СФОРМИРОВАТЬ ПОЛНЫЙ ОТЧЕТ", type="primary", use_container_width=True):
         st.session_state.show_report = True
 
-    if not st.session_state.get("show_report"):
-        st.stop()
+    if st.session_state.get('show_report'):
+        with st.spinner('📡 Глубокое сканирование данных сервера...'):
+            summary_data = get_traccar_summary(v_id, start_date, end_date)
+            route_data = get_traccar_route(v_id, start_date, end_date)
 
-    # --- LOAD DATA ---
-    with st.spinner("📡 Загрузка данных..."):
-        summary_data = get_traccar_summary(v_id, start_date, end_date)
-        route_data = get_traccar_route(v_id, start_date, end_date)
+        if not summary_data or not route_data:
+            st.error("❌ Сервер не вернул данные. Проверьте выбранный период.")
+            st.stop()
 
-    if not summary_data or not route_data:
-        st.error("❌ Сервер не вернул данные. Проверьте выбранный период.")
-        st.stop()
+        summary_df = pd.DataFrame(summary_data)
+        summary_df['distance_km'] = round(summary_df['distance'] / 1000, 2)
+        summary_df['spent_fuel'] = round(summary_df.get('spentFuel', summary_df['distance_km'] * 0.12), 1)
+        summary_df['engine_hours'] = round(summary_df['engineHours'] / 3600000, 1)
+        summary_df['day_label'] = pd.to_datetime(summary_df['startTime']).dt.strftime('%d.%m.%Y')
+        
+        df_route = pd.DataFrame(route_data)
+        df_route['dt'] = pd.to_datetime(df_route['deviceTime'])
+        df_route['speed_kmh'] = round(df_route['speed'] * 1.852, 1)
+        df_route['date_only'] = df_route['dt'].dt.date
+        df_route['diff_speed'] = df_route['speed_kmh'].diff().fillna(0)
 
-    # --- DATA PREP ---
-    summary_df = pd.DataFrame(summary_data)
-    summary_df["distance_km"] = summary_df["distance"] / 1000
-    summary_df["spent_fuel"] = summary_df.get("spentFuel", summary_df["distance_km"] * 0.12)
-    summary_df["engine_hours"] = summary_df["engineHours"] / 3600000
-    summary_df["day"] = pd.to_datetime(summary_df["startTime"]).dt.date
+        from math import radians, cos, sin, asin, sqrt
+        def haversine(lon1, lat1, lon2, lat2):
+            lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+            dlon, dlat = lon2 - lon1, lat2 - lat1
+            a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+            return 6371 * 2 * asin(sqrt(a))
 
-    df = pd.DataFrame(route_data)
-    df["dt"] = pd.to_datetime(df["deviceTime"])
-    df["speed_kmh"] = df["speed"] * 1.852
-    df["diff_speed"] = df["speed_kmh"].diff().fillna(0)
-    df["date"] = df["dt"].dt.date
+        step_distances = [0.0]
+        for i in range(1, len(df_route)):
+            d = haversine(
+                df_route.iloc[i-1]['longitude'], df_route.iloc[i-1]['latitude'],
+                df_route.iloc[i]['longitude'], df_route.iloc[i]['latitude']
+            )
+            step_distances.append(d if d > 0.03 else 0.0)
+        
+        df_route['dist_km'] = step_distances
+        total_km = df_route['dist_km'].sum()
 
-    # --- HAVERSINE ---
-    from math import radians, sin, cos, sqrt, asin
+        daily_report = df_route.groupby('date_only').agg(
+            Real_Distance=('dist_km', 'sum'),
+            Avg_Speed=('speed_kmh', lambda x: x[x > 5].mean()),
+            Max_Speed=('speed_kmh', 'max'),
+            Points_Count=('dt', 'count')
+        ).reset_index()
+        
+        daily_report.columns = ['Дата', 'Пробег (км)', 'Ср. скорость (км/ч)', 'Макс. скорость (км/ч)', 'Точек GPS']
+        daily_report = daily_report.round(2).fillna(0)
 
-    def haversine(lon1, lat1, lon2, lat2):
-        lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-        dlon, dlat = lon2 - lon1, lat2 - lat1
-        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-        return 6371 * 2 * asin(sqrt(a))
+        st.subheader(f"📊 Итоговый аудит: {v_name}")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("🏁 Итоговый пробег", f"{total_km:.2f} км")
+        m2.metric("⛽ Расход (прогноз)", f"{int(total_km * 0.12)} л", delta=f"{int(total_km * 0.12 * 24)} MDL")
+        m3.metric("📡 Качество трека", f"{len(df_route)} точ.", help="Чем больше точек, тем точнее карта")
+        
+        overspeeds = df_route[df_route['speed_kmh'] > 95]
+        m4.metric("⚠️ Нарушения", f"{len(overspeeds)}", delta="Превышения", delta_color="inverse")
 
-    distances = [0]
-    for i in range(1, len(df)):
-        d = haversine(
-            df.iloc[i-1]["longitude"], df.iloc[i-1]["latitude"],
-            df.iloc[i]["longitude"], df.iloc[i]["latitude"]
-        )
-        distances.append(d if d > 0.03 else 0)
+        with st.expander("📅 ПОДРОБНАЯ ДЕТАЛИЗАЦИЯ ПО ДНЯМ (СИНХРОНИЗИРОВАНО)", expanded=True):
+            st.dataframe(
+                daily_report.style.background_gradient(subset=['Пробег (км)'], cmap='Blues'),
+                use_container_width=True,
+                hide_index=True
+            )
 
-    df["dist_km"] = distances
-    total_km = df["dist_km"].sum()
+        st.divider()
+        st.subheader("🔧 Состояние узлов и агрегатов")
+        
+        last_odo = df_route.iloc[-1].get('attributes', {}).get('totalDistance', 0) / 1000
+        
+        m_items = [("🛢️ Масло ДВС", 10000), ("🛑 Колодки", 30000), ("🧪 Фильтры", 15000), ("⚙️ ГРМ", 80000)]
+        cols = st.columns(4)
+        for i, (name, limit) in enumerate(m_items):
+            with cols[i]:
+                rem = limit - (last_odo % limit)
+                perc = max(0, min(100, int((rem/limit)*100)))
+                st.write(f"**{name}**")
+                st.metric("Осталось", f"{int(rem)} км")
+                st.progress(perc / 100)
 
-    # --- DAILY REPORT ---
-    daily = df.groupby("date").agg(
-        distance=("dist_km", "sum"),
-        avg_speed=("speed_kmh", lambda x: x[x > 5].mean()),
-        max_speed=("speed_kmh", "max"),
-        points=("dt", "count")
-    ).reset_index().fillna(0)
+        st.divider()
+        st.subheader("🗺️ Геопространственный аудит маршрута")
+        
+        if not df_route.empty:
+            import folium
+            from folium.plugins import Fullscreen, MarkerCluster, AntPath
+            from streamlit_folium import st_folium
 
-    # --- METRICS ---
-    st.subheader(f"📊 Итоговый аудит: {v_name}")
+            if 'speed_kmh' not in df_route.columns:
+                df_route['speed_kmh'] = df_route['speed'] * 1.852
+            df_route['diff_speed'] = df_route['speed_kmh'].diff().fillna(0)
 
-    c1, c2, c3, c4 = st.columns(4)
+            m = folium.Map(
+                location=[df_route['latitude'].mean(), df_route['longitude'].mean()],
+                zoom_start=11,
+                tiles="cartodbpositron"
+            )
+            Fullscreen().add_to(m)
 
-    c1.metric("Пробег", f"{total_km:.2f} км")
-    c2.metric("Топливо", f"{int(total_km * 0.12)} л")
-    c3.metric("GPS точки", len(df))
-    c4.metric("Нарушения", len(df[df["speed_kmh"] > 95]))
+            points = [[r['latitude'], r['longitude']] for _, r in df_route.iterrows()]
+            AntPath(
+                locations=points,
+                dash_array=[10, 20],
+                delay=1000,
+                color='#2A52BE',
+                pulse_color='#FFFFFF',
+                weight=4,
+                opacity=0.6,
+                tooltip="Маршрут движения"
+            ).add_to(m)
 
-    # --- TABLE ---
-    st.dataframe(daily, use_container_width=True)
+            overspeeds = df_route[df_route['speed_kmh'] > 95]
+            hard_brakes = df_route[df_route['diff_speed'] < -20]
+            stops = df_route[df_route['speed_kmh'] < 1]
 
-    # --- CHART ---
-    import altair as alt
+            incident_cluster = MarkerCluster(name="Нарушения и события").add_to(m)
 
-    chart = alt.Chart(df).mark_line().encode(
-        x="dt:T",
-        y="speed_kmh:Q"
-    ).interactive()
+            for _, row in overspeeds.iterrows():
+                folium.CircleMarker(
+                    location=[row['latitude'], row['longitude']],
+                    radius=8, color='#FF4500', fill=True, fill_opacity=0.8,
+                    popup=folium.Popup(f"""
+                        <div style='font-family: sans-serif; font-size: 12px;'>
+                            <b style='color:red;'>🔥 ПРЕВЫШЕНИЕ</b><br>
+                            Скорость: <b>{int(row['speed_kmh'])} км/ч</b><br>
+                            Время: {row['dt'].strftime('%H:%M:%S')}
+                        </div>""", max_width=200)
+                ).add_to(incident_cluster)
 
-    st.altair_chart(chart, use_container_width=True)
+            for _, row in hard_brakes.iterrows():
+                folium.Marker(
+                    location=[row['latitude'], row['longitude']],
+                    icon=folium.Icon(color='red', icon='bolt', prefix='fa'),
+                    popup=f"⚠️ Резкое торможение: {int(row['diff_speed'])} км/ч"
+                ).add_to(incident_cluster)
+
+            folium.Marker(
+                points[0],
+                popup="🚩 ТОЧКА ВЫХОДА",
+                icon=folium.Icon(color='green', icon='play', prefix='fa')
+            ).add_to(m)
             
-# Замени этот блок в разделе РОУТИНГ:
+            folium.Marker(
+                points[-1],
+                popup="🏁 КОНЕЧНАЯ ТОЧКА",
+                icon=folium.Icon(color='black', icon='flag-checkered', prefix='fa')
+            ).add_to(m)
+
+            legend_html = f'''
+                 <div style="position: fixed;
+                             bottom: 50px; left: 50px; width: 260px; z-index:9999;
+                             background-color: white;
+                             border: 2px solid #1a237e;
+                             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                             padding: 15px; border-radius: 12px;
+                             font-size: 14px;
+                             color: black;
+                             box-shadow: 5px 5px 15px rgba(0,0,0,0.4);">
+                    
+                    <h4 style="margin-top:0; margin-bottom:10px; color: #1a237e; border-bottom: 1px solid #ddd; padding-bottom: 5px;">
+                        🔍 Аудит маршрута
+                    </h4>
+                    
+                    <div style="margin-bottom: 10px; color: black; font-weight: 500;">
+                        <span style="background:#2A52BE; width:25px; height:4px; display:inline-block; margin-right:8px; vertical-align:middle;"></span>
+                        Траектория пути
+                    </div>
+                    
+                    <div style="margin-bottom: 10px; color: black; font-weight: 500;">
+                        <span style="background:#FF4500; border-radius:50%; width:12px; height:12px; display:inline-block; margin-right:8px; vertical-align:middle; border: 1px solid black;"></span>
+                        Превышение (>95 км/ч)
+                    </div>
+                    
+                    <div style="margin-bottom: 10px; color: black; font-weight: 500;">
+                        <span style="font-size:16px; margin-right:8px; vertical-align:middle;">⚡</span>
+                        Резкое торможение
+                    </div>
+                    
+                    <hr style="border: 0; border-top: 1px solid #ddd; margin: 10px 0;">
+                    
+                    <table style="width:100%; color: black; border-collapse: collapse;">
+                        <tr style="height: 25px;">
+                            <td style="font-weight: bold;">🏁 Дистанция:</td>
+                            <td style="text-align:right;"><b>{total_km:.2f} км</b></td>
+                        </tr>
+                        <tr style="height: 25px;">
+                            <td style="font-weight: bold;">🔥 Нарушений:</td>
+                            <td style="text-align:right; color: #d32f2f;"><b>{len(overspeeds)}</b></td>
+                        </tr>
+                        <tr style="height: 25px;">
+                            <td style="font-weight: bold;">📡 Точек GPS:</td>
+                            <td style="text-align:right;"><b>{len(df_route)}</b></td>
+                        </tr>
+                    </table>
+                    
+                    <div style="margin-top: 10px; font-size: 11px; color: #555; text-align: center; font-style: italic;">
+                        Данные синхронизированы
+                    </div>
+                 </div>
+            '''
+            m.get_root().html.add_child(folium.Element(legend_html))
+
+            st_folium(m, width="100%", height=700)
+            
+        else:
+            st.warning("⚠️ Нет данных для построения карты за выбранный период.")
+
+        st.divider()
+        st.subheader("📈 Детальный анализ скоростного режима")
+
+        if not df_route.empty:
+            import altair as alt
+
+            chart_df = df_route[['dt', 'speed_kmh']].copy()
+            
+            max_val = chart_df['speed_kmh'].max()
+            max_point = chart_df[chart_df['speed_kmh'] == max_val].head(1)
+
+            base = alt.Chart(chart_df).encode(
+                x=alt.X('dt:T', title='Время пути (период)')
+            )
+
+            line = base.mark_line(
+                color='#29b5e8',
+                strokeWidth=3,
+                interpolate='monotone'
+            ).encode(
+                y=alt.Y('speed_kmh:Q', title='Скорость (км/ч)'),
+                tooltip=[alt.Tooltip('dt:T', title='Время'), alt.Tooltip('speed_kmh:Q', title='Скорость')]
+            )
+
+            overspeed_threshold = 95
+            violations = base.mark_circle(color='red', size=40, opacity=0.8).encode(
+                y='speed_kmh:Q',
+                tooltip=[alt.Tooltip('dt:T', title='Нарушение'), alt.Tooltip('speed_kmh:Q', title='Скорость')]
+            ).transform_filter(alt.datum.speed_kmh > overspeed_threshold)
+
+            peak_label = alt.Chart(max_point).mark_text(
+                align='center',
+                baseline='bottom',
+                dy=-10,
+                fontSize=16,
+                fontWeight='bold',
+                color='#ff4b4b'
+            ).encode(
+                x='dt:T',
+                y='speed_kmh:Q',
+                text=alt.Text('speed_kmh:Q', format='.1f')
+            )
+
+            limit_line = alt.Chart(pd.DataFrame({'y': [overspeed_threshold]})).mark_rule(
+                color='red',
+                strokeDash=[5, 5],
+                opacity=0.5
+            ).encode(y='y:Q')
+
+            final_chart = (line + violations + peak_label + limit_line).properties(
+                width=1300,
+                height=500
+            ).interactive()
+
+            st.altair_chart(final_chart, use_container_width=True)
+
+            st.markdown("#### 🔍 Сводный отчет по качеству вождения")
+            s1, s2, s3, s4 = st.columns(4)
+            
+            with s1:
+                st.metric("🚀 Максимум", f"{max_val} км/ч",
+                          delta=f"{round(max_val - 90, 1)} превышение" if max_val > 90 else None,
+                          delta_color="inverse")
+            with s2:
+                real_avg = round(chart_df[chart_df.speed_kmh > 5]['speed_kmh'].mean(), 1)
+                st.metric("⏱️ Ср. в движении", f"{real_avg} км/ч")
+            with s3:
+                aggressive = len(df_route[df_route['diff_speed'].abs() > 15])
+                st.metric("📉 Резкие маневры", f"{aggressive}", help="Кол-во резких ускорений и торможений")
+            with s4:
+                status = "Критично" if max_val > 110 or len(violations.data) > 20 else "Норма"
+                st.metric("🛡️ Статус аудита", status,
+                          delta="Внимание" if status == "Критично" else "ОК",
+                          delta_color="normal" if status == "Норма" else "inverse")
+
+        else:
+            st.info("Нет данных для анализа скорости в выбранном диапазоне.")
+            
 elif selected == "База Данных":
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
@@ -1820,6 +2036,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
