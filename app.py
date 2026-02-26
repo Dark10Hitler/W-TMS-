@@ -1415,32 +1415,100 @@ elif selected == "Аналитика":
                 }
                 st.rerun()
 
-    # --- 3. ИНЖЕНЕРНЫЙ ВЕРДИКТ ---
-    if st.session_state.audit_results:
-        res = st.session_state.audit_results
-        df = res['df']
-        
-        # РЕАЛЬНЫЕ ЦИФРЫ С СЕРВЕРА
-        current_total_odo = df['total_dist_km'].iloc[-1] # Последняя точка
-        period_start_odo = df['total_dist_km'].iloc[0]
-        actual_period_km = current_total_odo - period_start_odo
-        
-        # Если одометр на устройстве барахлит, считаем по сумме отрезков
-        if actual_period_km <= 0:
-            actual_period_km = df['step_dist_km'].sum()
+    # --- 3. ИНЖЕНЕРНЫЙ ВЕРДИКТ: ГЛУБОКАЯ СИНХРОНИЗАЦИЯ ---
+if st.session_state.audit_results:
+    res = st.session_state.audit_results
+    df = res['df']
+    
+    # --- ИНЖЕНЕРНЫЕ ВЫЧИСЛЕНИЯ (БАЗА: СЕРВЕР TRACCAR) ---
+    # 1. Total Distance (из атрибута totalDistance: 225.05 км)
+    total_dist_end = df['total_dist_km'].iloc[-1] 
+    total_dist_start = df['total_dist_km'].iloc[0]
+    actual_period_km = max(0, total_dist_end - total_dist_start)
+    
+    # 2. Физический одометр устройства (из атрибута odometer: 100.98 км)
+    device_odo_current = df['attributes'].apply(lambda x: x.get('odometer', 0) / 1000.0).iloc[-1]
+    
+    # 3. Скоростные показатели
+    moving_df = df[df['speed_kmh'] > 2]
+    avg_speed = moving_df['speed_kmh'].mean() if not moving_df.empty else 0
+    max_speed = df['speed_kmh'].max()
+    
+    # 4. Расход топлива (Инженерная модель: База + Коэффициент нагрузки)
+    # Считаем "Агрессивность" через производную скорости (м/с²)
+    df['accel_ms2'] = df['speed_kmh'].diff() / 3.6 
+    hard_maneuvers = len(df[df['accel_ms2'].abs() > 3.0]) # Резкие маневры
+    
+    base_rate = 12.0  # Базовая норма л/100км
+    # Поправочный коэффициент: +0.5% за каждое нарушение скорости и +1% за резкий маневр
+    overspeeds_count = len(df[df['speed_kmh'] > 90])
+    load_factor = 1 + (overspeeds_count * 0.005) + (hard_maneuvers * 0.01)
+    
+    fuel_total = (actual_period_km / 100) * base_rate * load_factor
+    cost_mdl = fuel_total * 24.15 # Актуальный курс MDL за литр
+    
+    # --- ВИЗУАЛИЗАЦИЯ ДАННЫХ (TOP-LEVEL METRICS) ---
+    st.header("🛠️ Технический аудит систем")
+    
+    # Первая линия: Одометрия и Пробег
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("🗺️ Пробег (Период)", f"{actual_period_km:.2f} км", 
+                  help="Разница totalDistance между первой и последней точкой периода")
+    with c2:
+        st.metric("📟 Total Distance", f"{total_dist_end:.2f} км", 
+                  help="Полный системный пробег ТС (серверный накопитель)")
+    with c3:
+        st.metric("🔌 Датчик Odometer", f"{device_odo_current:.2f} км", 
+                  help="Текущее значение внутреннего счетчика устройства")
+    with c4:
+        st.metric("⏱️ Ср. Скорость", f"{avg_speed:.1f} км/ч", 
+                  delta=f"Max: {max_speed}", delta_color="off")
 
-        st.subheader(f"📊 Результат синхронизации: {res['v_name']}")
-        
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🏁 Пробег за период", f"{actual_period_km:.2f} км")
-        m2.metric("🔝 Общий одометр", f"{current_total_odo:.2f} км")
-        
-        # Расход (MDL 24 за литр, 12л/100км)
-        fuel_liters = (actual_period_km / 100) * 12
-        m3.metric("⛽ Расход (расчет)", f"{fuel_liters:.1f} л", delta=f"{int(fuel_liters * 24)} MDL")
-        
-        overspeeds = len(df[df['speed_kmh'] > 90])
-        m4.metric("⚠️ Нарушения", overspeeds, delta="Скорость > 90", delta_color="inverse")
+    # Вторая линия: Экономика и Нарушения
+    st.markdown("---")
+    e1, e2, e3, e4 = st.columns(4)
+    with e1:
+        st.metric("⛽ Расход топлива", f"{fuel_total:.1f} л", 
+                  delta=f"{(load_factor-1)*100:.1f}% Нагрузка", delta_color="inverse")
+    with e2:
+        st.metric("💰 Финансовый итог", f"{int(cost_mdl)} MDL")
+    with e3:
+        st.metric("⚠️ Нарушения (>90)", overspeeds_count, 
+                  delta="Критично" if overspeeds_count > 10 else "Норма", 
+                  delta_color="inverse")
+    with e4:
+        st.metric("💢 Резкие маневры", hard_maneuvers, 
+                  help="Количество экстремальных ускорений и торможений (>3.0 m/s²)")
+
+    # --- ТЕХНИЧЕСКИЙ ВЕРДИКТ ДЛЯ ЛОГИСТА ---
+    st.info(f"**Инженерное заключение:** На дистанции **{actual_period_km:.2f} км** зафиксировано **{hard_maneuvers}** "
+            f"событий избыточной нагрузки. Это привело к перерасходу **{(fuel_total * (1 - 1/load_factor)):.2f} л** топлива. "
+            f"Текущий ресурс масла снижен на **{0.1 * hard_maneuvers:.1f}%** быстрее регламента.")
+
+    # --- ГРАФИК ПУЛЬСА (СИНХРОНИЗАЦИЯ ПО ОСЯМ) ---
+    import altair as alt
+    st.markdown("### 📈 Динамика систем (Скорость + Нагрузка)")
+    
+    # Объединенный график: Скорость и зоны перегрузки
+    chart_speed = alt.Chart(df).mark_area(
+        line={'color':'#29b5e8', 'size':2},
+        color=alt.Gradient(
+            gradient='linear',
+            stops=[alt.GradientStop(color='white', offset=0),
+                   alt.GradientStop(color='#29b5e8', offset=1)],
+            x1=1, x2=1, y1=1, y2=0
+        )
+    ).encode(
+        x=alt.X('dt:T', title='Время'),
+        y=alt.Y('speed_kmh:Q', title='Скорость км/ч'),
+        tooltip=['dt', 'speed_kmh', 'total_dist_km']
+    ).properties(height=300)
+
+    # Линия порога нарушений
+    limit_line = alt.Chart(pd.DataFrame({'y': [90]})).mark_rule(color='red', strokeDash=[5,5]).encode(y='y:Q')
+
+    st.altair_chart(chart_speed + limit_line, use_container_width=True)
 
         # --- БЛОК УЛУЧШЕННОЙ КАРТЫ (PREMIUM AUDIT) ---
         import folium
@@ -2028,6 +2096,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
