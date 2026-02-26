@@ -222,21 +222,36 @@ TRACCAR_URL = "https://bronchiolar-dichromatic-abdul.ngrok-free.dev"
 TRACCAR_AUTH = ("denis.masliuc.speak23dev@gmail.com", "qwert12345")
 
 @st.cache_data(ttl=10)
-def get_detailed_traccar_data():
+def get_detailed_traccar_data(endpoint="devices", params=None):
     api_base = f"{TRACCAR_URL.rstrip('/')}/api"
-    # Добавляем заголовки, чтобы Ngrok не показывал страницу-предупреждение
     headers = {'ngrok-skip-browser-warning': 'true'}
-    try:
-        dev_resp = requests.get(f"{api_base}/devices", auth=TRACCAR_AUTH, headers=headers, timeout=10)
-        pos_resp = requests.get(f"{api_base}/positions", auth=TRACCAR_AUTH, headers=headers, timeout=10)
-        
-        if dev_resp.status_code == 200 and pos_resp.status_code == 200:
-            devices = {d['id']: d for d in dev_resp.json()}
-            return devices, pos_resp.json()
-        return {}, []
-    except Exception as e:
-        st.sidebar.error(f"📡 Ошибка связи с туннелем: {e}")
-        return {}, []
+    
+    # Если запрашиваем устройства (стандартный вызов без аргументов)
+    if endpoint == "devices":
+        try:
+            dev_resp = requests.get(f"{api_base}/devices", auth=TRACCAR_AUTH, headers=headers, timeout=10)
+            pos_resp = requests.get(f"{api_base}/positions", auth=TRACCAR_AUTH, headers=headers, timeout=10)
+            
+            if dev_resp.status_code == 200 and pos_resp.status_code == 200:
+                devices = {d['id']: d for d in dev_resp.json()}
+                return devices, pos_resp.json()
+            return {}, []
+        except Exception as e:
+            st.sidebar.error(f"📡 Ошибка связи (devices): {e}")
+            return {}, []
+    
+    # Если запрашиваем отчеты (вызов с параметрами)
+    else:
+        try:
+            resp = requests.get(f"{api_base}/{endpoint}", auth=TRACCAR_AUTH, headers=headers, params=params, timeout=15)
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                st.error(f"Ошибка API: {resp.status_code}")
+                return []
+        except Exception as e:
+            st.error(f"📡 Ошибка связи (reports): {e}")
+            return []
 
 def get_vehicle_status_color(status):
     """Возвращает цвет для маркера на карте в зависимости от статуса ТС"""
@@ -1925,6 +1940,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
