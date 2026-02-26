@@ -1360,41 +1360,59 @@ elif selected == "Аналитика":
         fuel_price = st.number_input("Цена топлива (MDL)", value=24.0, step=0.1)
 
         if st.button("🔄 ЗАПУСТИТЬ ПОЛНУЮ СИНХРОНИЗАЦИЮ", type="primary", use_container_width=True):
-            with st.spinner("📡 Глубокое сканирование данных..."):
-                iso_start = f"{start_d.strftime('%Y-%m-%d')}T00:00:00Z"
-                iso_end = f"{end_d.strftime('%Y-%m-%d')}T23:59:59Z"
-                
-                url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
-                params = {"deviceId": v_id, "from": iso_start, "to": iso_end}
-                
-                try:
-                    resp = requests.get(url, auth=TRACCAR_AUTH, params=params, timeout=30)
-                    if resp.status_code == 200:
-                        raw_data = resp.json()
+            if not v_id:
+                st.error("❌ Сначала выберите устройство!")
+            else:
+                with st.spinner("📡 Глубокое сканирование данных..."):
+                    iso_start = f"{start_d.strftime('%Y-%m-%d')}T00:00:00Z"
+                    iso_end = f"{end_d.strftime('%Y-%m-%d')}T23:59:59Z"
+                    
+                    # Убеждаемся, что URL собран правильно
+                    base_url = TRACCAR_URL.strip().rstrip('/')
+                    api_url = f"{base_url}/api/reports/route"
+                    params = {"deviceId": v_id, "from": iso_start, "to": iso_end}
+                    
+                    try:
+                        resp = requests.get(api_url, auth=TRACCAR_AUTH, params=params, timeout=30)
+                        
+                        # ПРОВЕРКА: Если сервер вернул не 200 OK
+                        if resp.status_code != 200:
+                            st.error(f"🛑 Ошибка сервера Traccar ({resp.status_code})")
+                            st.info("Проверьте настройки авторизации и доступность сервера.")
+                            st.stop()
+
+                        # ПРОВЕРКА: Если ответ пустой или не JSON
+                        if not resp.text.strip():
+                            st.warning("📭 Сервер вернул пустой ответ. Возможно, данных за этот период нет.")
+                            st.stop()
+                            
+                        try:
+                            raw_data = resp.json()
+                        except Exception:
+                            st.error("🛑 Сервер прислал не JSON данные. Возможно, это страница ошибки.")
+                            with st.expander("Посмотреть ответ сервера"):
+                                st.code(resp.text)
+                            st.stop()
+
                         if raw_data:
                             df = pd.DataFrame(raw_data)
                             df['dt'] = pd.to_datetime(df['deviceTime'])
                             df = df.sort_values('dt')
 
-                            # --- СИНХРОНИЗАЦИЯ ДИСТАНЦИИ (ГЛУБОКАЯ) ---
-                            # 1. Проверяем наличие odo_km из твоей SQL таблицы (если проброшено)
-                            # 2. Иначе парсим totalDistance из attributes
-                            # 3. Дополнительно считаем GPS-дистанцию (Haversine) для сверки
-                            
+                            # --- ТВОЯ ЛОГИКА ОДОМЕТРА (СИНХРОНИЗАЦИЯ) ---
                             def get_odo(row):
                                 attrs = row.get('attributes', {})
-                                # Приоритет: кастомная колонка odo_km -> totalDistance -> odometer
+                                # Приоритет: SQL колонка -> totalDistance -> odometer
                                 val = row.get('odo_km') or attrs.get('totalDistance') or attrs.get('odometer', 0)
+                                # Если значение в метрах (больше 2000), делим на 1000
                                 return float(val) / 1000.0 if val > 2000 else float(val)
 
                             df['odo_final'] = df.apply(get_odo, axis=1)
                             df['speed_kmh'] = round(df['speed'] * 1.852, 1)
-                            
-                            # Расчет дельт для анализа агрессивности
                             df['diff_speed'] = df['speed_kmh'].diff().fillna(0)
                             df['dt_diff_sec'] = df['dt'].diff().dt.total_seconds().abs().fillna(0)
                             
-                            # Расчет пройденного пути по GPS между точками (для аудита точности)
+                            # Расчет GPS дистанции (Haversine)
                             df['gps_dist'] = 0.0
                             for i in range(1, len(df)):
                                 df.iloc[i, df.columns.get_loc('gps_dist')] = haversine_km(
@@ -1412,11 +1430,10 @@ elif selected == "Аналитика":
                             }
                             st.rerun()
                         else:
-                            st.warning("📭 Нет данных за выбранный период.")
-                    else:
-                        st.error(f"Ошибка API: {resp.status_code}")
-                except Exception as e:
-                    st.error(f"Ошибка системы: {e}")
+                            st.warning("📭 За этот период перемещений не найдено.")
+                            
+                    except requests.exceptions.RequestException as e:
+                        st.error(f"📡 Ошибка связи: {str(e)}")
 
     # --- 4. ВИЗУАЛИЗАЦИЯ И ПОДРОБНЫЙ ОТЧЕТ ---
     if st.session_state.audit_results:
@@ -1868,6 +1885,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
