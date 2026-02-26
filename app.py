@@ -1541,11 +1541,12 @@ elif selected == "Аналитика":
         # Рендерим карту
         st_folium(m, width=1300, height=600, key="audit_map_premium")
 
-        # --- 6. ГРАФИК И КАЧЕСТВО ВОЖДЕНИЯ ---
+        # --- 6. ГРАФИК СКОРОСТИ (ИСПРАВЛЕННЫЙ) ---
         st.divider()
         st.subheader("📈 Анализ скоростного режима")
         import altair as alt
         
+        # Исправлено: ширина установлена в 'container' для валидности схемы
         chart = alt.Chart(df_clean).mark_area(
             line={'color':'#29b5e8'},
             color=alt.Gradient(
@@ -1559,11 +1560,11 @@ elif selected == "Аналитика":
             x=alt.X('dt:T', title='Время'),
             y=alt.Y('speed_kmh:Q', title='Скорость (км/ч)'),
             tooltip=[alt.Tooltip('dt:T', title='Время'), alt.Tooltip('speed_kmh:Q', title='Скорость')]
-        ).properties(width="stretch", height=400).interactive()
+        ).properties(width='container', height=400).interactive()
         
-        # Добавляем красную линию лимита скорости 95 км/ч на график
         limit_line = alt.Chart(pd.DataFrame({'y': [95]})).mark_rule(color='red', strokeDash=[5, 5]).encode(y='y:Q')
         
+        # Отрисовка с явным указанием ширины контейнера
         st.altair_chart(chart + limit_line, use_container_width=True)
 
         if st.button("🗑️ СБРОСИТЬ ОТЧЕТ"):
@@ -1920,6 +1921,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
