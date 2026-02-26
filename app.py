@@ -1498,30 +1498,6 @@ elif selected == "Аналитика":
     * Ресурс моторного масла и тормозной системы снижается на **{min(25, 0.1 * (hard_maneuvers + overspeeds_count/10)):.1f}%** быстрее стандартного цикла.
     """)
 
-    # --- ГРАФИК ПУЛЬСА (СИНХРОНИЗАЦИЯ ПО ОСЯМ) ---
-        import altair as alt
-        st.markdown("### 📈 Динамика систем (Скорость + Нагрузка)")
-    
-        # Объединенный график: Скорость и зоны перегрузки
-        chart_speed = alt.Chart(df).mark_area(
-            line={'color':'#29b5e8', 'size':2},
-            color=alt.Gradient(
-                gradient='linear',
-                stops=[alt.GradientStop(color='white', offset=0),
-                   alt.GradientStop(color='#29b5e8', offset=1)],
-                x1=1, x2=1, y1=1, y2=0
-            )
-        ).encode(
-            x=alt.X('dt:T', title='Время'),
-            y=alt.Y('speed_kmh:Q', title='Скорость км/ч'),
-            tooltip=['dt', 'speed_kmh', 'total_dist_km']
-        ).properties(height=300)
-
-    # Линия порога нарушений
-        limit_line = alt.Chart(pd.DataFrame({'y': [90]})).mark_rule(color='red', strokeDash=[5,5]).encode(y='y:Q')
-
-        st.altair_chart(chart_speed + limit_line, use_container_width=True)
-
         # --- БЛОК УЛУЧШЕННОЙ КАРТЫ (PREMIUM AUDIT) ---
         import folium
         from streamlit_folium import st_folium
@@ -2108,6 +2084,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
