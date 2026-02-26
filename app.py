@@ -1462,7 +1462,7 @@ elif selected == "Аналитика":
     # Итоговый коэффициент нагрузки (ограничен 1.4)
         load_factor = min(1.4, speed_factor * accel_factor)
     
-    fuel_total = (actual_period_km / 100) * base_rate * load_factor
+        fuel_total = (actual_period_km / 100) * base_rate * load_factor
         cost_mdl = fuel_total * 21.0
     
     # Расчет чистого перерасхода в литрах
@@ -2108,6 +2108,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
