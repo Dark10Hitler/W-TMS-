@@ -1436,73 +1436,110 @@ elif selected == "Аналитика":
         with st.expander("📅 ДЕТАЛИЗАЦИЯ ПО ДНЯМ", expanded=True):
             st.dataframe(daily_report.round(2), use_container_width=True, hide_index=True)
 
-        # --- 5. КАРТА (ТОЧНАЯ И ОЧИЩЕННАЯ С СОБЫТИЯМИ) ---
-        st.subheader("🗺️ Геопространственный аудит")
+        # --- 5. ПРОФЕССИОНАЛЬНЫЙ ГЕО-АУДИТ (КЛАСТЕРИЗАЦИЯ И ДИНАМИКА) ---
+        st.subheader("🗺️ Геопространственный аудит маршрута")
         import folium
         from streamlit_folium import st_folium
+        from folium.plugins import MarkerCluster, AntPath
         from branca.element import Template, MacroElement
-        
-        # Подготовка данных для событий на карте
-        # 1. Считаем время между точками для выявления стоянок (в секундах)
+
+        # Логика расчета событий (остается прежней для точности)
         df_clean['dt_diff_sec'] = df_clean['dt'].diff(-1).dt.total_seconds().abs().fillna(0)
-        
-        # 2. Фильтруем события
         overspeeds = df_clean[df_clean['speed_kmh'] > 95]
         hard_brakes = df_clean[df_clean['diff_speed'] < -15]
         hard_accels = df_clean[df_clean['diff_speed'] > 15]
-        # Остановка: скорость < 3 км/ч и время до следующей точки >= 300 сек (5 минут)
         stops = df_clean[(df_clean['speed_kmh'] < 3) & (df_clean['dt_diff_sec'] >= 300)]
 
         avg_lat, avg_lon = df_clean['latitude'].mean(), df_clean['longitude'].mean()
-        # Используем OpenStreetMap для максимальной детализации дорог
-        m = folium.Map(location=[avg_lat, avg_lon], zoom_start=13, tiles="OpenStreetMap")
-        
-        # Линия маршрута
+        m = folium.Map(location=[avg_lat, avg_lon], zoom_start=13, tiles="cartodbpositron") # Более чистый фон карты
+
+        # 1. ДИНАМИЧЕСКАЯ ДОРОГА (AntPath)
         path_points = [[r['latitude'], r['longitude']] for _, r in df_clean.iterrows()]
-        folium.PolyLine(path_points, color="#1E90FF", weight=5, opacity=0.7).add_to(m)
-        
-        # Старт и Финиш
-        folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play', prefix='fa'), tooltip="Старт маршрута").add_to(m)
-        folium.Marker(path_points[-1], icon=folium.Icon(color='red', icon='flag', prefix='fa'), tooltip="Финиш маршрута").add_to(m)
+        AntPath(
+            locations=path_points,
+            dash_array=[1, 15],
+            delay=1000,
+            color='#1E90FF',
+            pulse_color='#FFFFFF',
+            weight=5,
+            opacity=0.9,
+            tooltip="Траектория движения"
+        ).add_to(m)
 
-        # Нанесение событий на карту
+        # 2. КЛАСТЕРИЗАЦИЯ НАРУШЕНИЙ (Те самые круги с цифрами)
+        marker_cluster = MarkerCluster(
+            name="Нарушения",
+            overlay=True,
+            control=True,
+            icon_create_function=None # Используем стандартные красивые кластеры
+        ).add_to(m)
+
+        # Добавляем превышения в кластер
         for _, row in overspeeds.iterrows():
-            folium.CircleMarker([row['latitude'], row['longitude']], radius=6, color='orange', fill=True, fill_opacity=1, tooltip=f"Превышение: {row['speed_kmh']} км/ч").add_to(m)
-            
+            folium.Marker(
+                [row['latitude'], row['longitude']],
+                icon=folium.Icon(color='orange', icon='gauge-high', prefix='fa'),
+                popup=f"Скорость: {row['speed_kmh']} км/ч",
+                tooltip="Превышение"
+            ).add_to(marker_cluster)
+
+        # Добавляем резкие торможения в кластер
         for _, row in hard_brakes.iterrows():
-            folium.CircleMarker([row['latitude'], row['longitude']], radius=6, color='darkred', fill=True, fill_opacity=1, tooltip=f"Резкое торможение: {row['diff_speed']} км/ч").add_to(m)
+            folium.Marker(
+                [row['latitude'], row['longitude']],
+                icon=folium.Icon(color='darkred', icon='triangle-exclamation', prefix='fa'),
+                popup=f"Резкое торможение: {row['diff_speed']} км/ч",
+                tooltip="Опасное вождение"
+            ).add_to(marker_cluster)
 
+        # Добавляем ускорения в кластер
         for _, row in hard_accels.iterrows():
-            folium.CircleMarker([row['latitude'], row['longitude']], radius=6, color='purple', fill=True, fill_opacity=1, tooltip=f"Резкое ускорение: +{row['diff_speed']} км/ч").add_to(m)
+            folium.Marker(
+                [row['latitude'], row['longitude']],
+                icon=folium.Icon(color='purple', icon='bolt', prefix='fa'),
+                popup=f"Резкое ускорение: +{row['diff_speed']} км/ч",
+                tooltip="Агрессивный старт"
+            ).add_to(marker_cluster)
 
+        # Остановки ставим отдельными маркерами (они важны сами по себе)
         for _, row in stops.iterrows():
             stop_mins = int(row['dt_diff_sec'] // 60)
-            folium.Marker([row['latitude'], row['longitude']], icon=folium.Icon(color='blue', icon='pause', prefix='fa'), tooltip=f"Остановка: {stop_mins} мин.").add_to(m)
+            folium.Marker(
+                [row['latitude'], row['longitude']],
+                icon=folium.Icon(color='blue', icon='clock', prefix='fa'),
+                popup=f"Простой: {stop_mins} мин.",
+                tooltip="Длительная остановка"
+            ).add_to(m)
 
-        # --- HTML Легенда с черным текстом ---
+        # Старт и Финиш (делаем их крупнее)
+        folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play', prefix='fa')).add_to(m)
+        folium.Marker(path_points[-1], icon=folium.Icon(color='black', icon='flag-checkered', prefix='fa')).add_to(m)
+
+        # 3. КРАСИВАЯ ЛЕГЕНДА (Черный текст, премиальный вид)
         legend_html = '''
         {% macro html(this, kwargs) %}
-        <div style="position: absolute; z-index:9999; background-color: rgba(255, 255, 255, 0.9); border: 2px solid grey; 
-                    border-radius: 6px; padding: 10px; bottom: 30px; left: 30px; font-family: Arial, sans-serif; box-shadow: 2px 2px 5px rgba(0,0,0,0.3);">
-            <h4 style="margin-top:0; margin-bottom:10px; color: black; text-align:center; font-weight: bold;">Легенда маршрута</h4>
-            <div style="color: black; line-height: 1.8; font-size: 14px;">
-                <i class="fa fa-play" style="color: green; width: 20px;"></i> Старт<br>
-                <i class="fa fa-flag" style="color: red; width: 20px;"></i> Финиш<br>
-                <i class="fa fa-circle" style="color: orange; width: 20px;"></i> Превышение (>95 км/ч)<br>
-                <i class="fa fa-circle" style="color: darkred; width: 20px;"></i> Резкое торможение<br>
-                <i class="fa fa-circle" style="color: purple; width: 20px;"></i> Резкое ускорение<br>
-                <i class="fa fa-pause" style="color: blue; width: 20px;"></i> Остановка (> 5 мин)
+        <div style="position: absolute; z-index:9999; background-color: rgba(255, 255, 255, 0.95); border: 1px solid #ccc; 
+                    border-radius: 8px; padding: 15px; bottom: 40px; left: 20px; font-family: 'Segoe UI', Arial; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+            <div style="color: black; font-size: 16px; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px;">
+                🔍 Аудит маршрута
             </div>
+            <div style="color: #333; line-height: 2; font-size: 13px;">
+                <span style="display: flex; align-items: center;"><i class="fa fa-minus" style="color: #1E90FF; margin-right: 10px; width: 20px;"></i> Траектория пути</span>
+                <span style="display: flex; align-items: center;"><i class="fa fa-circle" style="color: #B22222; margin-right: 10px; width: 20px;"></i> Группа нарушений (Круг)</span>
+                <span style="display: flex; align-items: center;"><i class="fa fa-gauge-high" style="color: orange; margin-right: 10px; width: 20px;"></i> Превышение (>95 км/ч)</span>
+                <span style="display: flex; align-items: center;"><i class="fa fa-triangle-exclamation" style="color: darkred; margin-right: 10px; width: 20px;"></i> Резкое торможение</span>
+                <span style="display: flex; align-items: center;"><i class="fa fa-clock" style="color: blue; margin-right: 10px; width: 20px;"></i> Остановка (> 5 мин)</span>
+            </div>
+            <div style="margin-top: 10px; font-size: 11px; color: #777; font-style: italic;">Данные синхронизированы</div>
         </div>
         {% endmacro %}
         '''
-        # ^^^ ЗДЕСЬ ИСПРАВЛЕН ПРОБЕЛ: endmacro слитно!
-        
         macro = MacroElement()
         macro._template = Template(legend_html)
         m.get_root().add_child(macro)
         
-        st_folium(m, width=1300, height=600, key="audit_map")
+        # Рендерим карту
+        st_folium(m, width=1300, height=600, key="audit_map_premium")
 
         # --- 6. ГРАФИК И КАЧЕСТВО ВОЖДЕНИЯ ---
         st.divider()
@@ -1883,6 +1920,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
