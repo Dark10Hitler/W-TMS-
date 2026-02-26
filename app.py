@@ -1351,7 +1351,7 @@ elif selected == "Аналитика":
         now = datetime.now()
         yesterday = now - timedelta(days=1)
         
-        # Формат ISO 8601 для API Traccar
+        # Формат ISO 8601 для API Traccar (Z - UTC)
         iso_start = yesterday.strftime('%Y-%m-%dT%H:%M:%SZ')
         iso_end = now.strftime('%Y-%m-%dT%H:%M:%SZ')
         
@@ -1371,7 +1371,7 @@ elif selected == "Аналитика":
             if resp.status_code == 200:
                 data = resp.json()
                 if not data:
-                    return None, "Данные за последние 24 часа не найдены."
+                    return None, "Данные за последние 24 часа не найдены на сервере."
                 return data, None
             return None, f"Ошибка сервера Traccar: {resp.status_code}"
         except Exception as e:
@@ -1380,64 +1380,55 @@ elif selected == "Аналитика":
     # --- 2. ПАНЕЛЬ УПРАВЛЕНИЯ (БЕЗ ВЫБОРА ПЕРИОДА) ---
     devices_dict, _ = get_detailed_traccar_data()
     
-    # Оставляем только выбор ТС и кнопку запуска на всю ширину
+    # Оставляем только выбор ТС
     v_name = st.selectbox("🎯 Выберите ТС для мгновенного аудита", 
                           options=[d['name'] for d in devices_dict.values()])
     v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
 
-    if st.button("🚀 ЗАПУСТИТЬ ИНЖЕНЕРНЫЙ АУДИТ (24ч)", type="primary", use_container_width=True):
-        with st.spinner(f"Синхронизация систем {v_name}..."):
+    # Вспомогательная функция для безопасного извлечения атрибутов
+    def get_attr(attr, keys, default=0):
+        for key in keys:
+            if key in attr: return attr[key]
+        return default
+
+    # Единая кнопка запуска полной синхронизации
+    if st.button("🚀 ЗАПУСТИТЬ ПОЛНУЮ СИНХРОНИЗАЦИЮ (24ч)", type="primary", use_container_width=True):
+        with st.spinner(f"🔄 Соединение с Traccar Cloud: Анализ систем {v_name}..."):
             raw_data, error = get_traccar_reports_sync(v_id)
             
             if error:
                 st.error(f"🛑 {error}")
             else:
-                # Превращаем в DataFrame и сохраняем в сессию для отображения
                 import pandas as pd
                 df = pd.DataFrame(raw_data)
+                
+                # Базовая обработка времени
                 df['dt'] = pd.to_datetime(df['deviceTime'])
                 df = df.sort_values('dt')
-                
-                # Извлечение тех. данных для расчета расхода
-                df['total_dist_km'] = df['attributes'].apply(lambda x: x.get('totalDistance', 0) / 1000.0)
+
+                # МАТЕМАТИКА АТРИБУТОВ (Инженерный расчет)
+                # 1. Скорость в км/ч
                 df['speed_kmh'] = round(df['speed'] * 1.852, 1)
                 
-                st.session_state.audit_results = {
-                    'df': df,
-                    'v_name': v_name
-                }
-                st.rerun()
-
-    if st.button("📑 ЗАПУСТИТЬ ПОЛНУЮ СИНХРОНИЗАЦИЮ", type="primary", use_container_width=True):
-        with st.spinner("🔄 Соединение с Traccar Cloud..."):
-            raw_data, error = get_traccar_reports_sync(v_id, start_d, end_d)
-            
-            if error:
-                st.error(f"🛑 {error}")
-            else:
-                df = pd.DataFrame(raw_data)
-                df['dt'] = pd.to_datetime(df['deviceTime'])
-                # Фильтруем данные строго внутри выбранного диапазона (защита от "хвостов")
-                mask = (df['dt'].dt.date >= start_d) & (df['dt'].dt.date <= end_d)
-                df = df.loc[mask].sort_values('dt')
-
-                # Математика атрибутов
-                def get_attr(attr, keys, default=0):
-                    for key in keys:
-                        if key in attr: return attr[key]
-                    return default
-
-                df['speed_kmh'] = round(df['speed'] * 1.852, 1)
-                # Берем totalDistance (как на скриншоте 225.05 км)
-                df['total_dist_km'] = df['attributes'].apply(lambda x: get_attr(x, ['totalDistance', 'odometer']) / 1000.0)
-                # Расстояние шага (для расчета расхода)
-                df['step_dist_km'] = df['attributes'].apply(lambda x: get_attr(x, ['distance']) / 1000.0)
+                # 2. totalDistance (Берем из атрибутов, конвертируем метры в км)
+                df['total_dist_km'] = df['attributes'].apply(
+                    lambda x: get_attr(x, ['totalDistance', 'odometer']) / 1000.0
+                )
                 
+                # 3. Расстояние шага (дистанция между точками для расхода)
+                df['step_dist_km'] = df['attributes'].apply(
+                    lambda x: get_attr(x, ['distance']) / 1000.0
+                )
+                
+                # Сохраняем результат в сессию
                 st.session_state.audit_results = {
                     'df': df,
                     'v_name': v_name,
-                    'period': f"{start_d} — {end_d}"
+                    'period': "Последние 24 часа (Автоматически)"
                 }
+                
+                # Уведомление об успехе и перезагрузка для отображения данных
+                st.success(f"✅ Синхронизация завершена. Обработано {len(df)} точек телеметрии.")
                 st.rerun()
 
         # --- 3. ИНЖЕНЕРНЫЙ ВЕРДИКТ: ГЛУБОКАЯ СИНХРОНИЗАЦИЯ ---
@@ -2109,6 +2100,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
