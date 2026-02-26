@@ -1354,13 +1354,6 @@ elif selected == "Аналитика":
     start_date = col_t1.date_input("Начало анализа", datetime.now() - timedelta(days=1))
     end_date = col_t2.date_input("Конец анализа", datetime.now())
 
-    elif selected == "Аналитика":
-    st.title("🛡️ Logistics Intelligence: Глубокий Аудит")
-    st.markdown("---")
-
-    if 'audit_results' not in st.session_state:
-        st.session_state.audit_results = None
-
     # --- 1. ФУНКЦИЯ СИНХРОНИЗАЦИИ (Исправленная) ---
     def get_traccar_reports_sync(v_id, s_date, e_date):
         # Формат ISO 8601 с миллисекундами для точности
@@ -1862,6 +1855,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
