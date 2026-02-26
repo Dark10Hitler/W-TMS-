@@ -1436,30 +1436,96 @@ elif selected == "Аналитика":
         with st.expander("📅 ДЕТАЛИЗАЦИЯ ПО ДНЯМ", expanded=True):
             st.dataframe(daily_report.round(2), use_container_width=True, hide_index=True)
 
-        # Карта
+        # --- 5. КАРТА (ТОЧНАЯ И ОЧИЩЕННАЯ С СОБЫТИЯМИ) ---
         st.subheader("🗺️ Геопространственный аудит")
         import folium
         from streamlit_folium import st_folium
+        from branca.element import Template, MacroElement
         
-        avg_lat, avg_lon = df_clean['latitude'].mean(), df_clean['longitude'].mean()
-        m = folium.Map(location=[avg_lat, avg_lon], zoom_start=12)
-        path_points = [[r['latitude'], r['longitude']] for _, r in df_clean.iterrows()]
+        # Подготовка данных для событий на карте
+        # 1. Считаем время между точками для выявления стоянок (в секундах)
+        df_clean['dt_diff_sec'] = df_clean['dt'].diff(-1).dt.total_seconds().abs().fillna(0)
         
-        folium.PolyLine(path_points, color="#1E90FF", weight=5, opacity=0.8).add_to(m)
-        folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
-        folium.Marker(path_points[-1], icon=folium.Icon(color='red', icon='flag')).add_to(m)
-        
-        st_folium(m, width=1300, height=500, key="audit_map")
+        # 2. Фильтруем события
+        overspeeds = df_clean[df_clean['speed_kmh'] > 95]
+        hard_brakes = df_clean[df_clean['diff_speed'] < -15]
+        hard_accels = df_clean[df_clean['diff_speed'] > 15]
+        # Остановка: скорость < 3 км/ч и время до следующей точки >= 300 сек (5 минут)
+        stops = df_clean[(df_clean['speed_kmh'] < 3) & (df_clean['dt_diff_sec'] >= 300)]
 
-        # График скорости
+        avg_lat, avg_lon = df_clean['latitude'].mean(), df_clean['longitude'].mean()
+        # Используем OpenStreetMap для максимальной детализации дорог
+        m = folium.Map(location=[avg_lat, avg_lon], zoom_start=13, tiles="OpenStreetMap")
+        
+        # Линия маршрута
+        path_points = [[r['latitude'], r['longitude']] for _, r in df_clean.iterrows()]
+        folium.PolyLine(path_points, color="#1E90FF", weight=5, opacity=0.7).add_to(m)
+        
+        # Старт и Финиш
+        folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play', prefix='fa'), tooltip="Старт маршрута").add_to(m)
+        folium.Marker(path_points[-1], icon=folium.Icon(color='red', icon='flag', prefix='fa'), tooltip="Финиш маршрута").add_to(m)
+
+        # Нанесение событий на карту
+        for _, row in overspeeds.iterrows():
+            folium.CircleMarker([row['latitude'], row['longitude']], radius=6, color='orange', fill=True, fill_opacity=1, tooltip=f"Превышение: {row['speed_kmh']} км/ч").add_to(m)
+            
+        for _, row in hard_brakes.iterrows():
+            folium.CircleMarker([row['latitude'], row['longitude']], radius=6, color='darkred', fill=True, fill_opacity=1, tooltip=f"Резкое торможение: {row['diff_speed']} км/ч").add_to(m)
+
+        for _, row in hard_accels.iterrows():
+            folium.CircleMarker([row['latitude'], row['longitude']], radius=6, color='purple', fill=True, fill_opacity=1, tooltip=f"Резкое ускорение: +{row['diff_speed']} км/ч").add_to(m)
+
+        for _, row in stops.iterrows():
+            stop_mins = int(row['dt_diff_sec'] // 60)
+            folium.Marker([row['latitude'], row['longitude']], icon=folium.Icon(color='blue', icon='pause', prefix='fa'), tooltip=f"Остановка: {stop_mins} мин.").add_to(m)
+
+        # --- HTML Легенда с черным текстом ---
+        legend_html = '''
+        {% macro html(this, kwargs) %}
+        <div style="position: absolute; z-index:9999; background-color: rgba(255, 255, 255, 0.9); border: 2px solid grey; 
+                    border-radius: 6px; padding: 10px; bottom: 30px; left: 30px; font-family: Arial, sans-serif; box-shadow: 2px 2px 5px rgba(0,0,0,0.3);">
+            <h4 style="margin-top:0; margin-bottom:10px; color: black; text-align:center; font-weight: bold;">Легенда маршрута</h4>
+            <div style="color: black; line-height: 1.8; font-size: 14px;">
+                <i class="fa fa-play" style="color: green; width: 20px;"></i> Старт<br>
+                <i class="fa fa-flag" style="color: red; width: 20px;"></i> Финиш<br>
+                <i class="fa fa-circle" style="color: orange; width: 20px;"></i> Превышение (>95 км/ч)<br>
+                <i class="fa fa-circle" style="color: darkred; width: 20px;"></i> Резкое торможение<br>
+                <i class="fa fa-circle" style="color: purple; width: 20px;"></i> Резкое ускорение<br>
+                <i class="fa fa-pause" style="color: blue; width: 20px;"></i> Остановка (> 5 мин)
+            </div>
+        </div>
+        {% end macro %}
+        '''
+        macro = MacroElement()
+        macro._template = Template(legend_html)
+        m.get_root().add_child(macro)
+        
+        st_folium(m, width=1300, height=600, key="audit_map")
+
+        # --- 6. ГРАФИК И КАЧЕСТВО ВОЖДЕНИЯ ---
+        st.divider()
         st.subheader("📈 Анализ скоростного режима")
         import altair as alt
-        chart = alt.Chart(df_clean).mark_area(opacity=0.3, color='#29b5e8').encode(
+        
+        chart = alt.Chart(df_clean).mark_area(
+            line={'color':'#29b5e8'},
+            color=alt.Gradient(
+                gradient='linear',
+                stops=[alt.GradientStop(color='white', offset=0),
+                       alt.GradientStop(color='#29b5e8', offset=1)],
+                x1=1, x2=1, y1=1, y2=0
+            ),
+            opacity=0.3
+        ).encode(
             x=alt.X('dt:T', title='Время'),
             y=alt.Y('speed_kmh:Q', title='Скорость (км/ч)'),
-            tooltip=['dt', 'speed_kmh']
-        ).properties(width="stretch", height=300).interactive()
-        st.altair_chart(chart, use_container_width=True)
+            tooltip=[alt.Tooltip('dt:T', title='Время'), alt.Tooltip('speed_kmh:Q', title='Скорость')]
+        ).properties(width="stretch", height=400).interactive()
+        
+        # Добавляем красную линию лимита скорости 95 км/ч на график
+        limit_line = alt.Chart(pd.DataFrame({'y': [95]})).mark_rule(color='red', strokeDash=[5, 5]).encode(y='y:Q')
+        
+        st.altair_chart(chart + limit_line, use_container_width=True)
 
         if st.button("🗑️ СБРОСИТЬ ОТЧЕТ"):
             st.session_state.audit_results = None
@@ -1815,6 +1881,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
