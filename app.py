@@ -1415,7 +1415,7 @@ elif selected == "Аналитика":
                 }
                 st.rerun()
 
-    # --- 3. ИНЖЕНЕРНЫЙ ВЕРДИКТ: ГЛУБОКАЯ СИНХРОНИЗАЦИЯ ---
+        # --- 3. ИНЖЕНЕРНЫЙ ВЕРДИКТ: ГЛУБОКАЯ СИНХРОНИЗАЦИЯ ---
 if st.session_state.audit_results:
     res = st.session_state.audit_results
     df = res['df']
