@@ -1328,212 +1328,252 @@ elif selected == "ТС":
         st.info("ℹ️ В автопарке пока нет записей.")
 
 elif selected == "Аналитика":
-    st.title("🛡️ Logistics Intelligence: Глубокий Аудит")
-    st.markdown("---")
-
-    # --- 1. ИНИЦИАЛИЗАЦИЯ СОСТОЯНИЯ ---
-    if 'audit_results' not in st.session_state:
-        st.session_state.audit_results = None
-
-    # --- 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (МАТЕМАТИКА И СИНХРОНИЗАЦИЯ) ---
-    from math import radians, cos, sin, asin, sqrt
-
-    def haversine_km(lon1, lat1, lon2, lat2):
-        """Расчет расстояния между двумя точками для проверки одометра"""
-        lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-        dlon, dlat = lon2 - lon1, lat2 - lat1
-        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-        return 6371 * 2 * asin(sqrt(a))
-
-    # --- 3. ПАНЕЛЬ УПРАВЛЕНИЯ В SIDEBAR ---
-    devices_dict, _ = get_detailed_traccar_data()
+    st.title("🛡️ Logistics Intelligence & Tech Audit")
     
-    with st.sidebar:
-        st.header("⚙️ Настройки аудита")
-        v_name = st.selectbox("🎯 Выберите ТС", options=[d['name'] for d in devices_dict.values()])
-        v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
-        
-        start_d = st.date_input("Начало периода", datetime.now() - timedelta(days=1))
-        end_d = st.date_input("Конец периода", datetime.now())
-        
-        fuel_rate = st.number_input("Расход л/100км", value=12.0, step=0.5)
-        fuel_price = st.number_input("Цена топлива (MDL)", value=24.0, step=0.1)
+    # 1. Загрузка данных
+    devices, _ = get_detailed_traccar_data()
+    v_name = st.selectbox("🔍 Выберите ТС для глубокого анализа", options=[d['name'] for d in devices.values()])
+    v_id = [id for id, d in devices.items() if d['name'] == v_name][0]
 
-        if st.button("🔄 ЗАПУСТИТЬ ПОЛНУЮ СИНХРОНИЗАЦИЮ", type="primary", use_container_width=True):
-            if not v_id:
-                st.error("❌ Сначала выберите устройство!")
+    col_t1, col_t2 = st.columns(2)
+    start_date = col_t1.date_input("Начало анализа", datetime.now() - timedelta(days=1))
+    end_date = col_t2.date_input("Конец анализа", datetime.now())
+
+    if 'show_report' not in st.session_state:
+        st.session_state.show_report = False
+
+    if st.button("📑 СФОРМИРОВАТЬ ПОЛНЫЙ ИНЖЕНЕРНЫЙ ОТЧЕТ", type="primary"):
+        st.session_state.show_report = True
+
+    if st.session_state.show_report:
+        params = {
+            "deviceId": v_id, 
+            "from": f"{start_date}T00:00:00Z", 
+            "to": f"{end_date}T23:59:59Z"
+        }
+        
+        with st.spinner('Инженерный отдел выполняет глубокий аудит систем...'):
+            history = get_detailed_traccar_data("reports/route", params=params)
+        
+        if history and len(history) > 0:
+            df = pd.DataFrame(history)
+            df['dt'] = pd.to_datetime(df['deviceTime'])
+            df['speed_kmh'] = df['speed'] * 1.852
+            df['speed_diff'] = df['speed_kmh'].diff()
+            
+            # РАСЧЕТ БАЗОВЫХ ВЕЛИЧИН
+            last_point = df.iloc[-1]
+            actual_odo = last_point['attributes'].get('totalDistance', 0) / 1000 if 'attributes' in last_point else 0
+            dist_start = df.iloc[0]['attributes'].get('totalDistance', 0) / 1000
+            actual_dist = max(0, actual_odo - dist_start)
+            
+            total_time = (df.iloc[-1]['dt'] - df.iloc[0]['dt']).total_seconds() / 3600
+            moving_df = df[df['speed_kmh'] > 3]
+            work_hours = len(moving_df) / 60
+            idle_hours = max(0, total_time - work_hours)
+
+            # --- БЛОК 1: ПЛАНОВОЕ ТО ---
+            st.subheader("🔧 Регламент технического обслуживания")
+            
+            regulations = [
+                # --- ДВИГАТЕЛЬ И ТОПЛИВНАЯ СИСТЕМА ---
+                {"part": "Масло ДВС и масляный фильтр", "limit": 10000},
+                {"part": "Ремень ГРМ / Цепь (проверка)", "limit": 60000},
+                {"part": "Ремень приводной (генератора)", "limit": 30000},
+                {"part": "Ролики натяжные", "limit": 60000},
+                {"part": "Воздушный фильтр", "limit": 15000},
+                {"part": "Топливный фильтр (тонкой очистки)", "limit": 20000},
+                {"part": "Топливный фильтр (грубой очистки)", "limit": 40000},
+                {"part": "Свечи зажигания / Накала", "limit": 30000},
+                {"part": "Промывка форсунок", "limit": 50000},
+                {"part": "Регулировка клапанов", "limit": 40000},
+                {"part": "Проверка герметичности впуска", "limit": 20000},
+                {"part": "Чистка дроссельной заслонки", "limit": 30000},
+                {"part": "Проверка опор двигателя", "limit": 50000},
+                {"part": "Замер компрессии в цилиндрах", "limit": 100000},
+                # --- ТРАНСМИССИЯ ---
+                {"part": "Масло в КПП (МКПП/АКПП)", "limit": 80000},
+                {"part": "Масло в заднем редукторе", "limit": 60000},
+                {"part": "Сцепление (комплект)", "limit": 100000},
+                {"part": "Крестовины карданного вала", "limit": 30000},
+                {"part": "Подвесной подшипник кардана", "limit": 50000},
+                {"part": "ШРУСы (проверка пыльников)", "limit": 20000},
+                # --- ТОРМОЗНАЯ СИСТЕМА ---
+                {"part": "Тормозные колодки передние", "limit": 25000},
+                {"part": "Тормозные колодки задние", "limit": 45000},
+                {"part": "Тормозные диски передние", "limit": 70000},
+                {"part": "Тормозные диски/барабаны задние", "limit": 100000},
+                {"part": "Тормозная жидкость", "limit": 40000},
+                {"part": "Шланги тормозные (проверка)", "limit": 30000},
+                {"part": "Трос стояночного тормоза", "limit": 50000},
+                # --- ХОДОВАЯ И РУЛЕВОЕ УПРАВЛЕНИЕ ---
+                {"part": "Амортизаторы (проверка)", "limit": 40000},
+                {"part": "Сайлентблоки рычагов", "limit": 50000},
+                {"part": "Шаровые опоры", "limit": 40000},
+                {"part": "Рулевые наконечники", "limit": 40000},
+                {"part": "Жидкость ГУР", "limit": 40000},
+                {"part": "Ступичные подшипники", "limit": 80000},
+                {"part": "Втулки и стойки стабилизатора", "limit": 20000},
+                {"part": "Проверка углов (Сход-развал)", "limit": 20000},
+                {"part": "Шкворни (если есть)", "limit": 15000},
+                # --- ЖИДКОСТИ И ОХЛАЖДЕНИЕ ---
+                {"part": "Антифриз (замена)", "limit": 60000},
+                {"part": "Радиатор (чистка/мойка)", "limit": 40000},
+                {"part": "Помпа охлаждения", "limit": 90000},
+                {"part": "Термостат", "limit": 60000},
+                # --- ЭЛЕКТРИКА ---
+                {"part": "Аккумулятор (проверка емкости)", "limit": 30000},
+                {"part": "Генератор (проверка щеток)", "limit": 80000},
+                {"part": "Стартер (ревизия)", "limit": 100000},
+                {"part": "Лампы головного света", "limit": 20000},
+                # --- КУЗОВ И ПРОЧЕЕ ---
+                {"part": "Смазка замков и петель", "limit": 10000},
+                {"part": "Прочистка дренажных отверстий", "limit": 30000},
+                {"part": "Проверка состояния рамы/кузова", "limit": 50000},
+                {"part": "Уплотнители дверей (смазка)", "limit": 15000},
+                {"part": "Салонный фильтр", "limit": 15000},
+                {"part": "Хладагент кондиционера", "limit": 40000},
+                {"part": "Щетки стеклоочистителя", "limit": 10000}
+            ]
+            
+            main_cols = st.columns(3)
+            main_cols[0].metric("Текущий одометр", f"{int(actual_odo)} км")
+            
+            maintenance_rows = []
+            for item in regulations:
+                remain = item['limit'] - (actual_odo % item['limit'])
+                status = "🚨 ЗАМЕНА!" if remain < 500 else "⚠️ СКОРО" if remain < 1500 else "✅ ОК"
+                maintenance_rows.append({"Узел": item['part'], "Остаток (км)": int(remain), "Статус": status})
+
+            with st.expander("📋 Посмотреть полный инженерный чек-лист"):
+                st.table(pd.DataFrame(maintenance_rows))
+
+            # --- БЛОК 2: ЭКОНОМИКА ---
+            st.divider()
+            st.subheader("📈 Экономический аудит")
+            avg_norm = 9.0 
+            fuel_consumed = (actual_dist / 100) * avg_norm
+            idle_fuel = idle_hours * 1.5 
+            money_lost = idle_fuel * 23 # MDL за литр
+            
+            f1, f2, f3 = st.columns(3)
+            f1.metric("Дистанция (период)", f"{actual_dist:.1f} км")
+            f2.metric("Топливо (расчет)", f"{fuel_consumed:.1f} л")
+            f3.metric("Убыток (простой)", f"{int(money_lost)} MDL", delta=f"{idle_fuel:.1f} л", delta_color="inverse")
+
+            # --- БЛОК 3: УЛУЧШЕННЫЙ ТАЙМЛАЙН ---
+            st.subheader("📅 Таймлайн активности (Пульс рейса)")
+            # Создаем расширенный график: Скорость + зоны простоя
+            timeline_df = df[['dt', 'speed_kmh']].copy().set_index('dt')
+            st.area_chart(timeline_df, color="#29b5e8")
+            
+            t_col1, t_col2, t_col3, t_col4 = st.columns(4)
+            t_col1.metric("Смена", f"{total_time:.1f} ч")
+            t_col2.metric("В движении", f"{work_hours:.1f} ч")
+            t_col3.metric("Холостой ход", f"{idle_hours:.1f} ч", delta_color="inverse")
+            t_col4.metric("GPS точек", len(df))
+
+            # --- БЛОК 4: PREDICTIVE MAINTENANCE С ОБОСНОВАНИЕМ ---
+            st.divider()
+            st.subheader("📉 Предиктивный износ (Обоснованный прогноз)")
+            hard_brake_count = len(df[df['speed_diff'] < -18])
+            hard_accel_count = len(df[df['speed_diff'] > 18])
+            
+            p1, p2, p3 = st.columns(3)
+            
+            # Износ тормозов: Базовый (пробег) + Нагрузочный (резкие торможения)
+            brake_wear_score = min(100, (actual_dist / 250) + (hard_brake_count * 5))
+            p1.write("**Тормозная система**")
+            p1.progress(brake_wear_score / 100)
+            p1.caption(f"Обоснование: зафиксировано {hard_brake_count} экстренных торможений. Износ выше нормы на {int(hard_brake_count*1.2)}%.")
+            
+            # Износ ДВС: Работа под нагрузкой + Нагарообразование при простое
+            engine_stress = min(100, (idle_hours * 4) + (hard_accel_count * 3))
+            p2.write("**Риск закоксовки ДВС**")
+            p2.progress(engine_stress / 100)
+            p2.caption(f"Обоснование: {idle_hours:.1f}ч работы без охлаждения потоком воздуха (простой).")
+            
+            # Ресурс масла: Математический остаток
+            oil_remain = 10000 - (actual_odo % 10000)
+            oil_pct = max(0, oil_remain / 10000)
+            p3.write("**Физический ресурс масла**")
+            p3.progress(oil_pct)
+            p3.caption(f"Обоснование: остаток {int(oil_remain)} км до критической точки потери вязкости.")
+
+            # --- БЛОК 5: КАРТА С ЛЕГЕНДОЙ ---
+            st.subheader("🗺 Карта фактического маршрута")
+            
+            # Создаем карту
+            m = folium.Map(location=[df.iloc[0]['latitude'], df.iloc[0]['longitude']], zoom_start=12)
+            
+            # Рисуем линию маршрута
+            points = [[p['latitude'], p['longitude']] for i, p in df.iterrows()]
+            folium.PolyLine(points, color="#1f77b4", weight=4, opacity=0.8).add_to(m)
+            
+            # Добавляем маркеры нарушений (резкое торможение)
+            for _, row in df[df['speed_diff'] < -20].iterrows():
+                folium.CircleMarker(
+                    [row['latitude'], row['longitude']], 
+                    radius=5, 
+                    color='red', 
+                    fill=True, 
+                    fill_opacity=0.7,
+                    popup="Резкий тормоз"
+                ).add_to(m)
+
+            # --- ДОБАВЛЕНИЕ ЛЕГЕНДЫ (HTML/CSS) ---
+            # --- ДОБАВЛЕНИЕ ЛЕГЕНДЫ (Текст принудительно черный) ---
+            legend_html = '''
+                 <div style="position: fixed; 
+                             bottom: 50px; left: 50px; width: 220px; height: 110px; 
+                             border:2px solid grey; z-index:9999; font-size:14px;
+                             background-color:white; opacity: 0.9;
+                             padding: 10px;
+                             border-radius: 5px;
+                             color: black; 
+                             font-family: Arial, sans-serif;
+                             line-height: 1.5;
+                             ">
+                             <b style="color: black;">Легенда отчета:</b><br>
+                             <i style="background:#1f77b4; width:10px; height:10px; display:inline-block; border-radius:50%"></i>&nbsp; <span style="color: black;">Маршрут ТС</span><br>
+                             <i style="background:red; width:10px; height:10px; display:inline-block; border-radius:50%"></i>&nbsp; <span style="color: black;">Резкое торможение</span><br>
+                             <i style="border: 1px solid black; background:white; width:10px; height:10px; display:inline-block; border-radius:2px"></i>&nbsp; <span style="color: black;">Точки GPS: ''' + str(len(df)) + '''</span>
+                </div>
+            '''
+            m.get_root().html.add_child(folium.Element(legend_html))
+
+            # Отображаем карту в Streamlit
+            st_folium(m, width=1300, height=500)
+
+            # --- БЛОК 6: БИЗНЕС-ВЕРДИКТ (ИТОГИ) ---
+            st.divider()
+            st.subheader("💼 Бизнес-вердикт")
+            b1, b2, b3 = st.columns(3)
+
+            utilization = (work_hours / total_time) * 100 if total_time > 0 else 0
+            b1.metric("Эффективность ТС", f"{utilization:.1f}%", help="Время полезного движения к общему времени")
+            
+            offences = hard_brake_count + hard_accel_count
+            safety_score = max(0, 100 - (offences * 4) - (idle_hours * 2))
+            b2.metric("Driver Safety Score", f"{int(safety_score)}/100")
+            
+            b3.metric("Экономия на простое", f"{int(money_lost)} MDL", delta="Потенциальная прибыль", delta_color="off")
+
+            if utilization < 40:
+                st.error("🚨 КРИТИЧЕСКАЯ НЕЭФФЕКТИВНОСТЬ: Машина простаивает более 60% времени. Прямые убытки на содержание.")
+            elif safety_score < 65:
+                st.warning("⚠️ ВНИМАНИЕ: Агрессивное вождение. Прогнозируется внеплановый ремонт ходовой через 2-3 месяца.")
             else:
-                with st.spinner("📡 Глубокое сканирование данных..."):
-                    iso_start = f"{start_d.strftime('%Y-%m-%d')}T00:00:00Z"
-                    iso_end = f"{end_d.strftime('%Y-%m-%d')}T23:59:59Z"
-                    
-                    # Убеждаемся, что URL собран правильно
-                    base_url = TRACCAR_URL.strip().rstrip('/')
-                    api_url = f"{base_url}/api/reports/route"
-                    params = {"deviceId": v_id, "from": iso_start, "to": iso_end}
-                    
-                    try:
-                        resp = requests.get(api_url, auth=TRACCAR_AUTH, params=params, timeout=30)
-                        
-                        # ПРОВЕРКА: Если сервер вернул не 200 OK
-                        if resp.status_code != 200:
-                            st.error(f"🛑 Ошибка сервера Traccar ({resp.status_code})")
-                            st.info("Проверьте настройки авторизации и доступность сервера.")
-                            st.stop()
+                st.success("✅ ОБРАЗЦОВОЕ ИСПОЛЬЗОВАНИЕ: Высокий коэффициент полезного времени и бережная эксплуатация.")
 
-                        # ПРОВЕРКА: Если ответ пустой или не JSON
-                        if not resp.text.strip():
-                            st.warning("📭 Сервер вернул пустой ответ. Возможно, данных за этот период нет.")
-                            st.stop()
-                            
-                        try:
-                            raw_data = resp.json()
-                        except Exception:
-                            st.error("🛑 Сервер прислал не JSON данные. Возможно, это страница ошибки.")
-                            with st.expander("Посмотреть ответ сервера"):
-                                st.code(resp.text)
-                            st.stop()
+            if st.button("❌ Закрыть и очистить отчет"):
+                st.session_state.show_report = False
+                st.rerun()
 
-                        if raw_data:
-                            df = pd.DataFrame(raw_data)
-                            df['dt'] = pd.to_datetime(df['deviceTime'])
-                            df = df.sort_values('dt')
-
-                            # --- ТВОЯ ЛОГИКА ОДОМЕТРА (СИНХРОНИЗАЦИЯ) ---
-                            def get_odo(row):
-                                attrs = row.get('attributes', {})
-                                # Приоритет: SQL колонка -> totalDistance -> odometer
-                                val = row.get('odo_km') or attrs.get('totalDistance') or attrs.get('odometer', 0)
-                                # Если значение в метрах (больше 2000), делим на 1000
-                                return float(val) / 1000.0 if val > 2000 else float(val)
-
-                            df['odo_final'] = df.apply(get_odo, axis=1)
-                            df['speed_kmh'] = round(df['speed'] * 1.852, 1)
-                            df['diff_speed'] = df['speed_kmh'].diff().fillna(0)
-                            df['dt_diff_sec'] = df['dt'].diff().dt.total_seconds().abs().fillna(0)
-                            
-                            # Расчет GPS дистанции (Haversine)
-                            df['gps_dist'] = 0.0
-                            for i in range(1, len(df)):
-                                df.iloc[i, df.columns.get_loc('gps_dist')] = haversine_km(
-                                    df.iloc[i-1]['longitude'], df.iloc[i-1]['latitude'],
-                                    df.iloc[i]['longitude'], df.iloc[i]['latitude']
-                                )
-
-                            st.session_state.audit_results = {
-                                'df': df,
-                                'v_name': v_name,
-                                'start': start_d,
-                                'end': end_d,
-                                'fuel_rate': fuel_rate,
-                                'fuel_price': fuel_price
-                            }
-                            st.rerun()
-                        else:
-                            st.warning("📭 За этот период перемещений не найдено.")
-                            
-                    except requests.exceptions.RequestException as e:
-                        st.error(f"📡 Ошибка связи: {str(e)}")
-
-    # --- 4. ВИЗУАЛИЗАЦИЯ И ПОДРОБНЫЙ ОТЧЕТ ---
-    if st.session_state.audit_results:
-        res = st.session_state.audit_results
-        df = res['df']
-        
-        # Точные расчеты
-        odo_start = df['odo_final'].iloc[0]
-        odo_end = df['odo_final'].iloc[-1]
-        dist_odo = odo_end - odo_start
-        dist_gps = df['gps_dist'].sum()
-        
-        # Если одометр "прыгает" или стоит на месте, используем GPS расчет
-        real_dist = dist_odo if dist_odo > 0.1 else dist_gps
-        
-        st.header(f"📋 Аудит ТС: {res['v_name']}")
-        st.caption(f"Период: {res['start']} — {res['end']} (Синхронизировано по GPS и Одометру)")
-
-        # --- МЕТРИКИ (СИНХРОНИЗИРОВАННЫЕ) ---
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🏁 Одометр (Конец)", f"{odo_end:.2f} км", help="Значение totalDistance с сервера")
-        m2.metric("🛣️ Пробег за период", f"{real_dist:.2f} км", delta=f"GPS: {dist_gps:.2f}")
-        
-        total_fuel = (real_dist / 100) * res['fuel_rate']
-        m3.metric("⛽ Расход топлива", f"{total_fuel:.1f} л", delta=f"{int(total_fuel * res['fuel_price'])} MDL")
-        
-        overspeeds = df[df['speed_kmh'] > 95]
-        m4.metric("⚠️ Нарушения", f"{len(overspeeds)}", delta="Скорость > 95", delta_color="inverse")
-
-        # --- КАРТА МАРШРУТА ---
-        st.subheader("🗺️ Гео-аналитика и трек")
-        import folium
-        from streamlit_folium import st_folium
-        from folium.plugins import AntPath, Hotline
-
-        m = folium.Map(location=[df['latitude'].mean(), df['longitude'].mean()], zoom_start=12, tiles="cartodbpositron")
-        
-        # Трек с градиентом скорости (Hotline)
-        path_data = [[r['latitude'], r['longitude'], r['speed_kmh']] for _, r in df.iterrows()]
-        Hotline(path_data, weight=5, palette=['green', 'yellow', 'red'], min_value=0, max_value=100).add_to(m)
-
-        # Маркеры нарушений
-        for _, row in overspeeds.iterrows():
-            folium.CircleMarker(
-                [row['latitude'], row['longitude']], radius=6, color='darkred', fill=True,
-                popup=f"Нарушение: {row['speed_kmh']} км/ч в {row['dt'].strftime('%H:%M')}"
-            ).add_to(m)
-
-        st_folium(m, width=1300, height=500, key=f"map_{res['v_name']}")
-
-        # --- ГРАФИКИ И АНАЛИЗ АГРЕССИВНОСТИ ---
-        st.divider()
-        c1, c2 = st.columns([2, 1])
-        
-        with c1:
-            st.write("### 📈 Телеметрия скорости")
-            import altair as alt
-            line = alt.Chart(df).mark_line(color='#29b5e8', size=2).encode(
-                x=alt.X('dt:T', title="Время"),
-                y=alt.Y('speed_kmh:Q', title="Скорость км/ч"),
-                tooltip=['dt', 'speed_kmh', 'odo_final']
-            ).properties(height=350).interactive()
-            
-            rule = alt.Chart(pd.DataFrame({'y': [95]})).mark_rule(color='red', strokeDash=[5,5]).encode(y='y:Q')
-            st.altair_chart(line + rule, use_container_width=True)
-
-        with c2:
-            st.write("### ⏱️ Статистика времени")
-            moving = df[df['speed_kmh'] > 5]
-            idle_time = df[df['speed_kmh'] <= 5]['dt_diff_sec'].sum() / 60
-            work_time = moving['dt_diff_sec'].sum() / 3600
-            
-            st.info(f"**В движении:** {int(work_time)}ч {int((work_time%1)*60)}м")
-            st.warning(f"**Холостой ход:** {int(idle_time)} мин")
-            st.success(f"**Эффективность:** {round((work_time/(work_time + idle_time/60))*100 if work_time>0 else 0, 1)}%")
-
-        # --- ТАБЛИЦА ИНЦИДЕНТОВ (РЕЗКИЕ МАНЕВРЫ И СКОРОСТЬ) ---
-        st.write("### 📋 Журнал агрессивного вождения")
-        # Резкие торможения (-15 км/ч за шаг) или ускорения (+15 км/ч)
-        agg_events = df[(df['diff_speed'].abs() > 15) | (df['speed_kmh'] > 95)].copy()
-        
-        if not agg_events.empty:
-            agg_events['Событие'] = agg_events.apply(
-                lambda x: "🚀 Резкое ускорение" if x['diff_speed'] > 15 
-                else ("🛑 Резкое торможение" if x['diff_speed'] < -15 else "⚠️ Превышение"), axis=1
-            )
-            st.dataframe(
-                agg_events[['dt', 'Событие', 'speed_kmh', 'diff_speed', 'address']],
-                column_config={
-                    "dt": "Время", "speed_kmh": "Скорость", 
-                    "diff_speed": "Δ Скорости", "address": "Адрес"
-                },
-                use_container_width=True, hide_index=True
-            )
         else:
-            st.success("Спокойное вождение: резких маневров не обнаружено.")
-
-        if st.button("🗑️ ОЧИСТИТЬ ДАННЫЕ АУДИТА"):
-            st.session_state.audit_results = None
-            st.rerun()
+            st.warning("За указанный период данных не найдено. Попробуйте выбрать другие даты.")
+            st.session_state.show_report = False
+            
             
 elif selected == "База Данных":
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
@@ -1885,6 +1925,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
