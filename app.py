@@ -1327,44 +1327,25 @@ elif selected == "ТС":
     else:
         st.info("ℹ️ В автопарке пока нет записей.")
 
-# ============================================================================
-# БЛОК "АНАЛИТИКА" - ПОЛНОСТЬЮ ПЕРЕПИСАННЫЙ И СИНХРОНИЗИРОВАННЫЙ
-# ============================================================================
-
 elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence: Глубокий Аудит")
     st.markdown("---")
 
-    # --- 1. ИНИЦИАЛИЗАЦИЯ (чтобы данные не пропадали при кликах на карту) ---
+    # --- 1. ИНИЦИАЛИЗАЦИЯ СОСТОЯНИЯ ---
     if 'audit_results' not in st.session_state:
         st.session_state.audit_results = None
 
-    # --- 2. ФУНКЦИИ ЗАПРОСА ---
-    def get_traccar_data_safe(v_id, s_date, e_date):
-        iso_start = f"{s_date.strftime('%Y-%m-%d')}T00:00:00Z"
-        iso_end = f"{e_date.strftime('%Y-%m-%d')}T23:59:59Z"
-        
-        url = f"{TRACCAR_URL.rstrip('/')}/api/reports/route"
-        params = {"deviceId": v_id, "from": iso_start, "to": iso_end}
-        headers = {"Accept": "application/json"}
-        
-        try:
-            resp = requests.get(url, auth=TRACCAR_AUTH, params=params, headers=headers, timeout=30)
-            if resp.status_code == 200:
-                return resp.json(), None
-            return None, f"Ошибка сервера: {resp.status_code}"
-        except Exception as e:
-            return None, f"Ошибка связи: {str(e)}"
-
-    # Функция Haversine для расчета пробега вручную (на случай сбоя одометра)
+    # --- 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (МАТЕМАТИКА И СИНХРОНИЗАЦИЯ) ---
     from math import radians, cos, sin, asin, sqrt
-    def haversine(lon1, lat1, lon2, lat2):
+
+    def haversine_km(lon1, lat1, lon2, lat2):
+        """Расчет расстояния между двумя точками для проверки одометра"""
         lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
         dlon, dlat = lon2 - lon1, lat2 - lat1
         a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
         return 6371 * 2 * asin(sqrt(a))
 
-    # --- 2. ПАНЕЛЬ УПРАВЛЕНИЯ ---
+    # --- 3. ПАНЕЛЬ УПРАВЛЕНИЯ В SIDEBAR ---
     devices_dict, _ = get_detailed_traccar_data()
     
     with st.sidebar:
@@ -1372,12 +1353,14 @@ elif selected == "Аналитика":
         v_name = st.selectbox("🎯 Выберите ТС", options=[d['name'] for d in devices_dict.values()])
         v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
         
-        # Интервалы дат
         start_d = st.date_input("Начало периода", datetime.now() - timedelta(days=1))
         end_d = st.date_input("Конец периода", datetime.now())
         
-        if st.button("🔄 ЗАПУСТИТЬ СИНХРОНИЗАЦИЮ", type="primary", use_container_width=True):
-            with st.spinner("📡 Получение данных из БД и API..."):
+        fuel_rate = st.number_input("Расход л/100км", value=12.0, step=0.5)
+        fuel_price = st.number_input("Цена топлива (MDL)", value=24.0, step=0.1)
+
+        if st.button("🔄 ЗАПУСТИТЬ ПОЛНУЮ СИНХРОНИЗАЦИЮ", type="primary", use_container_width=True):
+            with st.spinner("📡 Глубокое сканирование данных..."):
                 iso_start = f"{start_d.strftime('%Y-%m-%d')}T00:00:00Z"
                 iso_end = f"{end_d.strftime('%Y-%m-%d')}T23:59:59Z"
                 
@@ -1391,136 +1374,147 @@ elif selected == "Аналитика":
                         if raw_data:
                             df = pd.DataFrame(raw_data)
                             df['dt'] = pd.to_datetime(df['deviceTime'])
-                            
-                            # --- ВОТ ТУТ РЕШЕНИЕ ПРОБЛЕМЫ KeyError ---
-                            def extract_odometer_safe(row):
-                                # 1. Пытаемся взять напрямую (если колонка пришла из SQL/API)
-                                if 'odo_km' in row and pd.notnull(row['odo_km']):
-                                    return float(row['odo_km'])
-                                
-                                # 2. Если колонки нет, лезем в attributes (стандарт Traccar)
-                                attrs = row.get('attributes', {})
-                                # Берем totalDistance (метры) и превращаем в КМ
-                                val = attrs.get('totalDistance') or attrs.get('odometer') or 0
-                                return float(val) / 1000.0
+                            df = df.sort_values('dt')
 
-                            # Создаем колонку odo_final ГАРАНТИРОВАННО
-                            df['odo_final'] = df.apply(extract_odometer_safe, axis=1)
+                            # --- СИНХРОНИЗАЦИЯ ДИСТАНЦИИ (ГЛУБОКАЯ) ---
+                            # 1. Проверяем наличие odo_km из твоей SQL таблицы (если проброшено)
+                            # 2. Иначе парсим totalDistance из attributes
+                            # 3. Дополнительно считаем GPS-дистанцию (Haversine) для сверки
                             
+                            def get_odo(row):
+                                attrs = row.get('attributes', {})
+                                # Приоритет: кастомная колонка odo_km -> totalDistance -> odometer
+                                val = row.get('odo_km') or attrs.get('totalDistance') or attrs.get('odometer', 0)
+                                return float(val) / 1000.0 if val > 2000 else float(val)
+
+                            df['odo_final'] = df.apply(get_odo, axis=1)
                             df['speed_kmh'] = round(df['speed'] * 1.852, 1)
-                            df['diff_speed'] = df['speed_kmh'].diff().fillna(0)
-                            df['dt_diff_sec'] = df['dt'].diff(-1).dt.total_seconds().abs().fillna(0)
                             
+                            # Расчет дельт для анализа агрессивности
+                            df['diff_speed'] = df['speed_kmh'].diff().fillna(0)
+                            df['dt_diff_sec'] = df['dt'].diff().dt.total_seconds().abs().fillna(0)
+                            
+                            # Расчет пройденного пути по GPS между точками (для аудита точности)
+                            df['gps_dist'] = 0.0
+                            for i in range(1, len(df)):
+                                df.iloc[i, df.columns.get_loc('gps_dist')] = haversine_km(
+                                    df.iloc[i-1]['longitude'], df.iloc[i-1]['latitude'],
+                                    df.iloc[i]['longitude'], df.iloc[i]['latitude']
+                                )
+
                             st.session_state.audit_results = {
-                                'df': df.sort_values('dt'),
+                                'df': df,
                                 'v_name': v_name,
                                 'start': start_d,
-                                'end': end_d
+                                'end': end_d,
+                                'fuel_rate': fuel_rate,
+                                'fuel_price': fuel_price
                             }
                             st.rerun()
+                        else:
+                            st.warning("📭 Нет данных за выбранный период.")
+                    else:
+                        st.error(f"Ошибка API: {resp.status_code}")
+                except Exception as e:
+                    st.error(f"Ошибка системы: {e}")
 
-    # --- 3. ВЫВОД ОТЧЕТА (СИНХРОНИЗИРОВАННЫЙ) ---
+    # --- 4. ВИЗУАЛИЗАЦИЯ И ПОДРОБНЫЙ ОТЧЕТ ---
     if st.session_state.audit_results:
         res = st.session_state.audit_results
         df = res['df']
         
-        # РАСЧЕТЫ ПО ОДОМЕТРУ
+        # Точные расчеты
         odo_start = df['odo_final'].iloc[0]
         odo_end = df['odo_final'].iloc[-1]
-        total_km = odo_end - odo_start
+        dist_odo = odo_end - odo_start
+        dist_gps = df['gps_dist'].sum()
         
-        # Если одометр на сервере барахлит, считаем по GPS дистанциям
-        if total_km <= 0:
-            total_km = df['attributes'].apply(lambda x: x.get('distance', 0)).sum() / 1000.0
+        # Если одометр "прыгает" или стоит на месте, используем GPS расчет
+        real_dist = dist_odo if dist_odo > 0.1 else dist_gps
+        
+        st.header(f"📋 Аудит ТС: {res['v_name']}")
+        st.caption(f"Период: {res['start']} — {res['end']} (Синхронизировано по GPS и Одометру)")
 
-        st.subheader(f"📊 Результаты аудита: {res['v_name']}")
-        
-        # Ряд метрик №1
+        # --- МЕТРИКИ (СИНХРОНИЗИРОВАННЫЕ) ---
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🏁 Текущий Одометр", f"{odo_end:.2f} км", help="Последнее значение с сервера")
-        m2.metric("🛣️ Пробег за период", f"{total_km:.2f} км", delta=f"от {odo_start:.1f}")
+        m1.metric("🏁 Одометр (Конец)", f"{odo_end:.2f} км", help="Значение totalDistance с сервера")
+        m2.metric("🛣️ Пробег за период", f"{real_dist:.2f} км", delta=f"GPS: {dist_gps:.2f}")
         
-        fuel_consumed = (total_km / 100) * 12 # Твоя норма 12л/100км
-        m3.metric("⛽ Расход (12л/100)", f"{fuel_consumed:.1f} л", delta=f"{int(fuel_consumed * 24)} MDL")
+        total_fuel = (real_dist / 100) * res['fuel_rate']
+        m3.metric("⛽ Расход топлива", f"{total_fuel:.1f} л", delta=f"{int(total_fuel * res['fuel_price'])} MDL")
         
         overspeeds = df[df['speed_kmh'] > 95]
         m4.metric("⚠️ Нарушения", f"{len(overspeeds)}", delta="Скорость > 95", delta_color="inverse")
 
-        # --- 4. КАРТА С ФИЛЬТРАЦИЕЙ ---
-        st.write("### 🗺️ Интерактивная карта маршрута")
+        # --- КАРТА МАРШРУТА ---
+        st.subheader("🗺️ Гео-аналитика и трек")
         import folium
         from streamlit_folium import st_folium
-        from folium.plugins import AntPath, MarkerCluster
+        from folium.plugins import AntPath, Hotline
 
-        avg_lat, avg_lon = df['latitude'].mean(), df['longitude'].mean()
-        m = folium.Map(location=[avg_lat, avg_lon], zoom_start=13, tiles="cartodbpositron")
+        m = folium.Map(location=[df['latitude'].mean(), df['longitude'].mean()], zoom_start=12, tiles="cartodbpositron")
         
-        # Траектория
-        points = [[r['latitude'], r['longitude']] for _, r in df.iterrows()]
-        AntPath(points, color='#1E90FF', weight=4, delay=1000).add_to(m)
+        # Трек с градиентом скорости (Hotline)
+        path_data = [[r['latitude'], r['longitude'], r['speed_kmh']] for _, r in df.iterrows()]
+        Hotline(path_data, weight=5, palette=['green', 'yellow', 'red'], min_value=0, max_value=100).add_to(m)
 
-        # Кластер нарушений
-        mc = MarkerCluster(name="События").add_to(m)
+        # Маркеры нарушений
         for _, row in overspeeds.iterrows():
             folium.CircleMarker(
-                [row['latitude'], row['longitude']], 
-                radius=5, color='red', fill=True,
-                popup=f"Скорость: {row['speed_kmh']} км/ч"
-            ).add_to(mc)
+                [row['latitude'], row['longitude']], radius=6, color='darkred', fill=True,
+                popup=f"Нарушение: {row['speed_kmh']} км/ч в {row['dt'].strftime('%H:%M')}"
+            ).add_to(m)
 
-        # Рендер карты с уникальным ключом для синхронизации
-        st_folium(m, width=1300, height=500, key=f"audit_map_{res['v_name']}_{res['start']}")
+        st_folium(m, width=1300, height=500, key=f"map_{res['v_name']}")
 
-        # --- 5. АНАЛИЗ ВОЖДЕНИЯ ---
+        # --- ГРАФИКИ И АНАЛИЗ АГРЕССИВНОСТИ ---
         st.divider()
-        col_left, col_right = st.columns([2, 1])
+        c1, c2 = st.columns([2, 1])
         
-        with col_left:
-            st.write("### 📈 Динамика скорости")
+        with c1:
+            st.write("### 📈 Телеметрия скорости")
             import altair as alt
-            chart = alt.Chart(df).mark_area(
-                line={'color':'#29b5e8'},
-                color=alt.Gradient(
-                    gradient='linear',
-                    stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#29b5e8', offset=1)],
-                    x1=1, x2=1, y1=1, y2=0
-                )
-            ).encode(
-                x='dt:T',
-                y=alt.Y('speed_kmh:Q', title="км/ч"),
-                tooltip=['dt', 'speed_kmh']
-            ).properties(height=300).interactive()
-            st.altair_chart(chart, use_container_width=True)
-
-        with col_right:
-            st.write("### ⏱️ Эффективность")
-            moving = df[df['speed_kmh'] > 5]
-            total_time_sec = moving['dt_diff_sec'].sum()
-            h = int(total_time_sec // 3600)
-            m = int((total_time_sec % 3600) // 60)
+            line = alt.Chart(df).mark_line(color='#29b5e8', size=2).encode(
+                x=alt.X('dt:T', title="Время"),
+                y=alt.Y('speed_kmh:Q', title="Скорость км/ч"),
+                tooltip=['dt', 'speed_kmh', 'odo_final']
+            ).properties(height=350).interactive()
             
-            st.info(f"**В движении:** {h}ч {m}мин")
-            st.success(f"**Средняя скорость:** {round(moving['speed_kmh'].mean(),1)} км/ч")
-            st.warning(f"**Макс. скорость:** {df['speed_kmh'].max()} км/ч")
+            rule = alt.Chart(pd.DataFrame({'y': [95]})).mark_rule(color='red', strokeDash=[5,5]).encode(y='y:Q')
+            st.altair_chart(line + rule, use_container_width=True)
 
-        # --- 6. ТАБЛИЦА НАРУШЕНИЙ (СИНХРОНИЗАЦИЯ ПО ВРЕМЕНИ) ---
-        st.write("### 📋 Детализация инцидентов")
-        incidents = df[(df['speed_kmh'] > 95) | (df['diff_speed'].abs() > 15)].copy()
-        incidents['Тип'] = incidents.apply(lambda x: "Превышение" if x['speed_kmh'] > 95 else "Резкий маневр", axis=1)
+        with c2:
+            st.write("### ⏱️ Статистика времени")
+            moving = df[df['speed_kmh'] > 5]
+            idle_time = df[df['speed_kmh'] <= 5]['dt_diff_sec'].sum() / 60
+            work_time = moving['dt_diff_sec'].sum() / 3600
+            
+            st.info(f"**В движении:** {int(work_time)}ч {int((work_time%1)*60)}м")
+            st.warning(f"**Холостой ход:** {int(idle_time)} мин")
+            st.success(f"**Эффективность:** {round((work_time/(work_time + idle_time/60))*100 if work_time>0 else 0, 1)}%")
+
+        # --- ТАБЛИЦА ИНЦИДЕНТОВ (РЕЗКИЕ МАНЕВРЫ И СКОРОСТЬ) ---
+        st.write("### 📋 Журнал агрессивного вождения")
+        # Резкие торможения (-15 км/ч за шаг) или ускорения (+15 км/ч)
+        agg_events = df[(df['diff_speed'].abs() > 15) | (df['speed_kmh'] > 95)].copy()
         
-        st.dataframe(
-            incidents[['dt', 'speed_kmh', 'diff_speed', 'Тип', 'latitude', 'longitude']],
-            use_container_width=True,
-            column_config={
-                "dt": "Время",
-                "speed_kmh": "Скорость",
-                "diff_speed": "Ускорение",
-                "latitude": "Широта",
-                "longitude": "Долгота"
-            }
-        )
+        if not agg_events.empty:
+            agg_events['Событие'] = agg_events.apply(
+                lambda x: "🚀 Резкое ускорение" if x['diff_speed'] > 15 
+                else ("🛑 Резкое торможение" if x['diff_speed'] < -15 else "⚠️ Превышение"), axis=1
+            )
+            st.dataframe(
+                agg_events[['dt', 'Событие', 'speed_kmh', 'diff_speed', 'address']],
+                column_config={
+                    "dt": "Время", "speed_kmh": "Скорость", 
+                    "diff_speed": "Δ Скорости", "address": "Адрес"
+                },
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.success("Спокойное вождение: резких маневров не обнаружено.")
 
-        if st.button("🗑️ СБРОСИТЬ ОТЧЕТ"):
+        if st.button("🗑️ ОЧИСТИТЬ ДАННЫЕ АУДИТА"):
             st.session_state.audit_results = None
             st.rerun()
             
@@ -1874,6 +1868,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
