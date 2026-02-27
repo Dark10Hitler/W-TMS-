@@ -614,7 +614,15 @@ def render_aggrid_table(table_key, title):
 
     # --- 2. НАСТРОЙКА ГРИДА ---
     gb = GridOptionsBuilder.from_dataframe(df)
-    gb.configure_default_column(resizable=True, sortable=True, filterable=True, minWidth=120)
+    # Включаем фильтры для всех колонок и указываем тип 'agTextColumnFilter'
+    gb.configure_default_column(
+        resizable=True, 
+        sortable=True, 
+        filterable=True,      # Включает фильтрацию
+        filter=True,          # Активирует иконку фильтра в заголовке
+        minWidth=120,
+        floatingFilter=True   # ДОБАВЛЯЕТ СТРОКУ ФИЛЬТРА ПОД ЗАГОЛОВКАМИ (Очень удобно!)
+    )
     
     # Подсветка статусов/секций через JsCode
     if "Секция" in df.columns:
@@ -2235,6 +2243,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
