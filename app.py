@@ -35,8 +35,6 @@ from geopy.distance import geodesic
 import json
 from geopy.geocoders import Nominatim # Для получения адреса по координатам
 import math
-
-
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
@@ -68,7 +66,24 @@ def get_address_cached(lat, lon):
         return f"📍 {lat:.4f}, {lon:.4f} (Ошибка связи)"
     except Exception as e:
         return "Ошибка геокодирования"
+
+def upload_image_to_supabase(file_name, file_data, bucket_name="avatars"):
+    """Вспомогательная функция для загрузки изображений в Supabase Storage"""
+    try:
+        # Уникальное имя файла, чтобы избежать перезаписи
+        unique_name = f"{int(time.time())}_{file_name}"
+        path_on_supa = f"manager/{unique_name}"
         
+        # Загрузка
+        supabase.storage.from_(bucket_name).upload(path_on_supa, file_data)
+        
+        # Получение публичной ссылки
+        public_url = supabase.storage.from_(bucket_name).get_public_url(path_on_supa)
+        return public_url
+    except Exception as e:
+        st.error(f"Ошибка загрузки изображения: {e}")
+        return None
+
 def upload_driver_photo(file):
     from database import supabase
     import time
@@ -1086,86 +1101,152 @@ def show_map():
             st.dataframe(pd.DataFrame(log_df), use_container_width=True)
             
 def show_profile():
-    st.markdown("<h1 class='section-head'>👤 Профиль Управляющего</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='section-head'>👤 Цифровой Профиль Управляющего</h1>", unsafe_allow_html=True)
 
-    # 1. ЗАГРУЗКА ДАННЫХ
+    # --- 1. ЗАГРУЗКА ДАННЫХ УПРАВЛЯЮЩЕГО ---
     try:
-        # Берем данные управляющего (первую запись)
+        # Берем первую запись из таблицы (она должна быть одна)
         res = supabase.table("manager_profile").select("*").order("id").limit(1).execute()
         
         if not res.data:
             st.warning("Профиль управляющего не найден. Создайте его.")
-            if st.button("➕ Создать профиль"):
+            if st.button("➕ Создать базовый профиль"):
                 supabase.table("manager_profile").insert({"full_name": "Новый Управляющий"}).execute()
                 st.rerun()
             return
             
-        manager_data = res.data[0]
-        m_id = manager_data['id']
-        
-        # Преобразуем в формат для редактора (параметр - значение)
-        # Исключаем технические поля id и created_at из редактирования
-        df_for_edit = pd.DataFrame([
-            {"Ключ": k, "Параметр": k.replace('_', ' ').title(), "Значение": str(v)} 
-            for k, v in manager_data.items() if k not in ['id', 'created_at']
-        ])
+        m_data = res.data[0]
+        m_id = m_data['id']
 
     except Exception as e:
-        st.error(f"Ошибка базы: {e}")
+        st.error(f"Критическая ошибка базы: {e}")
         return
 
-    # 2. ВИЗУАЛЬНАЯ КАРТОЧКА
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        st.image("https://cdn-icons-png.flaticon.com/512/6024/6024190.png", width=150)
+    # --- 2. ВИЗУАЛИЗАЦИЯ (ЛИЦО И МЕСТО РАБОТЫ) ---
+    col_face, col_workplace = st.columns([1, 2])
     
-    with col2:
-        st.subheader(manager_data.get('full_name', 'ФИО не заполнено'))
-        st.write(f"💼 **Должность:** {manager_data.get('position', '---')}")
-        st.write(f"📞 **Связь:** {manager_data.get('phone', '---')} | {manager_data.get('email', '---')}")
-        st.write(f"🏠 **Адрес проживания:** {manager_data.get('home_address', 'Не указан')}")
+    # Дефолтные картинки, если ссылки в базе пустые
+    default_avatar = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+    default_workplace = "https://img.freepik.com/premium-photo/modern-warehouse-with-racks-goods-generative-ai_124507-449.jpg"
+
+    with col_face:
+        # Отображение фото управляющего
+        avatar_url = m_data.get('avatar_url') or default_avatar
+        st.image(avatar_url, caption=f"ID: {m_id}", use_container_width=True)
+        
+        # Виджет загрузки нового фото
+        new_avatar = st.file_uploader("🖼️ Сменить фото", type=['png', 'jpg', 'jpeg'], key="avatar_uploader")
+        if new_avatar:
+            if st.button("💾 Загрузить фото"):
+                with st.spinner("Загрузка..."):
+                    url = upload_image_to_supabase(new_avatar.name, new_avatar.getvalue())
+                    if url:
+                        supabase.table("manager_profile").update({"avatar_url": url}).eq("id", m_id).execute()
+                        st.success("Фото обновлено!")
+                        time.sleep(1)
+                        st.rerun()
+
+    with col_workplace:
+        # Отображение фото рабочего пространства
+        work_photo_url = m_data.get('workplace_photo_url') or default_workplace
+        st.image(work_photo_url, caption=m_data.get('workplace_name', 'Место работы'), use_container_width=True)
+        
+        # Виджет загрузки нового фото склада
+        new_work_photo = st.file_uploader("🏗️ Сменить фото склада", type=['png', 'jpg', 'jpeg'], key="work_photo_uploader")
+        if new_work_photo:
+            if st.button("💾 Загрузить фото склада"):
+                with st.spinner("Загрузка..."):
+                    url = upload_image_to_supabase(new_work_photo.name, new_work_photo.getvalue())
+                    if url:
+                        supabase.table("manager_profile").update({"workplace_photo_url": url}).eq("id", m_id).execute()
+                        st.success("Фото склада обновлено!")
+                        time.sleep(1)
+                        st.rerun()
 
     st.markdown("---")
 
-    # 3. ИНТЕРФЕЙС РЕДАКТИРОВАНИЯ И УДАЛЕНИЯ
-    st.write("### ⚙️ Настройки и правка данных")
+    # --- 3. КЛЮЧЕВЫЕ МЕТРИКИ И КОНТАКТЫ ---
+    st.subheader("📊 Текущие показатели и локация")
+    c1, c2, c3 = st.columns(3)
     
+    # Метрика кол-ва сотрудников
+    c1.metric("Сотрудников под управлением", f"{m_data.get('employees_count', 0)} чел.")
+    # Название и адрес места работы
+    c2.metric("Место работы", m_data.get('workplace_name', 'Не указано'))
+    # Телефон
+    c3.metric("Контактный телефон", m_data.get('phone', '---'))
+
+    # Вывод адресов текстовыми блоками
+    with st.expander("📍 Локации и контакты detailed"):
+        st.write(f"🏠 **Домашний адрес:** {m_data.get('home_address', '---')}")
+        st.write(f"🏢 **Адрес офиса/склада:** {m_data.get('workplace_address', '---')}")
+        st.write(f"📧 **Email:** {m_data.get('email', '---')}")
+        st.write(f"🕒 **Часы работы:** {m_data.get('working_hours', '---')}")
+
+    st.markdown("---")
+
+    # --- 4. РЕДАКТОР ОСТАЛЬНЫХ ДАННЫХ ---
+    st.write("### ⚙️ Полная правка данных")
+    
+    # Список полей для редактора (исключаем технические и ссылки на фото)
+    excluded_fields = ['id', 'created_at', 'avatar_url', 'workplace_photo_url']
+    
+    # Маппинг ключей на русский язык
+    field_labels = {
+        'full_name': 'ФИО Управляющего',
+        'position': 'Должность',
+        'department': 'Департамент',
+        'contract_no': 'Номер Контракта',
+        'phone': 'Телефон',
+        'email': 'Email',
+        'workplace_name': 'Название Склада/Офиса',
+        'employees_count': 'Сотрудников (чел.)',
+        'workplace_address': 'Адрес Работы',
+        'home_address': 'Домашний Адрес',
+        'working_hours': 'Часы Работы'
+    }
+
+    # Подготовка данных для st.data_editor
+    df_for_edit = pd.DataFrame([
+        {
+            "key": k, 
+            "Параметр": field_labels.get(k, k.replace('_', ' ').title()), 
+            "Значение": str(v)
+        } 
+        for k, v in m_data.items() if k not in excluded_fields
+    ])
+    
+    # Сортировка для предсказуемого порядка в редакторе
+    df_for_edit = df_for_edit.sort_values(by="Параметр")
+
     edited_df = st.data_editor(
         df_for_edit,
         column_config={
-            "Ключ": None, # Скрываем
+            "key": None, # Скрываем техническую колонку
             "Параметр": st.column_config.TextColumn(disabled=True),
             "Значение": st.column_config.TextColumn(width="large")
         },
         use_container_width=True,
         hide_index=True,
-        key="manager_editor"
+        key="manager_profile_editor"
     )
 
-    c1, c2 = st.columns(2)
-    
-    # Кнопка Сохранения
-    if c1.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
+    # --- 5. КНОПКА СОХРАНЕНИЯ ИЗМЕНЕНИЙ ИЗ РЕДАКТОРА ---
+    if st.button("💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
         try:
-            # Превращаем обратно в строку БД
-            new_data = {row["Ключ"]: row["Значение"] for _, row in edited_df.iterrows()}
-            supabase.table("manager_profile").update(new_data).eq("id", m_id).execute()
-            st.success("Данные управляющего обновлены!")
-            time.sleep(1)
-            st.rerun()
+            with st.spinner("Сохранение..."):
+                # Превращаем обратно в строку БД
+                new_data = {}
+                for _, row in edited_df.iterrows():
+                    new_data[row["key"]] = row["Значение"]
+                
+                # Обновляем запись в Supabase
+                supabase.table("manager_profile").update(new_data).eq("id", m_id).execute()
+                st.success("Профиль управляющего успешно обновлен!")
+                time.sleep(1)
+                st.rerun()
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
-
-    # Кнопка Удаления (Опасная зона)
-    if c2.button("🗑️ УДАЛИТЬ ПРОФИЛЬ", use_container_width=True):
-        st.session_state.confirm_manager_del = True
-
-    if st.session_state.get('confirm_manager_del'):
-        st.error("Вы уверены? Это удалит карточку управляющего навсегда.")
-        if st.button("ПОДТВЕРЖДАЮ УДАЛЕНИЕ"):
-            supabase.table("manager_profile").delete().eq("id", m_id).execute()
-            st.session_state.confirm_manager_del = False
-            st.rerun()
             
 # --- Сайдбар и навигация остаются как у тебя, но добавляем логику вызова ---
 with st.sidebar:
@@ -2269,6 +2350,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
