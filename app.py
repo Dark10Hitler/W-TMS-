@@ -1953,19 +1953,24 @@ elif selected == "База Данных":
                         from datetime import datetime
                         import time
                         
+                        # 1. ТОЧНОЕ СОВПАДЕНИЕ СО СТРУКТУРОЙ БД (по фото)
                         inv_payload = {
-                            "doc_id": doc_id,
-                            "item_name": item_name,
-                            "cell_address": selected_cell,
-                            "quantity": float(item.get('Количество', 0)),
-                            "warehouse_id": str(wh_id),
-                            "updated_at": datetime.now().isoformat()
+                            "id": doc_id,              # Берем id строки
+                            "product": item_name,      # Колонка product
+                            "address": selected_cell,  # Колонка address
+                            "zone": str(wh_id),        # Колонка zone
+                            "last_updated": datetime.now().isoformat() # Колонка last_updated
                         }
                         
-                        supabase.table("inventory").upsert(
+                        # 2. ПРАВИЛЬНАЯ ТАБЛИЦА И ПЕРВИЧНЫЙ КЛЮЧ
+                        supabase.table("product_locations").upsert(
                             inv_payload, 
-                            on_conflict="doc_id,item_name"
+                            on_conflict="id"  # Обновляем именно по id (зеленый ключик на фото)
                         ).execute()
+                        
+                        # 3. СБРОС КЭША (КРИТИЧНО ДЛЯ ОБНОВЛЕНИЯ ИНТЕРФЕЙСА!)
+                        # Очищаем кэш функции, которая тянет данные в таблицу, чтобы 'НЕ НАЗНАЧЕНО' исчезло
+                        st.cache_data.clear() 
                         
                         # Форматированное время для сообщения об успехе
                         success_time = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
@@ -1974,7 +1979,7 @@ elif selected == "База Данных":
                         st.rerun()
                         
                     except Exception as e:
-                        st.error(f"❌ Ошибка: {e}")
+                        st.error(f"❌ Ошибка сохранения: {e}")
 
 elif selected == "Карта": show_map()
 elif selected == "Личный кабинет": show_profile()
@@ -2133,6 +2138,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
