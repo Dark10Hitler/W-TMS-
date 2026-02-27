@@ -76,26 +76,6 @@ class WarehouseManager:
                         color=final_color, opacity=0.8, name=addr, text=addr, hoverinfo="text",
                         customdata=[addr]
                     ))
-    def get_actual_cells(warehouse_id):
-    """Возвращает список всех адресов, которые РЕАЛЬНО отрисовываются на карте"""
-    import plotly.graph_objects as go
-    temp_fig = go.Figure()
-    wh_key = str(warehouse_id)
-    
-    if wh_key in REGISTRY:
-        # 1. Генерируем временную карту для сбора имен
-        REGISTRY[wh_key](temp_fig)
-        
-        # 2. Извлекаем имена всех объектов (ячеек)
-        cells = []
-        for trace in temp_fig.data:
-            if trace.name:
-                cells.append(trace.name)
-        
-        # 3. Убираем дубликаты и сортируем
-        return sorted(list(set(cells)))
-    
-    return []
 
 # --- ФУНКЦИИ СБОРОК (НИЧЕГО НЕ СОКРАЩЕНО) ---
 
@@ -233,7 +213,28 @@ def add_shelf_cube(fig, name, x_pos, y_pos, z_pos, is_highlighted=False):
         opacity=opacity,
         flatshading=True,
         hovertemplate=f"Ячейка: {name}<extra></extra>"
-
     ))
+
+
+def get_actual_cells(warehouse_id):
+    """Возвращает список всех адресов, которые РЕАЛЬНО отрисовываются на карте"""
+    import plotly.graph_objects as go
+    temp_fig = go.Figure()
+    wh_key = str(warehouse_id)
+    
+    if wh_key in REGISTRY:
+        # 1. Генерируем временную карту для сбора имен
+        REGISTRY[wh_key](temp_fig)
+        
+        # 2. Извлекаем имена всех объектов (ячеек)
+        cells = []
+        for trace in temp_fig.data:
+            if trace.name:
+                cells.append(trace.name)
+        
+        # 3. Убираем дубликаты и сортируем
+        return sorted(list(set(cells)))
+    
+    return []
 
 
