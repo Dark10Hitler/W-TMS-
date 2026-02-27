@@ -1925,7 +1925,7 @@ elif selected == "База Данных":
                 </div>
                 """, unsafe_allow_html=True)
 
-            # 1. Выбор склада
+                # 1. Выбор склада
                 wh_id = st.selectbox(
                     "🏪 Выберите склад:",
                     warehouse_list,
@@ -1933,7 +1933,7 @@ elif selected == "База Данных":
                     key=f"wh_sel_{doc_id}"
                 )
 
-            # Используем новую функцию из топологии
+                # Используем новую функцию из топологии
                 try:
                     from config_topology import get_actual_cells
                     all_cells = get_actual_cells(wh_id)
@@ -1944,7 +1944,7 @@ elif selected == "База Данных":
                 if not all_cells:
                     all_cells = [current_addr] if current_addr != "НЕ НАЗНАЧЕНО" else ["Список пуст"]
 
-            # 2. Синхронизация индекса
+                # 2. Синхронизация индекса
                 try:
                     c_idx = all_cells.index(current_addr) if current_addr in all_cells else 0
                 except:
@@ -1957,7 +1957,7 @@ elif selected == "База Данных":
                     key=f"cell_sel_{doc_id}"
                 )
 
-            # 3. Отрисовка
+                # 3. Отрисовка
                 try:
                     fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
                     fig.update_layout(margin=dict(l=0, r=0, b=0, t=30))
@@ -2161,6 +2161,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
