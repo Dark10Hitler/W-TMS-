@@ -1108,12 +1108,12 @@ def show_profile():
 
     # --- 1. ЗАГРУЗКА ДАННЫХ УПРАВЛЯЮЩЕГО ---
     try:
-        # Берем первую запись из таблицы (она должна быть одна)
+        # Берем данные свежим запросом без кэша
         res = supabase.table("manager_profile").select("*").order("id").limit(1).execute()
         
         if not res.data:
-            st.warning("Профиль управляющего не найден. Создайте его.")
-            if st.button("➕ Создать базовый профиль"):
+            st.warning("Профиль управляющего не найден.")
+            if st.button("➕ Создать профиль"):
                 supabase.table("manager_profile").insert({"full_name": "Новый Управляющий"}).execute()
                 st.rerun()
             return
@@ -1125,129 +1125,118 @@ def show_profile():
         st.error(f"Критическая ошибка базы: {e}")
         return
 
-    # --- 2. ВИЗУАЛИЗАЦИЯ (ЛИЦО И МЕСТО РАБОТЫ) ---
+    # --- 2. ВИЗУАЛИЗАЦИЯ (ФОТО) ---
     col_face, col_workplace = st.columns([1, 2])
     
-    # Дефолтные картинки, если ссылки в базе пустые
-    default_avatar = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
-    default_workplace = "https://img.freepik.com/premium-photo/modern-warehouse-with-racks-goods-generative-ai_124507-449.jpg"
+    # Ссылки с проверкой на None
+    avatar_url = m_data.get('avatar_url') or "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+    work_photo_url = m_data.get('workplace_photo_url') or "https://img.freepik.com/premium-photo/modern-warehouse-with-racks-goods-generative-ai_124507-449.jpg"
 
     with col_face:
-        # Отображение фото управляющего
-        avatar_url = m_data.get('avatar_url') or default_avatar
-        st.image(avatar_url, caption=f"ID: {m_id}", use_container_width=True)
-        
-        # Виджет загрузки нового фото
-        new_avatar = st.file_uploader("🖼️ Сменить фото", type=['png', 'jpg', 'jpeg'], key="avatar_uploader")
-        if new_avatar:
-            if st.button("💾 Загрузить фото"):
-                with st.spinner("Загрузка..."):
-                    url = upload_image_to_supabase(new_avatar.name, new_avatar.getvalue())
-                    if url:
-                        supabase.table("manager_profile").update({"avatar_url": url}).eq("id", m_id).execute()
-                        st.success("Фото обновлено!")
-                        time.sleep(1)
-                        st.rerun()
+        st.image(avatar_url, caption=f"ID управляющего: {m_id}", use_container_width=True)
+        new_avatar = st.file_uploader("🖼️ Сменить фото", type=['png', 'jpg', 'jpeg'], key="upd_ava")
+        if new_avatar and st.button("💾 Загрузить лицо"):
+            url = upload_image_to_supabase(new_avatar.name, new_avatar.getvalue())
+            if url:
+                supabase.table("manager_profile").update({"avatar_url": url}).eq("id", m_id).execute()
+                st.success("Обновлено!")
+                st.rerun()
 
     with col_workplace:
-        # Отображение фото рабочего пространства
-        work_photo_url = m_data.get('workplace_photo_url') or default_workplace
-        st.image(work_photo_url, caption=m_data.get('workplace_name', 'Место работы'), use_container_width=True)
-        
-        # Виджет загрузки нового фото склада
-        new_work_photo = st.file_uploader("🏗️ Сменить фото склада", type=['png', 'jpg', 'jpeg'], key="work_photo_uploader")
-        if new_work_photo:
-            if st.button("💾 Загрузить фото склада"):
-                with st.spinner("Загрузка..."):
-                    url = upload_image_to_supabase(new_work_photo.name, new_work_photo.getvalue())
-                    if url:
-                        supabase.table("manager_profile").update({"workplace_photo_url": url}).eq("id", m_id).execute()
-                        st.success("Фото склада обновлено!")
-                        time.sleep(1)
-                        st.rerun()
+        st.image(work_photo_url, caption=m_data.get('workplace_name') or "Место работы", use_container_width=True)
+        new_work = st.file_uploader("🏗️ Сменить фото склада", type=['png', 'jpg', 'jpeg'], key="upd_work")
+        if new_work and st.button("💾 Загрузить склад"):
+            url = upload_image_to_supabase(new_work.name, new_work.getvalue())
+            if url:
+                supabase.table("manager_profile").update({"workplace_photo_url": url}).eq("id", m_id).execute()
+                st.success("Обновлено!")
+                st.rerun()
 
     st.markdown("---")
 
-    # --- 3. КЛЮЧЕВЫЕ МЕТРИКИ И КОНТАКТЫ ---
-    st.subheader("📊 Текущие показатели и локация")
+    # --- 3. КЛЮЧЕВЫЕ МЕТРИКИ (БЕЗ NONE) ---
+    st.subheader("📊 Текущие показатели")
     c1, c2, c3 = st.columns(3)
     
-    # Метрика кол-ва сотрудников
-    c1.metric("Сотрудников под управлением", f"{m_data.get('employees_count', 0)} чел.")
-    # Название и адрес места работы
-    c2.metric("Место работы", m_data.get('workplace_name', 'Не указано'))
-    # Телефон
-    c3.metric("Контактный телефон", m_data.get('phone', '---'))
+    # Используем .get() с дефолтными значениями, чтобы избежать None в интерфейсе
+    emp_count = m_data.get('employees_count') or 0
+    work_name = m_data.get('workplace_name') or "Не указано"
+    phone_num = m_data.get('phone') or "---"
 
-    # Вывод адресов текстовыми блоками
-    with st.expander("📍 Локации и контакты detailed"):
-        st.write(f"🏠 **Домашний адрес:** {m_data.get('home_address', '---')}")
-        st.write(f"🏢 **Адрес офиса/склада:** {m_data.get('workplace_address', '---')}")
-        st.write(f"📧 **Email:** {m_data.get('email', '---')}")
-        st.write(f"🕒 **Часы работы:** {m_data.get('working_hours', '---')}")
+    c1.metric("Персонал", f"{emp_count} чел.")
+    c2.metric("Объект", work_name)
+    c3.metric("Связь", phone_num)
+
+    with st.expander("📍 Подробные контакты и адреса"):
+        st.write(f"🏠 **Дом:** {m_data.get('home_address') or '---'}")
+        st.write(f"🏢 **Офис:** {m_data.get('workplace_address') or '---'}")
+        st.write(f"📧 **Email:** {m_data.get('email') or '---'}")
+        st.write(f"🕒 **Смена:** {m_data.get('working_hours') or '---'}")
 
     st.markdown("---")
 
-    # --- 4. РЕДАКТОР ОСТАЛЬНЫХ ДАННЫХ ---
-    st.write("### ⚙️ Полная правка данных")
+    # --- 4. РЕДАКТОР (С ИСПРАВЛЕНИЕМ ТИПОВ) ---
+    st.write("### ⚙️ Редактирование профиля")
     
-    # Список полей для редактора (исключаем технические и ссылки на фото)
-    excluded_fields = ['id', 'created_at', 'avatar_url', 'workplace_photo_url']
-    
-    # Маппинг ключей на русский язык
+    excluded = ['id', 'created_at', 'avatar_url', 'workplace_photo_url']
     field_labels = {
-        'full_name': 'ФИО Управляющего',
-        'position': 'Должность',
-        'department': 'Департамент',
-        'contract_no': 'Номер Контракта',
-        'phone': 'Телефон',
-        'email': 'Email',
-        'workplace_name': 'Название Склада/Офиса',
-        'employees_count': 'Сотрудников (чел.)',
-        'workplace_address': 'Адрес Работы',
-        'home_address': 'Домашний Адрес',
-        'working_hours': 'Часы Работы'
+        'full_name': '1. ФИО Управляющего',
+        'position': '2. Должность',
+        'phone': '3. Телефон',
+        'email': '4. Email',
+        'workplace_name': '5. Название Объекта',
+        'employees_count': '6. Кол-во сотрудников',
+        'workplace_address': '7. Адрес Объекта',
+        'home_address': '8. Домашний Адрес',
+        'working_hours': '9. График работы'
     }
 
-    # Подготовка данных для st.data_editor
-    df_for_edit = pd.DataFrame([
-        {
-            "key": k, 
-            "Параметр": field_labels.get(k, k.replace('_', ' ').title()), 
-            "Значение": str(v)
-        } 
-        for k, v in m_data.items() if k not in excluded_fields
-    ])
-    
-    # Сортировка для предсказуемого порядка в редакторе
-    df_for_edit = df_for_edit.sort_values(by="Параметр")
+    # Формируем список для редактора (обрабатываем None в пустые строки)
+    edit_list = []
+    for k, v in m_data.items():
+        if k not in excluded:
+            edit_list.append({
+                "key": k,
+                "Параметр": field_labels.get(k, k),
+                "Значение": "" if v is None else str(v)
+            })
+
+    df_edit = pd.DataFrame(edit_list).sort_values("Параметр")
 
     edited_df = st.data_editor(
-        df_for_edit,
+        df_edit,
         column_config={
-            "key": None, # Скрываем техническую колонку
+            "key": None,
             "Параметр": st.column_config.TextColumn(disabled=True),
             "Значение": st.column_config.TextColumn(width="large")
         },
         use_container_width=True,
         hide_index=True,
-        key="manager_profile_editor"
+        key="editor_mgr"
     )
 
-    # --- 5. КНОПКА СОХРАНЕНИЯ ИЗМЕНЕНИЙ ИЗ РЕДАКТОРА ---
-    if st.button("💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
+    if st.button("💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ", type="primary", use_container_width=True):
         try:
-            with st.spinner("Сохранение..."):
-                # Превращаем обратно в строку БД
-                new_data = {}
-                for _, row in edited_df.iterrows():
-                    new_data[row["key"]] = row["Значение"]
+            update_payload = {}
+            for _, row in edited_df.iterrows():
+                key = row["key"]
+                val = row["Значение"]
                 
-                # Обновляем запись в Supabase
-                supabase.table("manager_profile").update(new_data).eq("id", m_id).execute()
-                st.success("Профиль управляющего успешно обновлен!")
-                time.sleep(1)
-                st.rerun()
+                # КРИТИЧНО: Возвращаем числовой тип для счетчика сотрудников
+                if key == 'employees_count':
+                    try:
+                        update_payload[key] = int(val) if val.strip() != "" else 0
+                    except:
+                        update_payload[key] = 0
+                else:
+                    update_payload[key] = val if val.strip() != "" else None
+            
+            # Обновляем БД
+            supabase.table("manager_profile").update(update_payload).eq("id", m_id).execute()
+            st.success("Данные успешно синхронизированы с базой!")
+            time.sleep(0.5)
+            st.rerun()
+            
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
             
@@ -2353,6 +2342,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
