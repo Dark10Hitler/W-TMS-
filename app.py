@@ -1106,79 +1106,57 @@ def show_map():
 def show_profile():
     st.markdown("<h1 class='section-head'>👤 Цифровой Профиль Управляющего</h1>", unsafe_allow_html=True)
 
-    # --- 1. ЗАГРУЗКА ДАННЫХ УПРАВЛЯЮЩЕГО ---
-    try:
-        # Берем данные свежим запросом без кэша
-        res = supabase.table("manager_profile").select("*").order("id").limit(1).execute()
-        
-        if not res.data:
-            st.warning("Профиль управляющего не найден.")
-            if st.button("➕ Создать профиль"):
-                supabase.table("manager_profile").insert({"full_name": "Новый Управляющий"}).execute()
-                st.rerun()
+    # --- 1. ПЕРВИЧНАЯ ЗАГРУЗКА В SESSION STATE ---
+    # Мы загружаем данные из базы в сессию только если их там еще нет
+    if 'mgr_data' not in st.session_state:
+        try:
+            res = supabase.table("manager_profile").select("*").order("id").limit(1).execute()
+            if res.data:
+                st.session_state.mgr_data = res.data[0]
+            else:
+                st.warning("Профиль не найден. Создайте его.")
+                if st.button("➕ Создать профиль"):
+                    supabase.table("manager_profile").insert({"full_name": "Новый Управляющий"}).execute()
+                    del st.session_state.mgr_data # Сброс для перезагрузки
+                    st.rerun()
+                return
+        except Exception as e:
+            st.error(f"Ошибка базы: {e}")
             return
-            
-        m_data = res.data[0]
-        m_id = m_data['id']
 
-    except Exception as e:
-        st.error(f"Критическая ошибка базы: {e}")
-        return
+    # Локальная ссылка для удобства доступа к данным в текущем стейте
+    m_id = st.session_state.mgr_data['id']
 
     # --- 2. ВИЗУАЛИЗАЦИЯ (ФОТО) ---
     col_face, col_workplace = st.columns([1, 2])
     
-    # Ссылки с проверкой на None
-    avatar_url = m_data.get('avatar_url') or "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
-    work_photo_url = m_data.get('workplace_photo_url') or "https://img.freepik.com/premium-photo/modern-warehouse-with-racks-goods-generative-ai_124507-449.jpg"
+    avatar_url = st.session_state.mgr_data.get('avatar_url') or "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+    work_url = st.session_state.mgr_data.get('workplace_photo_url') or "https://img.freepik.com/premium-photo/modern-warehouse-with-racks-goods-generative-ai_124507-449.jpg"
 
     with col_face:
-        st.image(avatar_url, caption=f"ID управляющего: {m_id}", use_container_width=True)
+        st.image(avatar_url, caption="Фото управляющего", use_container_width=True)
         new_avatar = st.file_uploader("🖼️ Сменить фото", type=['png', 'jpg', 'jpeg'], key="upd_ava")
         if new_avatar and st.button("💾 Загрузить лицо"):
             url = upload_image_to_supabase(new_avatar.name, new_avatar.getvalue())
             if url:
                 supabase.table("manager_profile").update({"avatar_url": url}).eq("id", m_id).execute()
-                st.success("Обновлено!")
+                st.session_state.mgr_data['avatar_url'] = url # Сразу обновляем в сессии
                 st.rerun()
 
     with col_workplace:
-        st.image(work_photo_url, caption=m_data.get('workplace_name') or "Место работы", use_container_width=True)
+        st.image(work_url, caption=st.session_state.mgr_data.get('workplace_name') or "Место работы", use_container_width=True)
         new_work = st.file_uploader("🏗️ Сменить фото склада", type=['png', 'jpg', 'jpeg'], key="upd_work")
         if new_work and st.button("💾 Загрузить склад"):
             url = upload_image_to_supabase(new_work.name, new_work.getvalue())
             if url:
                 supabase.table("manager_profile").update({"workplace_photo_url": url}).eq("id", m_id).execute()
-                st.success("Обновлено!")
+                st.session_state.mgr_data['workplace_photo_url'] = url # Сразу обновляем в сессии
                 st.rerun()
 
     st.markdown("---")
 
-    # --- 3. КЛЮЧЕВЫЕ МЕТРИКИ (БЕЗ NONE) ---
-    st.subheader("📊 Текущие показатели")
-    c1, c2, c3 = st.columns(3)
-    
-    # Используем .get() с дефолтными значениями, чтобы избежать None в интерфейсе
-    emp_count = m_data.get('employees_count') or 0
-    work_name = m_data.get('workplace_name') or "Не указано"
-    phone_num = m_data.get('phone') or "---"
-
-    c1.metric("Персонал", f"{emp_count} чел.")
-    c2.metric("Объект", work_name)
-    c3.metric("Связь", phone_num)
-
-    with st.expander("📍 Подробные контакты и адреса"):
-        st.write(f"🏠 **Дом:** {m_data.get('home_address') or '---'}")
-        st.write(f"🏢 **Офис:** {m_data.get('workplace_address') or '---'}")
-        st.write(f"📧 **Email:** {m_data.get('email') or '---'}")
-        st.write(f"🕒 **Смена:** {m_data.get('working_hours') or '---'}")
-
-    st.markdown("---")
-
-    # --- 4. РЕДАКТОР (С ИСПРАВЛЕНИЕМ ТИПОВ) ---
-    st.write("### ⚙️ Редактирование профиля")
-    
-    excluded = ['id', 'created_at', 'avatar_url', 'workplace_photo_url']
+    # --- 3. ПОДГОТОВКА ДАННЫХ ДЛЯ РЕДАКТОРА ---
+    # Список полей, которые мы разрешаем править
     field_labels = {
         'full_name': '1. ФИО Управляющего',
         'position': '2. Должность',
@@ -1191,52 +1169,82 @@ def show_profile():
         'working_hours': '9. График работы'
     }
 
-    # Формируем список для редактора (обрабатываем None в пустые строки)
+    # Формируем DF для редактора прямо из Session State
     edit_list = []
-    for k, v in m_data.items():
-        if k not in excluded:
-            edit_list.append({
-                "key": k,
-                "Параметр": field_labels.get(k, k),
-                "Значение": "" if v is None else str(v)
-            })
+    for k, label in field_labels.items():
+        v = st.session_state.mgr_data.get(k, "")
+        edit_list.append({
+            "key": k,
+            "Параметр": label,
+            "Значение": "" if v is None else str(v)
+        })
 
     df_edit = pd.DataFrame(edit_list).sort_values("Параметр")
 
+    # --- 4. РЕДАКТОР ПРОФИЛЯ ---
+    st.write("### ⚙️ Редактирование профиля")
+    # Мы присваиваем результат редактора переменной edited_df
+    # Важно: он обновляется ПРИ КАЖДОМ ИЗМЕНЕНИИ ячейки
     edited_df = st.data_editor(
         df_edit,
         column_config={
-            "key": None,
+            "key": None, # Скрываем
             "Параметр": st.column_config.TextColumn(disabled=True),
             "Значение": st.column_config.TextColumn(width="large")
         },
         use_container_width=True,
         hide_index=True,
-        key="editor_mgr"
+        key="editor_mgr_main"
     )
 
-    if st.button("💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ", type="primary", use_container_width=True):
+    # --- 5. СИНХРОНИЗАЦИЯ (МЕТРИКИ ЧИТАЮТ ИЗ РЕДАКТОРА) ---
+    # Превращаем DF из редактора в словарь для мгновенного доступа
+    current_state = {row["key"]: row["Значение"] for _, row in edited_df.iterrows()}
+
+    st.markdown("---")
+    st.subheader("📊 Текущие показатели (в реальном времени)")
+    c1, c2, c3 = st.columns(3)
+    
+    # Теперь метрики берут данные напрямую из виджета редактора через current_state!
+    val_emp = current_state.get('employees_count') or "0"
+    val_work = current_state.get('workplace_name') or "Не указано"
+    val_phone = current_state.get('phone') or "---"
+
+    c1.metric("Персонал", f"{val_emp} чел.")
+    c2.metric("Объект", val_work)
+    c3.metric("Связь", val_phone)
+
+    with st.expander("📍 Развернутые контакты"):
+        st.write(f"🏢 **Офис:** {current_state.get('workplace_address') or '---'}")
+        st.write(f"📧 **Email:** {current_state.get('email') or '---'}")
+        st.write(f"🏠 **Дом:** {current_state.get('home_address') or '---'}")
+
+    st.markdown("---")
+
+    # --- 6. СОХРАНЕНИЕ В ОБЛАКО ---
+    if st.button("💾 ЗАФИКСИРОВАТЬ ИЗМЕНЕНИЯ В БАЗЕ", type="primary", use_container_width=True):
         try:
-            update_payload = {}
-            for _, row in edited_df.iterrows():
-                key = row["key"]
-                val = row["Значение"]
+            with st.spinner("Синхронизация с облаком..."):
+                update_payload = {}
+                for k, v in current_state.items():
+                    # Приведение типов для базы
+                    if k == 'employees_count':
+                        # Убираем лишние пробелы и проверяем, число ли это
+                        clean_val = str(v).strip()
+                        update_payload[k] = int(clean_val) if clean_val.isdigit() else 0
+                    else:
+                        update_payload[k] = v if str(v).strip() != "" else None
                 
-                # КРИТИЧНО: Возвращаем числовой тип для счетчика сотрудников
-                if key == 'employees_count':
-                    try:
-                        update_payload[key] = int(val) if val.strip() != "" else 0
-                    except:
-                        update_payload[key] = 0
-                else:
-                    update_payload[key] = val if val.strip() != "" else None
-            
-            # Обновляем БД
-            supabase.table("manager_profile").update(update_payload).eq("id", m_id).execute()
-            st.success("Данные успешно синхронизированы с базой!")
-            time.sleep(0.5)
-            st.rerun()
-            
+                # Обновляем в Supabase
+                supabase.table("manager_profile").update(update_payload).eq("id", m_id).execute()
+                
+                # Обновляем Session State, чтобы при следующем прогоне данные были актуальны
+                st.session_state.mgr_data.update(update_payload)
+                
+                st.success("✅ Профиль успешно сохранен в базе данных!")
+                time.sleep(1)
+                st.rerun()
+                
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
             
@@ -2342,6 +2350,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
