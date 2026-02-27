@@ -1997,83 +1997,129 @@ elif selected == "Личный кабинет": show_profile()
 elif selected == "Настройки":
     st.markdown("<h1 class='section-head'>⚙️ Системные настройки</h1>", unsafe_allow_html=True)
     
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab4 = st.tabs([
         "🏢 Склад и Топология", 
         "👥 Команда", 
-        "📚 Справочники", 
-        "💾 База данных"
+        "💾 Обслуживание системы"
     ])
 
+    # --- ТАБ 1: СКЛАД ---
     with tab1:
         st.subheader("📍 Конфигурация зон хранения")
         col_map, col_cfg = st.columns([2, 1])
         
         with col_map:
             wh_to_show = st.selectbox("Выберите склад для просмотра", list(WAREHOUSE_MAP.keys()))
+            
+            # --- ЛОГИКА ТОВАРОВ В ЯЧЕЙКЕ ---
+            # Загружаем остатки для отображения при наведении
+            inv_data = supabase.table("main").select("item_name, cell_id").eq("warehouse_id", wh_to_show).execute()
+            inv_dict = {}
+            for row in inv_data.data:
+                cell = row['cell_id']
+                inv_dict[cell] = inv_dict.get(cell, []) + [row['item_name']]
+            
             fig = get_warehouse_figure(wh_to_show)
-            st.plotly_chart(fig, width="stretch")
+            
+            # Обновляем подсказки (hover) для всех объектов на карте
+            for trace in fig.data:
+                cell_id = trace.name
+                items = inv_dict.get(cell_id, ["Пустая ячейка"])
+                items_str = "<br>".join(items[:5]) + ("<br>..." if len(items) > 5 else "")
+                trace.hovertemplate = f"<b>Ячейка: {cell_id}</b><br>Товары:<br>{items_str}<extra></extra>"
+            
+            st.plotly_chart(fig, use_container_width=True)
         
         with col_cfg:
-            st.markdown("**Добавить новую зону**")
-            new_zone = st.text_input("Название зоны", placeholder="Напр: Зона C")
-            row_count = st.number_input("Кол-во рядов", 1, 50, 5)
-            
-            if st.button("💾 Сохранить топологию", width="stretch", type="primary"):
-                try:
-                    supabase.table("warehouse_config").insert({
-                        "warehouse": wh_to_show,
-                        "zone_name": new_zone,
-                        "rows": row_count
-                    }).execute()
-                    st.success(f"Зона {new_zone} интегрирована в систему")
-                    time.sleep(1)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Ошибка сохранения: {e}")
+            st.info("💡 Наведите на ячейку на карте, чтобы увидеть список хранящихся товаров.")
+            with st.expander("➕ Добавить новую зону (в разработке)"):
+                new_zone = st.text_input("Название зоны")
+                if st.button("Сохранить"):
+                    st.warning("Требуется обновление файла config_topology.py")
 
+    # --- ТАБ 2: КОМАНДА ---
     with tab2:
-        st.subheader("👤 Управление доступом")
-        users_data = supabase.table("profiles").select("*").execute()
-        df_users = pd.DataFrame(users_data.data)
+        st.subheader("👤 Управление персоналом")
         
-        if not df_users.empty:
-            st.dataframe(df_users, width="stretch", hide_index=True)
-        
-        if st.button("➕ Зарегистрировать нового сотрудника", width="stretch"):
-            st.session_state.active_modal = "user_new"
-            st.rerun()
+        # Форма добавления (схлопнутая для чистоты)
+        with st.expander("➕ Зарегистрировать нового сотрудника"):
+            with st.form("user_add_form"):
+                new_email = st.text_input("Email")
+                new_name = st.text_input("ФИО")
+                new_role = st.selectbox("Роль", ["Кладовщик", "Администратор", "Водитель"])
+                if st.form_submit_button("Создать аккаунт"):
+                    if new_email and new_name:
+                        supabase.table("profiles").insert({
+                            "email": new_email, "full_name": new_name, "role": new_role
+                        }).execute()
+                        st.success("Сотрудник добавлен!")
+                        st.rerun()
 
+        # Список пользователей
+        users_data = supabase.table("profiles").select("*").execute()
+        if users_data.data:
+            df_u = pd.DataFrame(users_data.data)
+            st.dataframe(df_u[['full_name', 'email', 'role']], use_container_width=True)
+
+    # --- ТАБ 4: ОБСЛУЖИВАНИЕ ---
     with tab4:
-        st.subheader("🛠️ Обслуживание системы")
+        st.subheader("🛠️ Сервисные инструменты")
         c1, c2, c3 = st.columns(3)
         
         with c1:
-            st.markdown("📦 **Экспорт данных**")
-            if st.button("📊 Сформировать отчет XLSX", width="stretch"):
-                st.toast("Сборка данных из БД...")
-            
+            st.markdown("### 📦 Экспорт")
+            st.caption("Создает Excel-файл со всеми данными системы по вкладкам.")
+            if st.button("📊 Сформировать отчет XLSX"):
+                try:
+                    # Собираем данные
+                    tables = {
+                        "Заявки": supabase.table("orders").select("*").execute().data,
+                        "Приходы": supabase.table("arrivals").select("*").execute().data,
+                        "Брак": supabase.table("defects").select("*").execute().data
+                    }
+                    
+                    import io
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        for sheet_name, data in tables.items():
+                            if data:
+                                pd.DataFrame(data).to_excel(writer, sheet_name=sheet_name, index=False)
+                    
+                    st.download_button(
+                        label="⬇️ Скачать отчет",
+                        data=output.getvalue(),
+                        file_name=f"WMS_Full_Report_{time.strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                except Exception as e:
+                    st.error(f"Ошибка экспорта: {e}")
+
         with c2:
-            st.markdown("⚠️ **Оптимизация**")
-            if st.button("🔥 Сбросить кеш сессии", width="stretch"):
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.success("Кеш очищен")
+            st.markdown("### ⚠️ Оптимизация")
+            st.caption("Очищает временную память браузера и перезагружает сессию. Помогает, если интерфейс 'завис'.")
+            if st.button("🔥 Сбросить кеш"):
+                st.session_state.clear()
+                st.toast("Кеш очищен успешно!")
+                time.sleep(1)
                 st.rerun()
                 
         with c3:
-            st.markdown("🔴 **Опасная зона**")
-            if st.button("🧨 УДАЛИТЬ ВСЕ ДАННЫЕ", width="stretch", type="secondary"):
+            st.markdown("### 🔴 Опасная зона")
+            st.caption("Полная очистка базы данных. **Действие необратимо!**")
+            if st.button("🧨 ОЧИСТИТЬ ВСЕ", type="secondary"):
                 st.session_state.confirm_delete_all = True
-            
+
             if st.session_state.get('confirm_delete_all'):
-                st.error("ВНИМАНИЕ! Удаление всех записей!")
-                col_yes, col_no = st.columns(2)
-                if col_yes.button("ДА, УДАЛИТЬ", type="primary", width="stretch"):
-                    supabase.table("main").delete().neq("id", 0).execute() 
-                    st.success("База данных очищена")
+                # Всплывающее окно-предупреждение
+                st.warning("### ❗ ВЫ УВЕРЕНЫ?")
+                st.write("Все записи о товарах и заказах будут удалены.")
+                c_yes, c_no = st.columns(2)
+                if c_yes.button("ДА, УДАЛИТЬ", type="primary"):
+                    supabase.table("main").delete().neq("id", 0).execute()
                     st.session_state.confirm_delete_all = False
+                    st.success("База данных пуста.")
                     st.rerun()
-                if col_no.button("ОТМЕНА", width="stretch"):
+                if c_no.button("ОТМЕНА"):
                     st.session_state.confirm_delete_all = False
                     st.rerun()
 
@@ -2147,6 +2193,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
