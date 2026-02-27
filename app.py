@@ -1953,26 +1953,25 @@ elif selected == "База Данных":
                         from datetime import datetime
                         import time
                         
-                        # 1. ТОЧНОЕ СОВПАДЕНИЕ СО СТРУКТУРОЙ БД (по фото)
+                        # Передаем doc_id в текстовую колонку (например, doc_id), а не в числовой id
                         inv_payload = {
-                            "id": doc_id,              # Берем id строки
-                            "product": item_name,      # Колонка product
-                            "address": selected_cell,  # Колонка address
-                            "zone": str(wh_id),        # Колонка zone
-                            "last_updated": datetime.now().isoformat() # Колонка last_updated
+                            "doc_id": doc_id,          # Сюда пойдет "IN-B29493" (должна быть текстовой в БД)
+                            "product": item_name,      # Название товара
+                            "address": selected_cell,  # Ячейка (WH1-A-S1...)
+                            "zone": str(wh_id),        # Склад
+                            "last_updated": datetime.now().isoformat()
                         }
                         
-                        # 2. ПРАВИЛЬНАЯ ТАБЛИЦА И ПЕРВИЧНЫЙ КЛЮЧ
+                        # Обновляем таблицу (важно: on_conflict должен указывать на уникальные колонки)
+                        # Если в БД уникальность определяется связкой документа и товара:
                         supabase.table("product_locations").upsert(
                             inv_payload, 
-                            on_conflict="id"  # Обновляем именно по id (зеленый ключик на фото)
+                            on_conflict="doc_id,product" # Проверьте, что в Supabase есть такой индекс
                         ).execute()
                         
-                        # 3. СБРОС КЭША (КРИТИЧНО ДЛЯ ОБНОВЛЕНИЯ ИНТЕРФЕЙСА!)
-                        # Очищаем кэш функции, которая тянет данные в таблицу, чтобы 'НЕ НАЗНАЧЕНО' исчезло
+                        # Сброс кэша для моментального обновления таблицы в интерфейсе
                         st.cache_data.clear() 
                         
-                        # Форматированное время для сообщения об успехе
                         success_time = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
                         st.success(f"✅ Адрес обновлен: {selected_cell} | Время: {success_time}")
                         time.sleep(1)
@@ -2138,6 +2137,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
