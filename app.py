@@ -2012,29 +2012,39 @@ elif selected == "Настройки":
             wh_to_show = st.selectbox("Выберите склад для просмотра", list(WAREHOUSE_MAP.keys()))
             
             # --- ЛОГИКА ТОВАРОВ В ЯЧЕЙКЕ ---
-            # Загружаем остатки для отображения при наведении
-            # Заменяем таблицу на 'product_locations' и названия столбцов на те, что видны на скриншоте
             try:
+                # Запрос к вашей таблице product_locations
                 inv_data = supabase.table("product_locations").select("product, address").eq("zone", str(wh_to_show)).execute()
+                
                 inv_dict = {}
+                # ВНИМАТЕЛЬНО: отступы внутри цикла for
                 for row in inv_data.data:
-                cell = row['address']
-                inv_dict[cell] = inv_dict.get(cell, []) + [row['product']]
+                    cell = row['address']
+                    if cell not in inv_dict:
+                        inv_dict[cell] = []
+                    inv_dict[cell].append(row['product'])
             except Exception as e:
-                st.error(f"Ошибка БД: {e}")
-            inv_dict = {}
-            for row in inv_data.data:
-                cell = row['cell_id']
-                inv_dict[cell] = inv_dict.get(cell, []) + [row['item_name']]
+                st.error(f"Ошибка загрузки товаров: {e}")
+                inv_dict = {}
             
+            # Получаем карту
             fig = get_warehouse_figure(wh_to_show)
             
-            # Обновляем подсказки (hover) для всех объектов на карте
+            # Настройка подсказок при наведении
             for trace in fig.data:
                 cell_id = trace.name
-                items = inv_dict.get(cell_id, ["Пустая ячейка"])
-                items_str = "<br>".join(items[:5]) + ("<br>..." if len(items) > 5 else "")
-                trace.hovertemplate = f"<b>Ячейка: {cell_id}</b><br>Товары:<br>{items_str}<extra></extra>"
+                # Ищем товары (убираем пробелы для точности поиска)
+                items = inv_dict.get(str(cell_id).strip(), [])
+                
+                if items:
+                    items_list = "<br>• ".join(items[:5])
+                    if len(items) > 5:
+                        items_list += f"<br>... и еще {len(items)-5}"
+                    hover_text = f"<b>Ячейка: {cell_id}</b><br>📦 Товары:<br>• {items_list}"
+                else:
+                    hover_text = f"<b>Ячейка: {cell_id}</b><br><i>Пусто</i>"
+                
+                trace.hovertemplate = hover_text + "<extra></extra>"
             
             st.plotly_chart(fig, use_container_width=True)
         
@@ -2201,6 +2211,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
