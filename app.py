@@ -1787,8 +1787,26 @@ elif selected == "База Данных":
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
     with st.spinner("Синхронизация товарных позиций..."):
-        # Важно: get_full_inventory_df должна делать JOIN с product_locations, чтобы Адрес был актуальным
+        # 1. Получаем основной список товаров
         inventory_df = get_full_inventory_df() 
+        
+        # 2. ПОЛУЧАЕМ АКТУАЛЬНЫЕ АДРЕСА ИЗ БД (Чтобы статус обновился!)
+        locations_res = supabase.table("product_locations").select("doc_id, product, address").execute()
+        if locations_res.data:
+            loc_df = pd.DataFrame(locations_res.data)
+            
+            # Соединяем: если в product_locations есть адрес для doc_id + product, заменяем 'НЕ НАЗНАЧЕНО'
+            inventory_df = inventory_df.merge(
+                loc_df, 
+                left_on=['ID Документа', 'Название товара'], 
+                right_on=['doc_id', 'product'], 
+                how='left'
+            )
+            
+            # Если адрес найден в БД, записываем его в колонку 'Адрес'
+            if 'address' in inventory_df.columns:
+                inventory_df['Адрес'] = inventory_df['address'].fillna(inventory_df['Адрес'])
+                inventory_df.drop(columns=['doc_id', 'product', 'address'], inplace=True)
     
     # Проверка на пустой DataFrame
     if inventory_df is None or (isinstance(inventory_df, pd.DataFrame) and inventory_df.empty):
@@ -1893,14 +1911,8 @@ elif selected == "База Данных":
                     <b>🏪 Управление локацией:</b>
                 </div>
                 """, unsafe_allow_html=True)
-                
-                # Авто-выбор склада из БД
-                warehouse_list = list(WAREHOUSE_MAP.keys())
-                try:
-                    wh_index = warehouse_list.index(saved_zone)
-                except:
-                    wh_index = 0
 
+                # Выбор склада (wh_index мы уже рассчитали выше в вашем коде)
                 wh_id = st.selectbox(
                     "🏪 Выберите склад:",
                     warehouse_list,
@@ -1908,7 +1920,7 @@ elif selected == "База Данных":
                     key=f"wh_sel_{doc_id}_{item_name}"
                 )
                 
-                # Генерация ячеек
+                # Генерируем ячейки для выбранного склада
                 conf = WAREHOUSE_MAP[str(wh_id)]
                 all_cells = []
                 for r in conf['rows']:
@@ -1918,8 +1930,9 @@ elif selected == "База Данных":
                             all_cells.append(f"WH{wh_id}-{r}-S{s}-{t}")
                 all_cells = sorted(list(set(all_cells)))
                 
-                # Авто-выбор ячейки из БД
+                # --- ВАЖНО: Синхронизируем индекс ячейки ---
                 try:
+                    # Если товар уже в БД, ставим индекс на его адрес, иначе на 0
                     cell_index = all_cells.index(current_addr) if current_addr in all_cells else 0
                 except:
                     cell_index = 0
@@ -1931,13 +1944,17 @@ elif selected == "База Данных":
                     key=f"cell_sel_{doc_id}_{item_name}"
                 )
                 
-                # Карта с ЯРКО-КРАСНОЙ подсветкой (highlighted_cell)
+                # --- ПОДСВЕТКА: Передаем именно selected_cell ---
                 try:
-                    # Передаем выбранную ячейку в функцию отрисовки
+                    # Используем selected_cell, чтобы карта менялась СРАЗУ при смене в списке
                     fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
+                    
+                    # Настройка стиля Plotly для пущей яркости
+                    fig.update_traces(marker=dict(line=dict(width=2, color='white'))) 
+                    
                     st.plotly_chart(fig, use_container_width=True, height=350)
                 except Exception as e:
-                    st.warning(f"🗺️ Карта для Склада {wh_id} находится в разработке")
+                    st.warning("🗺️ Карта обновляется...")
 
                 # ЛОГИКА КНОПКИ: Сохранить или Изменить
                 if current_addr == "НЕ НАЗНАЧЕНО":
@@ -2135,6 +2152,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
