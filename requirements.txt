@@ -13,3 +13,4 @@ requests
 streamlit-autorefresh
 openpyxl
 geopy
+xlsxwriter
