@@ -1919,78 +1919,51 @@ elif selected == "База Данных":
                 st.info("💡 Если адрес уже назначен, вы увидите его на карте ниже. Вы можете изменить его, выбрав новую ячейку.")
             
             with col_location:
-                st.markdown("""
+            st.markdown("""
             <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #2ecc71;">
                 <b>🏪 Управление локацией:</b>
             </div>
             """, unsafe_allow_html=True)
 
             # 1. Выбор склада
-                wh_id = st.selectbox(
-                    "🏪 Выберите склад:",
-                    warehouse_list,
-                    index=wh_index,
-                    key=f"wh_sel_{doc_id}"
-                )
+            wh_id = st.selectbox(
+                "🏪 Выберите склад:",
+                warehouse_list,
+                index=wh_index,
+                key=f"wh_sel_{doc_id}"
+            )
 
-            # --- ГЛАВНОЕ: Динамическое получение ячеек из топологии ---
-            # Импортируем функцию, которую мы добавили в config_topology
-                try:
-                    from config_topology import get_actual_cells 
-                    all_cells = get_actual_cells(wh_id)
-                except Exception as e:
-                    st.error(f"Ошибка загрузки топологии: {e}")
-                    all_cells = []
-            
-                if not all_cells:
-                    st.warning("⚠️ Реальные ячейки не найдены в коде склада.")
-                # Добавляем текущий адрес, чтобы список не был пустым
-                    all_cells = [current_addr] if current_addr != "НЕ НАЗНАЧЕНО" else ["НЕТ ДАННЫХ"]
-            
-            # 2. Синхронизируем индекс (чтобы селектбокс сразу встал на нужную ячейку)
-                try:
-                    if current_addr in all_cells:
-                        cell_index = all_cells.index(current_addr)
-                    else:
-                        cell_index = 0
-                except:
-                    cell_index = 0
+            # Используем новую функцию из топологии
+            try:
+                from config_topology import get_actual_cells
+                all_cells = get_actual_cells(wh_id)
+            except Exception as e:
+                st.error(f"Ошибка импорта: {e}")
+                all_cells = []
 
-                selected_cell = st.selectbox(
-                "📍 Выберите ячейку из списка:",
+            if not all_cells:
+                all_cells = [current_addr] if current_addr != "НЕ НАЗНАЧЕНО" else ["Список пуст"]
+
+            # 2. Синхронизация индекса
+            try:
+                c_idx = all_cells.index(current_addr) if current_addr in all_cells else 0
+            except:
+                c_idx = 0
+
+            selected_cell = st.selectbox(
+                "📍 Выберите ячейку:",
                 options=all_cells,
-                index=cell_index,
+                index=c_idx,
                 key=f"cell_sel_{doc_id}"
-                )
+            )
 
-            # 3. Отрисовка карты с принудительной подсветкой
-                try:
-                # Получаем фигуру Plotly
-                    fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
-                
-                # Настройка камеры и внешнего вида
-                    fig.update_layout(
-                        scene=dict(
-                        camera=dict(eye=dict(x=1.5, y=1.5, z=1.2)),
-                        xaxis_title="X",
-                        yaxis_title="Y",
-                        zaxis_title="ЯРУС"
-                    ),
-                        margin=dict(l=0, r=0, b=0, t=30),
-                        showlegend=False
-                    )
-                
-                # Отображение
-                    st.plotly_chart(
-                        fig, 
-                        use_container_width=True, 
-                        height=450, 
-                        config={'displayModeBar': False}
-                    )
-                
-                except Exception as e:
-                    st.error(f"❌ Не удалось отрисовать карту: {e}")
-                    st.info(f"📍 Выбранная локация: {selected_cell}")
+            # 3. Отрисовка
+            try:
+                fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
+                fig.update_layout(margin=dict(l=0, r=0, b=0, t=30))
+                st.plotly_chart(fig, use_container_width=True, height=450)
+            except Exception as e:
+                st.warning("Ожидание отрисовки карты...")
 
                 # ЛОГИКА КНОПКИ: Сохранить или Изменить
                 if current_addr == "НЕ НАЗНАЧЕНО":
@@ -2188,6 +2161,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
