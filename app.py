@@ -1090,56 +1090,85 @@ def show_profile():
 
     # 1. ЗАГРУЗКА ИЗ БАЗЫ
     try:
-        res = supabase.table("profiles").select("*").order("id").execute()
-        df = pd.DataFrame(res.data)
+        # Получаем текущего пользователя (например, по email из сессии)
+        user_email = st.session_state.get('user_email', 'admin@test.com')
+        res = supabase.table("profiles").select("*").eq("email", user_email).execute()
         
-        # Простая функция: ищем значение по имени параметра
-        def get_v(name):
-            try:
-                return df[df['parameter'] == name]['value'].values[0]
-            except:
-                return "---"
+        if not res.data:
+            st.error("Пользователь не найден в базе данных.")
+            return
+            
+        # Берем первую найденную запись
+        raw_data = res.data[0] 
+        user_id = raw_data['id']
+        
     except Exception as e:
         st.error(f"Ошибка базы: {e}")
         return
 
-    # 2. ОТОБРАЖЕНИЕ (БЕЗ ХАРДКОДА И КРАСОТЫ)
-    # Здесь нет имен "Иванов", только ссылки на колонки из твоей таблицы
-    col1, col2 = st.columns([1, 3])
+    # 2. ПОДГОТОВКА ДАННЫХ ДЛЯ ОТОБРАЖЕНИЯ И РЕДАКТОРА
+    # Превращаем столбцы в строки для удобного редактирования
+    profile_mapping = {
+        "full_name": "ФИО",
+        "email": "Email",
+        "role": "Должность",
+        "created_at": "Дата регистрации"
+    }
     
+    # Создаем DataFrame для st.data_editor
+    display_data = []
+    for col_name, label in profile_mapping.items():
+        display_data.append({
+            "key": col_name,
+            "Параметр": label,
+            "Значение": str(raw_data.get(col_name, "---"))
+        })
+    
+    df_for_editor = pd.DataFrame(display_data)
+
+    # 3. ОТОБРАЖЕНИЕ КАРТОЧКИ
+    col1, col2 = st.columns([1, 3])
     with col1:
         st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=120)
     
     with col2:
-        st.subheader(get_v('ФИО'))
-        st.write(f"**Должность:** {get_v('Должность')}")
-        st.write(f"**Департамент:** {get_v('Департамент')}")
-        st.write(f"**Контракт:** {get_v('Номер Контракта')}")
-
-    st.markdown("---")
-    
-    # Сетка данных
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Телефон", get_v('Телефон'))
-    c2.metric("Email", get_v('Email'))
-    c3.metric("Офис", get_v('Офис'))
+        st.subheader(raw_data.get('full_name', 'Не указано'))
+        st.write(f"**Должность:** {raw_data.get('role', '---')}")
+        st.write(f"**Email:** {raw_data.get('email', '---')}")
+        st.write(f"**ID Системы:** `{user_id}`")
 
     st.markdown("---")
 
-    # 3. РЕДАКТОР (ТО ЧТО ТЫ ПРАВИШЬ)
+    # 4. РЕДАКТОР
     st.write("### 📝 Редактировать данные")
+    # Параметр "key" скрываем, он нужен только для кода
     edited_df = st.data_editor(
-        df[['id', 'parameter', 'value']], 
+        df_for_editor,
+        column_config={
+            "key": None, # Скрываем техническую колонку
+            "Параметр": st.column_config.TextColumn(disabled=True), # Запрещаем менять названия параметров
+            "Значение": st.column_config.TextColumn(disabled=False)
+        },
         use_container_width=True,
-        hide_index=True,
-        column_config={"parameter": "Параметр", "value": "Значение"}
+        hide_index=True
     )
 
-    if st.button("💾 СОХРАНИТЬ ВСЁ"):
-        for _, row in edited_df.iterrows():
-            supabase.table("profiles").update({"value": row["value"]}).eq("id", row["id"]).execute()
-        st.success("Данные обновлены!")
-        st.rerun()
+    # 5. СОХРАНЕНИЕ
+    if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", type="primary", use_container_width=True):
+        try:
+            # Собираем данные обратно в формат "колонки: значения"
+            update_data = {}
+            for _, row in edited_df.iterrows():
+                update_data[row["key"]] = row["Значение"]
+            
+            # Отправляем в Supabase один запрос на обновление всей строки
+            supabase.table("profiles").update(update_data).eq("id", user_id).execute()
+            
+            st.success("Профиль успешно обновлен!")
+            time.sleep(1)
+            st.rerun()
+        except Exception as e:
+            st.error(f"Ошибка сохранения: {e}")
             
 # --- Сайдбар и навигация остаются как у тебя, но добавляем логику вызова ---
 with st.sidebar:
@@ -2243,6 +2272,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
