@@ -1086,89 +1086,86 @@ def show_map():
             st.dataframe(pd.DataFrame(log_df), use_container_width=True)
             
 def show_profile():
-    st.header("👤 Карточка сотрудника")
+    st.markdown("<h1 class='section-head'>👤 Профиль Управляющего</h1>", unsafe_allow_html=True)
 
-    # 1. ЗАГРУЗКА ИЗ БАЗЫ
+    # 1. ЗАГРУЗКА ДАННЫХ
     try:
-        # Получаем текущего пользователя (например, по email из сессии)
-        user_email = st.session_state.get('user_email', 'admin@test.com')
-        res = supabase.table("profiles").select("*").eq("email", user_email).execute()
+        # Берем данные управляющего (первую запись)
+        res = supabase.table("manager_profile").select("*").order("id").limit(1).execute()
         
         if not res.data:
-            st.error("Пользователь не найден в базе данных.")
+            st.warning("Профиль управляющего не найден. Создайте его.")
+            if st.button("➕ Создать профиль"):
+                supabase.table("manager_profile").insert({"full_name": "Новый Управляющий"}).execute()
+                st.rerun()
             return
             
-        # Берем первую найденную запись
-        raw_data = res.data[0] 
-        user_id = raw_data['id']
+        manager_data = res.data[0]
+        m_id = manager_data['id']
         
+        # Преобразуем в формат для редактора (параметр - значение)
+        # Исключаем технические поля id и created_at из редактирования
+        df_for_edit = pd.DataFrame([
+            {"Ключ": k, "Параметр": k.replace('_', ' ').title(), "Значение": str(v)} 
+            for k, v in manager_data.items() if k not in ['id', 'created_at']
+        ])
+
     except Exception as e:
         st.error(f"Ошибка базы: {e}")
         return
 
-    # 2. ПОДГОТОВКА ДАННЫХ ДЛЯ ОТОБРАЖЕНИЯ И РЕДАКТОРА
-    # Превращаем столбцы в строки для удобного редактирования
-    profile_mapping = {
-        "full_name": "ФИО",
-        "email": "Email",
-        "role": "Должность",
-        "created_at": "Дата регистрации"
-    }
-    
-    # Создаем DataFrame для st.data_editor
-    display_data = []
-    for col_name, label in profile_mapping.items():
-        display_data.append({
-            "key": col_name,
-            "Параметр": label,
-            "Значение": str(raw_data.get(col_name, "---"))
-        })
-    
-    df_for_editor = pd.DataFrame(display_data)
-
-    # 3. ОТОБРАЖЕНИЕ КАРТОЧКИ
+    # 2. ВИЗУАЛЬНАЯ КАРТОЧКА
     col1, col2 = st.columns([1, 3])
     with col1:
-        st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=120)
+        st.image("https://cdn-icons-png.flaticon.com/512/6024/6024190.png", width=150)
     
     with col2:
-        st.subheader(raw_data.get('full_name', 'Не указано'))
-        st.write(f"**Должность:** {raw_data.get('role', '---')}")
-        st.write(f"**Email:** {raw_data.get('email', '---')}")
-        st.write(f"**ID Системы:** `{user_id}`")
+        st.subheader(manager_data.get('full_name', 'ФИО не заполнено'))
+        st.write(f"💼 **Должность:** {manager_data.get('position', '---')}")
+        st.write(f"📞 **Связь:** {manager_data.get('phone', '---')} | {manager_data.get('email', '---')}")
+        st.write(f"🏠 **Адрес проживания:** {manager_data.get('home_address', 'Не указан')}")
 
     st.markdown("---")
 
-    # 4. РЕДАКТОР
-    st.write("### 📝 Редактировать данные")
-    # Параметр "key" скрываем, он нужен только для кода
+    # 3. ИНТЕРФЕЙС РЕДАКТИРОВАНИЯ И УДАЛЕНИЯ
+    st.write("### ⚙️ Настройки и правка данных")
+    
     edited_df = st.data_editor(
-        df_for_editor,
+        df_for_edit,
         column_config={
-            "key": None, # Скрываем техническую колонку
-            "Параметр": st.column_config.TextColumn(disabled=True), # Запрещаем менять названия параметров
-            "Значение": st.column_config.TextColumn(disabled=False)
+            "Ключ": None, # Скрываем
+            "Параметр": st.column_config.TextColumn(disabled=True),
+            "Значение": st.column_config.TextColumn(width="large")
         },
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
+        key="manager_editor"
     )
 
-    # 5. СОХРАНЕНИЕ
-    if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", type="primary", use_container_width=True):
+    c1, c2 = st.columns(2)
+    
+    # Кнопка Сохранения
+    if c1.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
         try:
-            # Собираем данные обратно в формат "колонки: значения"
-            update_data = {}
-            for _, row in edited_df.iterrows():
-                update_data[row["key"]] = row["Значение"]
-            
-            # Отправляем в Supabase один запрос на обновление всей строки
-            supabase.table("profiles").update(update_data).eq("id", user_id).execute()
-            
-            st.success("Профиль успешно обновлен!")
+            # Превращаем обратно в строку БД
+            new_data = {row["Ключ"]: row["Значение"] for _, row in edited_df.iterrows()}
+            supabase.table("manager_profile").update(new_data).eq("id", m_id).execute()
+            st.success("Данные управляющего обновлены!")
             time.sleep(1)
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
+
+    # Кнопка Удаления (Опасная зона)
+    if c2.button("🗑️ УДАЛИТЬ ПРОФИЛЬ", use_container_width=True):
+        st.session_state.confirm_manager_del = True
+
+    if st.session_state.get('confirm_manager_del'):
+        st.error("Вы уверены? Это удалит карточку управляющего навсегда.")
+        if st.button("ПОДТВЕРЖДАЮ УДАЛЕНИЕ"):
+            supabase.table("manager_profile").delete().eq("id", m_id).execute()
+            st.session_state.confirm_manager_del = False
+            st.rerun()
             
 # --- Сайдбар и навигация остаются как у тебя, но добавляем логику вызова ---
 with st.sidebar:
@@ -2272,6 +2269,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
