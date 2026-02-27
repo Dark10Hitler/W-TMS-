@@ -2059,7 +2059,6 @@ elif selected == "Настройки":
     with tab2:
         st.subheader("👤 Управление персоналом")
         
-        # Форма добавления (схлопнутая для чистоты)
         with st.expander("➕ Зарегистрировать нового сотрудника"):
             with st.form("user_add_form"):
                 new_email = st.text_input("Email")
@@ -2067,11 +2066,37 @@ elif selected == "Настройки":
                 new_role = st.selectbox("Роль", ["Кладовщик", "Администратор", "Водитель"])
                 if st.form_submit_button("Создать аккаунт"):
                     if new_email and new_name:
-                        supabase.table("profiles").insert({
-                            "email": new_email, "full_name": new_name, "role": new_role
-                        }).execute()
-                        st.success("Сотрудник добавлен!")
-                        st.rerun()
+                        try:
+                            supabase.table("profiles").insert({
+                                "email": new_email, 
+                                "full_name": new_name, 
+                                "role": new_role
+                            }).execute()
+                            st.success("Сотрудник добавлен!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Ошибка при сохранении: {e}")
+
+        # Безопасное отображение списка пользователей
+        try:
+            users_res = supabase.table("profiles").select("*").execute()
+            if users_res.data:
+                df_u = pd.DataFrame(users_res.data)
+                
+                # Список колонок, которые мы ХОТИМ видеть (если они есть в БД)
+                target_cols = ['full_name', 'email', 'role', 'name', 'username']
+                # Оставляем только те, которые реально существуют в df_u
+                existing_cols = [c for c in target_cols if c in df_u.columns]
+                
+                if existing_cols:
+                    st.dataframe(df_u[existing_cols], use_container_width=True, hide_index=True)
+                else:
+                    # Если ни одна колонка не совпала, показываем всё как есть
+                    st.dataframe(df_u, use_container_width=True, hide_index=True)
+            else:
+                st.info("Список сотрудников пуст.")
+        except Exception as e:
+            st.error(f"Не удалось загрузить список пользователей: {e}")
 
         # Список пользователей
         users_data = supabase.table("profiles").select("*").execute()
@@ -2211,6 +2236,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
