@@ -2013,7 +2013,15 @@ elif selected == "Настройки":
             
             # --- ЛОГИКА ТОВАРОВ В ЯЧЕЙКЕ ---
             # Загружаем остатки для отображения при наведении
-            inv_data = supabase.table("main").select("item_name, cell_id").eq("warehouse_id", wh_to_show).execute()
+            # Заменяем таблицу на 'product_locations' и названия столбцов на те, что видны на скриншоте
+            try:
+                inv_data = supabase.table("product_locations").select("product, address").eq("zone", str(wh_to_show)).execute()
+                inv_dict = {}
+                for row in inv_data.data:
+                cell = row['address']
+                inv_dict[cell] = inv_dict.get(cell, []) + [row['product']]
+            except Exception as e:
+                st.error(f"Ошибка БД: {e}")
             inv_dict = {}
             for row in inv_data.data:
                 cell = row['cell_id']
@@ -2193,6 +2201,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
