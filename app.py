@@ -1858,22 +1858,35 @@ elif selected == "База Данных":
         if sel_row is not None and len(sel_row) > 0:
             item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
             
-            # ВАЖНО: doc_id для БД берем именно текстовый (IN-B...), а не порядковый номер
-            doc_id = str(item.get('ID Документа', item.get('id'))) 
+            # --- ПОДГОТОВКА ДАННЫХ ДЛЯ ВЫБОРА (РЕШАЕМ NameError) ---
+            doc_id = str(item.get('ID Документа', item.get('id')))
             item_name = item.get('Название товара')
             
-            # --- НОВАЯ ЛОГИКА: ПРОВЕРКА АКТУАЛЬНОГО СТАТУСА В БД ---
+            # Определяем список складов заранее
+            warehouse_list = list(WAREHOUSE_MAP.keys())
+            
+            # Проверяем БД на наличие уже сохраненного места
             try:
-                db_check = supabase.table("product_locations").select("*").eq("doc_id", doc_id).eq("product", item_name).execute()
-                if db_check.data:
-                    current_addr = db_check.data[0].get('address', 'НЕ НАЗНАЧЕНО')
-                    saved_zone = db_check.data[0].get('zone', list(WAREHOUSE_MAP.keys())[0])
+                db_data = supabase.table("product_locations").select("*").eq("doc_id", doc_id).eq("product", item_name).execute()
+                if db_data.data:
+                    current_addr = db_data.data[0].get('address', 'НЕ НАЗНАЧЕНО')
+                    saved_zone = str(db_data.data[0].get('zone', warehouse_list[0]))
                 else:
                     current_addr = "НЕ НАЗНАЧЕНО"
-                    saved_zone = list(WAREHOUSE_MAP.keys())[0]
+                    saved_zone = warehouse_list[0]
             except:
                 current_addr = "НЕ НАЗНАЧЕНО"
-                saved_zone = list(WAREHOUSE_MAP.keys())[0]
+                saved_zone = warehouse_list[0]
+
+            # Считаем индекс склада для селектбокса
+            try:
+                wh_index = warehouse_list.index(saved_zone)
+            except:
+                wh_index = 0
+
+            st.divider()
+            
+            col_info, col_location = st.columns([1, 1.2])
 
             st.divider()
             
@@ -2152,6 +2165,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
