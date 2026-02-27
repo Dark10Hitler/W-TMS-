@@ -68,20 +68,23 @@ def get_address_cached(lat, lon):
         return "Ошибка геокодирования"
 
 def upload_image_to_supabase(file_name, file_data, bucket_name="avatars"):
-    """Вспомогательная функция для загрузки изображений в Supabase Storage"""
     try:
-        # Уникальное имя файла, чтобы избежать перезаписи
-        unique_name = f"{int(time.time())}_{file_name}"
-        path_on_supa = f"manager/{unique_name}"
+        # Очищаем имя файла от лишних символов и добавляем таймштамп
+        clean_name = "".join(c for c in file_name if c.isalnum() or c in "._-").rstrip()
+        path_on_supa = f"manager/{int(time.time())}_{clean_name}"
         
-        # Загрузка
-        supabase.storage.from_(bucket_name).upload(path_on_supa, file_data)
+        # Загрузка через binary stream
+        res = supabase.storage.from_(bucket_name).upload(
+            path=path_on_supa,
+            file=file_data,
+            file_options={"content-type": "image/jpeg"} # или определять программно
+        )
         
-        # Получение публичной ссылки
+        # Получаем публичную ссылку
         public_url = supabase.storage.from_(bucket_name).get_public_url(path_on_supa)
         return public_url
     except Exception as e:
-        st.error(f"Ошибка загрузки изображения: {e}")
+        st.error(f"Ошибка на стороне Supabase: {e}")
         return None
 
 def upload_driver_photo(file):
@@ -2350,6 +2353,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
