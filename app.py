@@ -1957,17 +1957,28 @@ elif selected == "База Данных":
                     key=f"cell_sel_{doc_id}_{item_name}"
                 )
                 
-                # --- ПОДСВЕТКА: Передаем именно selected_cell ---
+                # --- ПОДСВЕТКА И ОТРИСОВКА ---
+                # Очищаем название ячейки от лишних пробелов
+                target_cell = str(selected_cell).strip()
+                
                 try:
-                    # Используем selected_cell, чтобы карта менялась СРАЗУ при смене в списке
-                    fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
+                    # 1. Генерируем фигуру
+                    fig = get_warehouse_figure(str(wh_id), highlighted_cell=target_cell)
                     
-                    # Настройка стиля Plotly для пущей яркости
-                    fig.update_traces(marker=dict(line=dict(width=2, color='white'))) 
+                    # 2. Принудительно обновляем внешний вид, чтобы ячейка "горела"
+                    fig.update_layout(
+                        margin=dict(l=0, r=0, t=0, b=0),
+                        showlegend=False,
+                        clickmode='event+select'
+                    )
                     
-                    st.plotly_chart(fig, use_container_width=True, height=350)
+                    # 3. Выводим карту
+                    st.plotly_chart(fig, use_container_width=True, height=400, config={'displayModeBar': False})
+                    
                 except Exception as e:
-                    st.warning("🗺️ Карта обновляется...")
+                    st.warning(f"🔄 Ожидание координат для ячейки {target_cell}...")
+                    # Если карта не рисуется, выведем хотя бы текстовое подтверждение
+                    st.info(f"📍 Выбранная локация: {target_cell}")
 
                 # ЛОГИКА КНОПКИ: Сохранить или Изменить
                 if current_addr == "НЕ НАЗНАЧЕНО":
@@ -2165,6 +2176,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
