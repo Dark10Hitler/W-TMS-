@@ -1787,6 +1787,7 @@ elif selected == "База Данных":
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
     with st.spinner("Синхронизация товарных позиций..."):
+        # Важно: get_full_inventory_df должна делать JOIN с product_locations, чтобы Адрес был актуальным
         inventory_df = get_full_inventory_df() 
     
     # Проверка на пустой DataFrame
@@ -1816,7 +1817,7 @@ elif selected == "База Данных":
             } else if (params.value === '🚚 В ЗАКАЗЕ') {
                 return {'color': 'white', 'backgroundColor': '#3498DB'};
             } else {
-                return {'color': '#2ECC71', 'fontWeight': 'bold', 'backgroundColor': '#1e2329'};
+                return {'color': 'white', 'fontWeight': 'bold', 'backgroundColor': '#2ECC71'};
             }
         };
         """)
@@ -1838,86 +1839,76 @@ elif selected == "База Данных":
         
         if sel_row is not None and len(sel_row) > 0:
             item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
-            doc_id = item.get('id')
-            item_name = item.get('Название товара')
-            current_addr = str(item.get('Адрес', 'НЕ НАЗНАЧЕНО'))
             
+            # ВАЖНО: doc_id для БД берем именно текстовый (IN-B...), а не порядковый номер
+            doc_id = str(item.get('ID Документа', item.get('id'))) 
+            item_name = item.get('Название товара')
+            
+            # --- НОВАЯ ЛОГИКА: ПРОВЕРКА АКТУАЛЬНОГО СТАТУСА В БД ---
+            try:
+                db_check = supabase.table("product_locations").select("*").eq("doc_id", doc_id).eq("product", item_name).execute()
+                if db_check.data:
+                    current_addr = db_check.data[0].get('address', 'НЕ НАЗНАЧЕНО')
+                    saved_zone = db_check.data[0].get('zone', list(WAREHOUSE_MAP.keys())[0])
+                else:
+                    current_addr = "НЕ НАЗНАЧЕНО"
+                    saved_zone = list(WAREHOUSE_MAP.keys())[0]
+            except:
+                current_addr = "НЕ НАЗНАЧЕНО"
+                saved_zone = list(WAREHOUSE_MAP.keys())[0]
+
             st.divider()
             
-            # Основная информация - метрики с временем
+            # Метрики
             col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("Количество", f"{item.get('Количество', 0)} шт")
-            
-            with col2:
-                st.metric("Тип", item.get('Тип', 'Н/Д'))
-            
-            with col3:
-                st.metric("Контрагент", item.get('Контрагент', 'Н/Д')[:15])
-            
+            with col1: st.metric("Количество", f"{item.get('Количество', 0)} шт")
+            with col2: st.metric("Тип", item.get('Тип', 'Н/Д'))
+            with col3: st.metric("Контрагент", str(item.get('Контрагент', 'Н/Д'))[:15])
             with col4:
-                # Форматирование времени с секундами
-                from datetime import datetime
                 try:
                     date_str = str(item.get('Дата', 'Н/Д'))
-                    # Если это ISO формат с временем
-                    if 'T' in date_str:
-                        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-                        formatted_time = dt.strftime("%d.%m.%Y %H:%M:%S")
-                    else:
-                        formatted_time = date_str[:10]
-                except:
-                    formatted_time = str(item.get('Дата', 'Н/Д'))[:10]
-                
+                    formatted_time = datetime.fromisoformat(date_str.replace('Z', '+00:00')).strftime("%d.%m.%Y %H:%M:%S") if 'T' in date_str else date_str[:10]
+                except: formatted_time = date_str[:10]
                 st.metric("Дата и время", formatted_time)
             
             st.divider()
             
-            # Детальная информация + Выбор адреса
             col_info, col_location = st.columns([1, 1.2])
             
             with col_info:
-                st.markdown("""
+                st.markdown(f"""
                 <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #58a6ff;">
-                    <b>📋 Информация по документу:</b>
+                    <b>📋 Детали товара:</b><br>
+                    - ID: <code>{doc_id}</code><br>
+                    - Товар: <b>{item_name}</b><br>
+                    - Текущий адрес: <span style="color:{'#E74C3C' if current_addr == 'НЕ НАЗНАЧЕНО' else '#2ECC71'}">{current_addr}</span>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Форматирование полного времени с секундами
-                try:
-                    date_str = str(item.get('Дата', 'Н/Д'))
-                    if 'T' in date_str:
-                        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-                        full_datetime = dt.strftime("%d.%m.%Y %H:%M:%S")
-                    else:
-                        full_datetime = date_str
-                except:
-                    full_datetime = str(item.get('Дата', 'Н/Д'))
-                
-                st.markdown(f"""
-- **ID Товара:** `{item.get('id', 'Н/Д')}`
-- **Номер документа:** {item.get('ID Документа', 'Н/Д')}
-- **Контрагент:** {item.get('Контрагент', 'Н/Д')}
-- **Дата и время:** 🕐 **{full_datetime}**
-- **Кол-во:** {item.get('Количество', 0)} шт
-                """)
+                st.info("💡 Если адрес уже назначен, вы увидите его на карте ниже. Вы можете изменить его, выбрав новую ячейку.")
             
             with col_location:
                 st.markdown("""
                 <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #2ecc71;">
-                    <b>🏪 Расположение на складе:</b>
+                    <b>🏪 Управление локацией:</b>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Выбор склада
+                # Авто-выбор склада из БД
+                warehouse_list = list(WAREHOUSE_MAP.keys())
+                try:
+                    wh_index = warehouse_list.index(saved_zone)
+                except:
+                    wh_index = 0
+
                 wh_id = st.selectbox(
-                    "🏪 Склад:",
-                    list(WAREHOUSE_MAP.keys()),
-                    key=f"wh_{doc_id}"
+                    "🏪 Выберите склад:",
+                    warehouse_list,
+                    index=wh_index,
+                    key=f"wh_sel_{doc_id}_{item_name}"
                 )
                 
-                # Генерация всех ячеек для выбранного склада
+                # Генерация ячеек
                 conf = WAREHOUSE_MAP[str(wh_id)]
                 all_cells = []
                 for r in conf['rows']:
@@ -1925,60 +1916,64 @@ elif selected == "База Данных":
                     for s in range(1, conf.get('sections', 1) + 1):
                         for t in conf.get('tiers', ['A']):
                             all_cells.append(f"WH{wh_id}-{r}-S{s}-{t}")
-                
                 all_cells = sorted(list(set(all_cells)))
                 
-                # Выбор ячейки
-                default_idx = 0
-                if current_addr != "НЕ НАЗНАЧЕНО" and current_addr in all_cells:
-                    default_idx = all_cells.index(current_addr)
+                # Авто-выбор ячейки из БД
+                try:
+                    cell_index = all_cells.index(current_addr) if current_addr in all_cells else 0
+                except:
+                    cell_index = 0
                 
                 selected_cell = st.selectbox(
-                    "📍 Ячейка:",
+                    "📍 Выберите ячейку:",
                     options=all_cells,
-                    index=default_idx,
-                    key=f"cell_{doc_id}"
+                    index=cell_index,
+                    key=f"cell_sel_{doc_id}_{item_name}"
                 )
                 
-                # Показываем карту
+                # Карта с ЯРКО-КРАСНОЙ подсветкой (highlighted_cell)
                 try:
+                    # Передаем выбранную ячейку в функцию отрисовки
                     fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
-                    st.plotly_chart(fig, use_container_width=True, height=300)
-                except:
-                    st.info("📍 Карта доступна только для некоторых складов")
-                
-                # Кнопка сохранения
-                if st.button("💾 СОХРАНИТЬ АДРЕС", use_container_width=True, type="primary", key=f"save_{doc_id}"):
+                    st.plotly_chart(fig, use_container_width=True, height=350)
+                except Exception as e:
+                    st.warning(f"🗺️ Карта для Склада {wh_id} находится в разработке")
+
+                # ЛОГИКА КНОПКИ: Сохранить или Изменить
+                if current_addr == "НЕ НАЗНАЧЕНО":
+                    btn_label = "💾 НАЗНАЧИТЬ МЕСТО"
+                    btn_type = "primary"
+                else:
+                    btn_label = "🔄 ИЗМЕНИТЬ ПОЗИЦИЮ"
+                    btn_type = "secondary"
+
+                if st.button(btn_label, use_container_width=True, type="primary", key=f"btn_{doc_id}_{item_name}"):
                     try:
                         from datetime import datetime
-                        import time
                         
-                        # Передаем doc_id в текстовую колонку (например, doc_id), а не в числовой id
-                        inv_payload = {
-                            "doc_id": doc_id,          # Сюда пойдет "IN-B29493" (должна быть текстовой в БД)
-                            "product": item_name,      # Название товара
-                            "address": selected_cell,  # Ячейка (WH1-A-S1...)
-                            "zone": str(wh_id),        # Склад
+                        payload = {
+                            "doc_id": doc_id,
+                            "product": item_name,
+                            "address": selected_cell,
+                            "zone": str(wh_id),
                             "last_updated": datetime.now().isoformat()
                         }
                         
-                        # Обновляем таблицу (важно: on_conflict должен указывать на уникальные колонки)
-                        # Если в БД уникальность определяется связкой документа и товара:
+                        # Сохраняем в БД
                         supabase.table("product_locations").upsert(
-                            inv_payload, 
-                            on_conflict="doc_id,product" # Проверьте, что в Supabase есть такой индекс
+                            payload, on_conflict="doc_id,product"
                         ).execute()
                         
-                        # Сброс кэша для моментального обновления таблицы в интерфейсе
-                        st.cache_data.clear() 
+                        # ОЧИСТКА КЭША - чтобы статус 'НЕ НАЗНАЧЕНО' сменился на адрес
+                        st.cache_data.clear()
                         
-                        success_time = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-                        st.success(f"✅ Адрес обновлен: {selected_cell} | Время: {success_time}")
+                        st.success(f"✅ Успешно! {item_name} -> {selected_cell}")
+                        st.balloons()
                         time.sleep(1)
                         st.rerun()
                         
                     except Exception as e:
-                        st.error(f"❌ Ошибка сохранения: {e}")
+                        st.error(f"❌ Ошибка при сохранении: {e}")
 
 elif selected == "Карта": show_map()
 elif selected == "Личный кабинет": show_profile()
@@ -2137,6 +2132,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
