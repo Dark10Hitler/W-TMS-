@@ -1690,20 +1690,6 @@ elif selected == "Аналитика":
         real_consumption = (actual_period_km / 100) * base_consumption * aggressive_factor
         loss_mdl = (real_consumption - (actual_period_km / 100) * base_consumption) * fuel_price
 
-        # --- РЯД 1: ФИНАНСОВЫЙ АУДИТ ---
-        st.subheader("💰 Экономическая эффективность")
-        f1, f2, f3 = st.columns(3)
-        
-        f1.metric("Прямые затраты (Fuel)", f"{int(real_consumption * fuel_price)} MDL", 
-                  help="Расчет стоимости топлива на основе пробега и стиля вождения")
-        
-        f2.metric("Убыток (Стиль езды)", f"-{int(loss_mdl)} MDL", 
-                  delta=f"{((aggressive_factor-1)*100):.1f}% перерасход", delta_color="inverse")
-        
-        roi_efficiency = max(0, 100 - (aggressive_factor-1)*200)
-        f3.metric("КПД Логистики", f"{int(roi_efficiency)}%", 
-                  help="Насколько эффективно используется ресурс ТС относительно идеального вождения")
-
         # --- РЯД 2: ТЕХНИЧЕСКИЙ ПРЕДИКТОЛОГ (Износ систем) ---
         st.subheader("🔧 Предиктивный износ систем (Digital Twin)")
         t1, t2, t3 = st.columns(3)
@@ -2161,6 +2147,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
