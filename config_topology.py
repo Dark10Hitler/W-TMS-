@@ -2,8 +2,20 @@ import plotly.graph_objects as go
 import string
 
 class WarehouseManager:
+    def get_actual_cells(warehouse_id):
+    """Возвращает список всех адресов, которые РЕАЛЬНО отрисовываются на карте"""
+    cells = []
+    # Эмулируем вызовы, чтобы собрать имена (или берем из конфига)
+    # Самый простой и надежный способ — создать временную фигуру и вытащить имена
+    from plotly import graph_objects as go
+    temp_fig = go.Figure()
+    if str(warehouse_id) in REGISTRY:
+        REGISTRY[str(warehouse_id)](temp_fig)
+        for trace in temp_fig.data:
+            if trace.name:
+                cells.append(trace.name)
+    return sorted(list(set(cells)))
     """Движок отрисовки с поддержкой интерактивного выбора"""
-    
     @staticmethod
     def add_rack_design(fig, x_start, y_start, rows, slots, color, name_prefix, 
                         tiers_config=3, orientation='V', is_box=False, warehouse_id="", highlighted_cell=None):
@@ -214,4 +226,5 @@ def add_shelf_cube(fig, name, x_pos, y_pos, z_pos, is_highlighted=False):
         opacity=opacity,
         flatshading=True,
         hovertemplate=f"Ячейка: {name}<extra></extra>"
+
     ))
