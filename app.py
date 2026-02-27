@@ -1951,28 +1951,31 @@ elif selected == "База Данных":
                     try:
                         from datetime import datetime
                         
+                        # Принудительно приводим всё к строкам, чтобы не было конфликтов типов
                         payload = {
-                            "doc_id": doc_id,
-                            "product": item_name,
-                            "address": selected_cell,
+                            "doc_id": str(doc_id),
+                            "product": str(item_name),
+                            "address": str(selected_cell),
                             "zone": str(wh_id),
                             "last_updated": datetime.now().isoformat()
                         }
                         
-                        # Сохраняем в БД
+                        # Теперь upsert сработает, так как мы удалили лишнее ограничение в SQL
                         supabase.table("product_locations").upsert(
-                            payload, on_conflict="doc_id,product"
+                            payload, 
+                            on_conflict="doc_id,product" 
                         ).execute()
                         
-                        # ОЧИСТКА КЭША - чтобы статус 'НЕ НАЗНАЧЕНО' сменился на адрес
+                        # Полная очистка кэша, чтобы таблица сразу перекрасилась в зеленый
                         st.cache_data.clear()
                         
-                        st.success(f"✅ Успешно! {item_name} -> {selected_cell}")
+                        st.success(f"✅ Позиция обновлена: {selected_cell}")
                         st.balloons()
                         time.sleep(1)
                         st.rerun()
                         
                     except Exception as e:
+                        # Если вдруг вылетает ошибка, выводим её детализированно
                         st.error(f"❌ Ошибка при сохранении: {e}")
 
 elif selected == "Карта": show_map()
@@ -2132,6 +2135,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
