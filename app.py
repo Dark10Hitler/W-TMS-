@@ -1919,51 +1919,51 @@ elif selected == "База Данных":
                 st.info("💡 Если адрес уже назначен, вы увидите его на карте ниже. Вы можете изменить его, выбрав новую ячейку.")
             
             with col_location:
-            st.markdown("""
-            <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #2ecc71;">
-                <b>🏪 Управление локацией:</b>
-            </div>
-            """, unsafe_allow_html=True)
+                st.markdown("""
+                <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #2ecc71;">
+                    <b>🏪 Управление локацией:</b>
+                </div>
+                """, unsafe_allow_html=True)
 
             # 1. Выбор склада
-            wh_id = st.selectbox(
-                "🏪 Выберите склад:",
-                warehouse_list,
-                index=wh_index,
-                key=f"wh_sel_{doc_id}"
-            )
+                wh_id = st.selectbox(
+                    "🏪 Выберите склад:",
+                    warehouse_list,
+                    index=wh_index,
+                    key=f"wh_sel_{doc_id}"
+                )
 
             # Используем новую функцию из топологии
-            try:
-                from config_topology import get_actual_cells
-                all_cells = get_actual_cells(wh_id)
-            except Exception as e:
-                st.error(f"Ошибка импорта: {e}")
-                all_cells = []
+                try:
+                    from config_topology import get_actual_cells
+                    all_cells = get_actual_cells(wh_id)
+                except Exception as e:
+                    st.error(f"Ошибка импорта: {e}")
+                    all_cells = []
 
-            if not all_cells:
-                all_cells = [current_addr] if current_addr != "НЕ НАЗНАЧЕНО" else ["Список пуст"]
+                if not all_cells:
+                    all_cells = [current_addr] if current_addr != "НЕ НАЗНАЧЕНО" else ["Список пуст"]
 
             # 2. Синхронизация индекса
-            try:
-                c_idx = all_cells.index(current_addr) if current_addr in all_cells else 0
-            except:
-                c_idx = 0
+                try:
+                    c_idx = all_cells.index(current_addr) if current_addr in all_cells else 0
+                except:
+                    c_idx = 0
 
-            selected_cell = st.selectbox(
-                "📍 Выберите ячейку:",
-                options=all_cells,
-                index=c_idx,
-                key=f"cell_sel_{doc_id}"
-            )
+                selected_cell = st.selectbox(
+                    "📍 Выберите ячейку:",
+                    options=all_cells,
+                    index=c_idx,
+                    key=f"cell_sel_{doc_id}"
+                )
 
             # 3. Отрисовка
-            try:
-                fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
-                fig.update_layout(margin=dict(l=0, r=0, b=0, t=30))
-                st.plotly_chart(fig, use_container_width=True, height=450)
-            except Exception as e:
-                st.warning("Ожидание отрисовки карты...")
+                try:
+                    fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
+                    fig.update_layout(margin=dict(l=0, r=0, b=0, t=30))
+                    st.plotly_chart(fig, use_container_width=True, height=450)
+                except Exception as e:
+                    st.warning("Ожидание отрисовки карты...")
 
                 # ЛОГИКА КНОПКИ: Сохранить или Изменить
                 if current_addr == "НЕ НАЗНАЧЕНО":
@@ -2161,6 +2161,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
