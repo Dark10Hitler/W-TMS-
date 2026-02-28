@@ -624,25 +624,48 @@ render_view_button = JsCode("""
 """)
 
 # --- ГЛАВНАЯ ФУНКЦИЯ ТАБЛИЦЫ ---
+import streamlit as st
+import pandas as pd
+from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+
 def render_aggrid_table(table_key, title):
     """
     Универсальный компонент для отображения данных из Supabase с использованием AgGrid.
-    Поддерживает умную фильтрацию, выбор записей и вызов соответствующих модальных окон.
+    Все импорты настроены на локальные файлы config.py и specific_doc.py.
     """
+    
+    # --- ПРЯМОЕ НАЗНАЧЕНИЕ ПУТЕЙ (ИМПОРТЫ) ---
+    # Мы импортируем функции внутри, чтобы избежать ошибок инициализации
+    try:
+        # Из config.py (Редактирование, Просмотр, Печать)
+        from config import (
+            edit_order_modal, edit_arrival_modal, edit_extra_modal, edit_defect_modal,
+            show_order_details_modal, show_arrival_details_modal, show_defect_details_modal, show_extra_details_modal,
+            show_print_modal, show_arrival_print_modal, show_defect_print_modal, show_extra_print_modal
+        )
+        # Из specific_doc.py (Создание и спец. редактирование ТС/Водителей)
+        from specific_doc import (
+            create_modal, create_extras_modal, create_arrival_modal, create_defect_modal, 
+            create_driver_modal, create_vehicle_modal,
+            edit_vehicle_modal, edit_driver_modal
+        )
+        # Импорт функции загрузки (предположим, она в database или основном файле)
+        from database import load_data_from_supabase 
+    except ImportError as e:
+        st.error(f"❌ Ошибка импорта: {e}. Проверьте наличие файлов config.py и specific_doc.py")
+        return
+
     # --- 1. ПРОВЕРКА И ЗАГРУЗКА ДАННЫХ ---
-    # Если данных нет в сессии или они устарели, загружаем из БД
     if table_key not in st.session_state or st.session_state[table_key] is None:
         with st.spinner(f"📡 Загрузка таблицы {title}..."):
             st.session_state[table_key] = load_data_from_supabase(table_key)
     
-    # Создаем копию для отображения, чтобы не мутировать основной стейт напрямую
     df = st.session_state[table_key].copy()
     
-    # Если данных всё еще нет (пустая таблица в БД)
     if df.empty:
-        df = pd.DataFrame(columns=['id', 'Статус', 'Дата']) # Заглушка, чтобы грид не падал
+        df = pd.DataFrame(columns=['id', 'Статус', 'Дата']) 
 
-    # --- 2. ИНТЕРФЕЙС ЗАГОЛОВКА ---
+    # --- 2. ИНТЕРФЕЙС ЗАГОЛОВКА И КНОПКА СОЗДАНИЯ ---
     st.markdown("---")
     c_title, c_act1 = st.columns([7, 3])
     
@@ -651,10 +674,9 @@ def render_aggrid_table(table_key, title):
         st.markdown(f"### 🚀 {title} <span style='font-size: 0.5em; color: #888;'>| Всего: {count} записей</span>", unsafe_allow_html=True)
     
     with c_act1:
-        # Кнопка добавления скрыта для сводной таблицы 'main', так как там разные типы документов
-        # --- КНОПКА СОЗДАНИЯ (вверху таблицы) ---
+        # Логика создания новых записей (используем функции из specific_doc)
         if table_key != "main":
-            if st.button(f"➕ ДОБАВИТЬ", key=f"add_{table_key}"):
+            if st.button(f"➕ ДОБАВИТЬ", key=f"add_btn_{table_key}", use_container_width=True, type="primary"):
                 if table_key == "orders": create_modal()
                 elif table_key == "arrivals": create_arrival_modal()
                 elif table_key == "extras": create_extras_modal()
@@ -665,19 +687,17 @@ def render_aggrid_table(table_key, title):
     # --- 3. НАСТРОЙКА ПАРАМЕТРОВ ГРИДА (AG-GRID) ---
     gb = GridOptionsBuilder.from_dataframe(df)
     
-    # Глобальные настройки колонок
     gb.configure_default_column(
         resizable=True, 
         sortable=True, 
         filterable=True, 
         filter='agTextColumnFilter',
         minWidth=100,
-        floatingFilter=True, # Строка быстрого фильтра под заголовками
+        floatingFilter=True, 
         suppressMovable=False
     )
 
-    # Кастомная стилизация для колонки "Секция" или "Статус"
-    # Мы используем JsCode для динамической раскраски ячеек прямо в браузере
+    # Динамическая раскраска (JsCode)
     cell_style_jscode = JsCode("""
     function(params) {
         if (params.value === 'ПРИХОД' || params.value === 'Доставлено') {
@@ -686,8 +706,6 @@ def render_aggrid_table(table_key, title):
             return {'color': 'white', 'backgroundColor': '#1565C0', 'fontWeight': 'bold'};
         } else if (params.value === 'БРАК' || params.value === 'ОТМЕНЕНА') {
             return {'color': 'white', 'backgroundColor': '#C62828', 'fontWeight': 'bold'};
-        } else if (params.value === 'ОЖИДАНИЕ' || params.value === 'Спец-заказ') {
-            return {'color': '#333', 'backgroundColor': '#FFD54F', 'fontWeight': 'bold'};
         }
         return null;
     }
@@ -699,13 +717,12 @@ def render_aggrid_table(table_key, title):
     if "Статус" in df.columns:
         gb.configure_column("Статус", cellStyle=cell_style_jscode, width=150)
 
-    # Прячем технические и тяжелые поля
+    # Скрываем служебные колонки
     hidden_cols = ["items_data", "photo_url", "coordinates", "description", "metadata"]
     for col in hidden_cols:
         if col in df.columns:
             gb.configure_column(col, hide=True)
 
-    # Настройка выбора строк
     gb.configure_selection(selection_mode="single", use_checkbox=False)
     gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=15)
     
@@ -716,17 +733,16 @@ def render_aggrid_table(table_key, title):
         df,
         gridOptions=gridOptions,
         height=500,
-        theme='balham', # Более компактная тема для проф. интерфейсов
+        theme='balham', 
         update_on=['selectionChanged'], 
         allow_unsafe_jscode=True,
         key=f"grid_component_{table_key}"
     )
 
-    # --- 5. ОБРАБОТКА ВЫБРАННОЙ ЗАПИСИ ---
+    # --- 5. ОБРАБОТКА ВЫБОРА И КНОПКИ ДЕЙСТВИЙ ---
     selected_rows = grid_response.selected_rows
     row_data = None
 
-    # Обрабатываем выбор (AgGrid возвращает либо список, либо DataFrame)
     if selected_rows is not None:
         if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
             row_data = selected_rows.iloc[0].to_dict()
@@ -737,10 +753,8 @@ def render_aggrid_table(table_key, title):
         entry_id = row_data.get("id")
         st.session_state.last_selected_id = entry_id
         
-        # --- УМНЫЙ РОУТИНГ (Определяем тип документа) ---
-        # Это критически важно для таблицы 'main', где лежат разные типы данных
+        # --- УМНЫЙ РОУТИНГ (Определение типа документа для 'main') ---
         target_table = table_key
-        
         if table_key == "main":
             id_str = str(entry_id).upper()
             if id_str.startswith("ORD"): target_table = "orders"
@@ -748,19 +762,17 @@ def render_aggrid_table(table_key, title):
             elif id_str.startswith("DEF"): target_table = "defects"
             elif id_str.startswith("EXT"): target_table = "extras"
             else:
-                # Если префикса нет, смотрим на колонку "Секция"
                 secc = row_data.get("Секция", "")
                 if secc == "ПРИХОД": target_table = "arrivals"
                 elif secc == "ЗАЯВКА": target_table = "orders"
-                elif secc == "БРАК": target_table = "defects"
 
-        # --- ПАНЕЛЬ ДЕЙСТВИЙ ---
         st.success(f"📌 Выбран объект: **{entry_id}**")
         
-        c1, c2, c3 = st.columns([1, 1, 1, 2])
+        # Ряд кнопок управления
+        c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
         
-        with c1: # Редактирование
-            if st.button("⚙️ ИЗМЕНИТЬ", key=f"ed_{entry_id}"):
+        with c1: # РЕДАКТИРОВАНИЕ
+            if st.button("⚙️ ИЗМЕНИТЬ", key=f"ed_btn_{entry_id}", use_container_width=True):
                 if target_table == "orders": edit_order_modal(entry_id)
                 elif target_table == "arrivals": edit_arrival_modal(entry_id)
                 elif target_table == "extras": edit_extra_modal(entry_id)
@@ -768,25 +780,23 @@ def render_aggrid_table(table_key, title):
                 elif target_table == "drivers": edit_driver_modal(entry_id)
                 elif target_table == "vehicles": edit_vehicle_modal(entry_id)
 
-        with c2: # Просмотр
-            if st.button("🔍 ПРОСМОТР", key=f"vw_{entry_id}"):
+        with c2: # ПРОСМОТР
+            if st.button("🔍 ПРОСМОТР", key=f"vw_btn_{entry_id}", use_container_width=True):
                 if target_table == "orders": show_order_details_modal(entry_id)
                 elif target_table == "arrivals": show_arrival_details_modal(entry_id)
                 elif target_table == "defects": show_defect_details_modal(entry_id)
                 elif target_table == "extras": show_extra_details_modal(entry_id)
 
-        with c3: # Печать
-            if st.button("🖨️ ПЕЧАТЬ", key=f"pr_{entry_id}"):
+        with c3: # ПЕЧАТЬ
+            if st.button("🖨️ ПЕЧАТЬ", key=f"pr_btn_{entry_id}", use_container_width=True):
                 if target_table == "orders": show_print_modal(entry_id)
                 elif target_table == "arrivals": show_arrival_print_modal(entry_id)
                 elif target_table == "defects": show_defect_print_modal(entry_id)
                 elif target_table == "extras": show_extra_print_modal(entry_id)
 
     else:
-        # Если ничего не выбрано, показываем подсказку
-        st.info("💡 Нажмите на любую строку в таблице, чтобы открыть инструменты управления (Редактирование / Просмотр / Печать)")
+        st.info("💡 Выберите строку в таблице для активации кнопок (Изменить / Просмотр / Печать)")
 
-    # Вспомогательный разделитель
     st.markdown("---")
      
 def save_doc(key, name, qty, price, client, tc, driver):
@@ -2403,6 +2413,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
