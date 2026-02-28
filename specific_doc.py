@@ -627,104 +627,137 @@ def create_extras_modal(*args, **kwargs):
 def create_defect_modal(*args, **kwargs):
     from database import supabase
     import pandas as pd
-    import json
     from datetime import datetime
     import time
     import uuid
     import numpy as np
 
     st.subheader("🚨 Акт о выявлении дефектов")
-    
-    with st.form("defect_detailed_form"):
-        st.markdown("### 🔍 Информация о повреждении")
-        d_c1, d_c2, d_c3 = st.columns(3)
+
+    # Получаем данные из главного реестра для привязки
+    try:
+        main_df = supabase.table("main_registry").select("id, doc_type, party").execute().data
+        main_options = [f"{item['id']} ({item['doc_type']}) — {item['party']}" for item in main_df]
+    except Exception:
+        main_options = []
+        st.error("Не удалось загрузить данные из главного реестра.")
+
+    with st.form("defect_detailed_form", clear_on_submit=False):
+        st.markdown("### 🔍 Связь с операцией и Источник")
+        d_c1, d_c2 = st.columns([2, 1])
         
-        reporter = d_c1.text_input("Кто выявил (ФИО)", placeholder="ФИО сотрудника")
-        defect_type = d_c2.selectbox("Тип дефекта", ["Бой товара", "Помятая упаковка", "Намокание", "Заводской брак", "Недостача", "Прочее"])
-        defect_severity = d_c3.selectbox("Критичность", ["Низкая (Продажа возможна)", "Средняя (Уценка)", "Высокая (Списание/Утиль)"])
+        # Выбор основания для брака
+        selected_parent = d_c1.selectbox("🔗 Основание (из Главного Реестра)", options=["Без привязки"] + main_options)
+        reporter = d_c2.text_input("Кто выявил (ФИО)", placeholder="ФИО сотрудника")
         
         st.divider()
         
-        d_c4, d_c5 = st.columns([2, 1])
-        item_name = d_c4.text_input("Название поврежденного товара", placeholder="Введите название товара или артикул")
-        linked_id = d_c5.text_input("🔗 Связанный ID (Заявка/Приход)")
+        st.markdown("### 📦 Детали повреждения")
+        d_c3, d_c4, d_c5 = st.columns(3)
+        item_name = d_c3.text_input("Название товара / Артикул")
+        defect_type = d_c4.selectbox("Тип дефекта", ["Бой товара", "Помятая упаковка", "Намокание", "Заводской брак", "Недостача", "Прочее"])
+        defect_severity = d_c5.selectbox("Критичность", ["Низкая (Продажа возможна)", "Средняя (Уценка)", "Высокая (Списание)"])
+
+        description = st.text_area("Детальное описание обстоятельств")
+
+        # --- ЗАГРУЗКА ФОТО ---
+        st.markdown("### 📸 Фотофиксация")
+        uploaded_photos = st.file_uploader("Загрузите фото повреждений (до 3-х шт.)", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
         
-        description = st.text_area("Детальное описание повреждений", placeholder="Опишите характер повреждений, количество и обстоятельства...")
+        st.divider()
         
         st.markdown("### 💰 Оценка и решение")
         d_c6, d_c7, d_c8 = st.columns(3)
-        defect_qty = d_c6.number_input("Кол-во брака", min_value=0.0, value=1.0)
-        estimated_loss = d_c7.number_input("Оценочный ущерб (₽)", min_value=0.0, value=0.0)
+        defect_qty = d_c6.number_input("Кол-во (ед.)", min_value=0.0, value=1.0)
+        estimated_loss = d_c7.number_input("Ущерб (₽)", min_value=0.0, value=0.0)
         decision = d_c8.selectbox("Решение", ["На проверку", "Списание", "Уценка", "Возврат поставщику"])
         
         submitted_defect = st.form_submit_button("🚨 ЗАРЕГИСТРИРОВАТЬ АКТ БРАКА", use_container_width=True)
 
     if submitted_defect:
-        if not reporter or not item_name or not description:
-            st.error("❌ Заполните обязательные поля: Кто выявил, Товар и Описание!")
+        if not reporter or not item_name or not uploaded_photos:
+            st.error("❌ Обязательно: ФИО, Название товара и ХОТЯ БЫ ОДНО ФОТО!")
             return
 
         defect_id = f"BAD-{str(uuid.uuid4())[:6].upper()}"
+        parent_id = selected_parent.split(" ")[0] if " " in selected_parent else None
         now = datetime.now()
+        
+        photo_urls = []
 
-        # Payload для Supabase
+        # 1. Загрузка фото в Bucket 'defects_photos'
+        for i, file in enumerate(uploaded_photos):
+            file_ext = file.name.split('.')[-1]
+            file_path = f"{defect_id}/{i}.{file_ext}"
+            try:
+                supabase.storage.from_("defects_photos").upload(file_path, file.getvalue())
+                url = supabase.storage.from_("defects_photos").get_public_url(file_path)
+                photo_urls.append(url)
+            except Exception as e:
+                st.warning(f"Ошибка загрузки фото {i}: {e}")
+
+        # 2. Payload для Supabase (таблица defects)
         supabase_payload = {
             "id": defect_id,
             "reporter": reporter,
             "defect_type": defect_type,
             "severity": defect_severity,
             "item_name": item_name,
-            "linked_id": linked_id,
+            "linked_id": parent_id,
             "description": description,
             "quantity": float(defect_qty),
             "estimated_loss": float(estimated_loss),
             "decision": decision,
-            "status": "ЗАРЕГИСТРИРОВАНО",
+            "status": "АКТ СФОРМИРОВАН",
+            "photo_links": photo_urls, # Сохраняем массив ссылок
             "created_at": now.isoformat()
         }
 
         try:
             supabase.table("defects").insert(supabase_payload).execute()
         except Exception as e:
-            st.error(f"🚨 Ошибка сохранения акта брака: {e}")
+            st.error(f"🚨 Ошибка базы данных: {e}")
             return
 
-        # UI Data
-        ui_defect_data = {
+        # 3. Обновление UI реестра
+        ui_data = {
             "📝 Ред.": "⚙️",
             "id": defect_id,
             "Выявил": reporter,
             "Тип": defect_type,
             "Товар": item_name,
             "Кол-во": defect_qty,
-            "Ущерб": estimated_loss,
             "Решение": decision,
+            "Фото": f"✅ ({len(photo_urls)} шт.)",
             "Дата создания": now.strftime("%Y-%m-%d"),
             "Время": now.strftime("%H:%M"),
-            "🔍 Просмотр": "👀",
-            "🖨️ Печать": False
+            "🔍 Просмотр": "👀"
         }
 
-        # Обновление реестра в session_state
-        new_defect_df = pd.DataFrame([ui_defect_data])
-        if "defects" not in st.session_state or st.session_state["defects"] is None:
-            st.session_state["defects"] = new_defect_df
-        else:
-            st.session_state["defects"] = pd.concat([st.session_state["defects"], new_defect_df], ignore_index=True)
-
-        # Зеркалирование в MAIN
-        if "main" in st.session_state and st.session_state["main"] is not None:
-            main_entry = ui_defect_data.copy()
-            main_entry["Тип документа"] = "АКТ БРАКА"
-            main_entry["Время создания"] = main_entry.pop("Время")
-            main_entry["Описание"] = f"Брак: {item_name}. {defect_type}. Решение: {decision}"
-            main_entry["Статус"] = f"БРАК: {decision}"
+        # 4. Запись в MAIN_REGISTRY (Зеркалирование)
+        if "main" in st.session_state:
+            main_entry = {
+                "id": defect_id,
+                "doc_type": "АКТ БРАКА",
+                "status": f"БРАК: {decision}",
+                "party": reporter,
+                "total_sum": estimated_loss,
+                "created_at": now.strftime("%Y-%m-%d"),
+                "created_time": now.strftime("%H:%M:%S"),
+                "description": f"Товар: {item_name}. Связь с: {parent_id}. Тип: {defect_type}"
+            }
             
-            main_row_df = pd.DataFrame([main_entry])
-            main_row_df = main_row_df.reindex(columns=st.session_state["main"].columns, fill_value="")
-            st.session_state["main"] = pd.concat([st.session_state["main"], main_row_df], ignore_index=True)
+            # Обновляем локальный стейт
+            main_row = pd.DataFrame([main_entry])
+            st.session_state["main"] = pd.concat([st.session_state["main"], main_row], ignore_index=True)
+            
+            # Отправляем в БД в main_registry
+            try:
+                supabase.table("main_registry").insert(main_entry).execute()
+            except Exception as e:
+                st.warning(f"Не удалось зеркалировать в main_registry: {e}")
 
-        st.success(f"✅ Акт брака {defect_id} успешно оформлен!")
+        st.success(f"✅ Акт {defect_id} успешно сохранен. Фото загружены.")
         time.sleep(1)
         st.rerun()
             
@@ -1007,6 +1040,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
