@@ -630,115 +630,98 @@ def create_defect_modal(*args, **kwargs):
     from datetime import datetime
     import time
     import uuid
-    import streamlit as st
 
-    # --- ВНУТРЕННЯЯ ФУНКЦИЯ ЗАГРУЗКИ (Решает NameError) ---
-    def local_storage_upload(file):
+    # 1. Функция загрузки фото (внутри, чтобы не было NameError)
+    def local_upload_image(file):
         try:
             file_ext = file.name.split(".")[-1]
-            # Генерируем уникальное имя для Bucket
-            file_name = f"defect_{uuid.uuid4().hex[:8]}_{int(time.time())}.{file_ext}"
-            
-            # Загрузка в бакет 'defects_photos'
+            file_name = f"defect_{uuid.uuid4().hex[:8]}.{file_ext}"
             supabase.storage.from_("defects_photos").upload(
                 path=file_name,
                 file=file.getvalue(),
                 file_options={"content-type": f"image/{file_ext}"}
             )
-            # Возвращаем публичную ссылку
             return supabase.storage.from_("defects_photos").get_public_url(file_name)
         except Exception as e:
-            st.error(f"Ошибка загрузки фото в Bucket: {e}")
+            st.error(f"Ошибка загрузки фото: {e}")
             return None
 
-    # --- ШАГ 0: ПОДГОТОВКА ДАННЫХ ИЗ ИНВЕНТАРЯ ---
-    try:
-        inv_res = supabase.table("inventory").select("item_name, doc_id, cell_address").execute()
-        inventory_options = [
-            f"{i['item_name']} | Док: {i['doc_id']} | Ячейка: {i['cell_address']}" 
-            for i in inv_res.data
-        ] if inv_res.data else []
-    except:
-        inventory_options = []
-
     # --- ФОРМА ВВОДА ---
-    with st.form("defect_final_form_v3", clear_on_submit=False):
-        st.subheader("🚨 Регистрация дефекта")
+    with st.form("defect_final_form"):
+        st.subheader("🚨 Создание Акта Дефектовки")
         
-        selected_inv = st.selectbox("📦 Выберите товар из инвентаря", options=inventory_options)
+        fio = st.text_input("Кто выявил (ФИО)")
+        item = st.text_input("Название товара")
         
         col1, col2 = st.columns(2)
-        reporter_name = col1.text_input("Кто выявил (ФИО)", placeholder="Иванов И.И.")
-        defect_cat = col2.selectbox("Тип дефекта", ["Бой", "Порча", "Брак производителя", "Некомплект"])
+        qty = col1.number_input("Кол-во", min_value=1, value=1)
+        d_type = col2.selectbox("Тип дефекта", ["Бой", "Порча", "Брак", "Некомплект"])
         
-        detail_desc = st.text_area("Детальное описание проблемы")
+        zone = st.text_input("Локация", value="ZONE-BRAK")
+        desc = st.text_area("Описание повреждений")
         
-        col3, col4, col5 = st.columns(3)
-        qty_val = col3.number_input("Кол-во (ед)", min_value=1, value=1)
-        addr_val = col4.text_input("Зона/Ячейка", value="ZONE-BRAK")
-        decision_val = col5.selectbox("Решение", ["На проверку", "Списание", "Уценка", "Возврат"])
+        uploaded_file = st.file_uploader("📸 Фото повреждения", type=['png', 'jpg', 'jpeg'])
         
-        uploaded_file = st.file_uploader("📸 Фотофиксация (Обязательно)", type=['png', 'jpg', 'jpeg'])
-        
-        submit_btn = st.form_submit_button("🚨 ЗАРЕГИСТРИРОВАТЬ АКТ", use_container_width=True)
+        submit = st.form_submit_button("🔥 ЗАРЕГИСТРИРОВАТЬ АКТ", use_container_width=True)
 
-    # --- ЛОГИКА СОХРАНЕНИЯ ---
-    if submit_btn:
-        if not uploaded_file or not reporter_name or not selected_inv:
-            st.error("❌ Заполните ФИО, выберите товар и добавьте фото!")
+    if submit:
+        if not uploaded_file or not fio or not item:
+            st.error("❌ Заполните обязательные поля и добавьте фото!")
             return
 
         with st.spinner("Сохранение..."):
-            # 1. Загрузка фото (теперь вызываем локальную функцию)
-            photo_url = local_storage_upload(uploaded_file)
-            
-            if not photo_url:
-                return # Остановка, если фото не загрузилось
+            # Загружаем фото в Bucket
+            url = local_upload_image(uploaded_file)
+            if not url: return
 
-            # 2. Подготовка данных (Синхронизировано с вашими колонками)
-            now_iso = datetime.now().isoformat()
-            defect_id = f"DEF-{uuid.uuid4().hex[:6].upper()}"
-            
-            # Разбираем строку селектора
-            item_clean_name = selected_inv.split(" | ")[0]
-            doc_ref = selected_inv.split("Док: ")[1].split(" | ")[0] if "Док: " in selected_inv else "N/A"
+            d_id = f"DEF-{uuid.uuid4().hex[:6].upper()}"
+            now = datetime.now().isoformat()
 
-            # 3. Payload СТРОГО по списку колонок вашей таблицы 'defects'
-            supabase_payload = {
-                "id": defect_id,
-                "created_at": now_iso,
-                "updated_at": now_iso,
-                "item_name": item_clean_name,
-                "main_item": item_clean_name,
-                "quantity": int(qty_val),
-                "total_defective": int(qty_val),
-                "storage_address": addr_val,
-                "quarantine_address": addr_val,
-                "defect_type": defect_cat,
-                "description": detail_desc,
-                "responsible_party": reporter_name,
-                "reported_by": reporter_name,
-                "decision": decision_val,
-                "status": "ОБНАРУЖЕНО",
-                "linked_doc_id": doc_ref,
-                "related_doc_id": doc_ref,
-                "photo_url": photo_url,
+            # 2. Payload — заполняем ВСЕ твои колонки (основные и дубли)
+            payload = {
+                "id": d_id,
+                "created_at": now,
+                "updated_at": now,
+                
+                # Товар (заполняем оба поля из твоей таблицы)
+                "item_name": item,
+                "main_item": item,
+                
+                # Количество (заполняем оба поля)
+                "quantity": int(qty),
+                "total_defective": int(qty),
+                
+                # Адрес (заполняем оба поля)
+                "storage_address": zone,
+                "quarantine_address": zone,
+                
+                # Детали
+                "defect_type": d_type,
+                "description": desc,
                 "culprit": "Не установлен",
-                "items_data": [{"item": item_clean_name, "qty": qty_val, "note": detail_desc}]
+                
+                # Ответственный (заполняем оба поля)
+                "responsible_party": fio,
+                "reported_by": fio,
+                
+                # Статусы и ссылка
+                "decision": "На проверку",
+                "status": "ОБНАРУЖЕНО",
+                "photo_url": url,
+                "items_data": [{"item": item, "qty": qty, "desc": desc}]
             }
 
             try:
                 # ВАЖНО: Записываем ТОЛЬКО в таблицу 'defects'
-                # Это исключает ошибку 55000 (cannot insert into view)
-                supabase.table("defects").insert(supabase_payload).execute()
+                # Код записи в main_registry УДАЛЕН, чтобы не было ошибки 55000
+                supabase.table("defects").insert(payload).execute()
                 
-                st.success(f"✅ Акт {defect_id} успешно сохранен!")
+                st.success(f"✅ Акт {d_id} успешно сохранен!")
                 st.balloons()
                 time.sleep(1.5)
-                st.rerun()
-                
+                st.rerun() # Теперь View сама подтянет данные при обновлении
             except Exception as e:
-                st.error(f"🚨 Ошибка записи в таблицу defects: {e}")
+                st.error(f"🚨 Ошибка записи в таблицу: {e}")
             
 @st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
@@ -1019,6 +1002,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
