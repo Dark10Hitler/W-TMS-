@@ -302,7 +302,7 @@ import time
 from datetime import datetime
 
 @st.dialog("📥 Регистрация нового Прихода (Поставка)", width="large")
-def create_arrival_modal():
+def create_arrival_modal(table_key="arrivals"):
     # Импортируем внутри, если они не импортированы глобально, 
     # но лучше делать это в начале функции
     from database import supabase 
@@ -1034,6 +1034,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
