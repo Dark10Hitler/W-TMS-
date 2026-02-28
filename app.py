@@ -629,7 +629,6 @@ def render_aggrid_table(table_key, title):
     Универсальный компонент для отображения данных из Supabase с использованием AgGrid.
     Поддерживает умную фильтрацию, выбор записей и вызов соответствующих модальных окон.
     """
-
     # --- 1. ПРОВЕРКА И ЗАГРУЗКА ДАННЫХ ---
     # Если данных нет в сессии или они устарели, загружаем из БД
     if table_key not in st.session_state or st.session_state[table_key] is None:
@@ -653,11 +652,15 @@ def render_aggrid_table(table_key, title):
     
     with c_act1:
         # Кнопка добавления скрыта для сводной таблицы 'main', так как там разные типы документов
+        # --- КНОПКА СОЗДАНИЯ (вверху таблицы) ---
         if table_key != "main":
-            if st.button(f"➕ СОЗДАТЬ: {title.upper()}", key=f"btn_add_{table_key}", use_container_width=True, type="primary"):
-                # Устанавливаем флаг открытия модалки создания (логика создания должна быть в основном файле)
-                st.session_state.active_create_modal = table_key
-                st.rerun()
+            if st.button(f"➕ ДОБАВИТЬ", key=f"add_{table_key}"):
+                if table_key == "orders": create_modal()
+                elif table_key == "arrivals": create_arrival_modal()
+                elif table_key == "extras": create_extras_modal()
+                elif table_key == "defects": create_defect_modal()
+                elif table_key == "drivers": create_driver_modal()
+                elif table_key == "vehicles": create_vehicle_modal()
 
     # --- 3. НАСТРОЙКА ПАРАМЕТРОВ ГРИДА (AG-GRID) ---
     gb = GridOptionsBuilder.from_dataframe(df)
@@ -754,29 +757,30 @@ def render_aggrid_table(table_key, title):
         # --- ПАНЕЛЬ ДЕЙСТВИЙ ---
         st.success(f"📌 Выбран объект: **{entry_id}**")
         
-        col_btn1, col_btn2, col_btn3, col_spacer = st.columns([1, 1, 1, 2])
+        c1, c2, c3 = st.columns([1, 1, 1, 2])
         
-        with col_btn1:
-            if st.button("⚙️ РЕДАКТИРОВАТЬ", key=f"edit_btn_{entry_id}", use_container_width=True):
-                # Вызываем модальное окно редактирования в зависимости от типа
-                if target_table == "orders": from modules.orders import edit_order_modal; edit_order_modal(entry_id)
-                elif target_table == "arrivals": from modules.arrivals import edit_arrival_modal; edit_arrival_modal(entry_id)
-                elif target_table == "extras": from modules.extras import edit_extra_modal; edit_extra_modal(entry_id)
-                elif target_table == "drivers": from modules.fleet import edit_driver_modal; edit_driver_modal(entry_id)
-                elif target_table == "vehicles": from modules.fleet import edit_vehicle_modal; edit_vehicle_modal(entry_id)
+        with c1: # Редактирование
+            if st.button("⚙️ ИЗМЕНИТЬ", key=f"ed_{entry_id}"):
+                if target_table == "orders": edit_order_modal(entry_id)
+                elif target_table == "arrivals": edit_arrival_modal(entry_id)
+                elif target_table == "extras": edit_extra_modal(entry_id)
+                elif target_table == "defects": edit_defect_modal(entry_id)
+                elif target_table == "drivers": edit_driver_modal(entry_id)
+                elif target_table == "vehicles": edit_vehicle_modal(entry_id)
 
-        with col_btn2:
-            if st.button("🔍 ПРОСМОТР", key=f"view_btn_{entry_id}", use_container_width=True):
-                # Вызываем модальное окно просмотра
-                if target_table == "orders": from modules.orders import show_order_details_modal; show_order_details_modal(entry_id)
-                elif target_table == "arrivals": from modules.arrivals import show_arrival_details_modal; show_arrival_details_modal(entry_id)
-                elif target_table == "defects": from modules.defects import show_defect_details_modal; show_defect_details_modal(entry_id)
+        with c2: # Просмотр
+            if st.button("🔍 ПРОСМОТР", key=f"vw_{entry_id}"):
+                if target_table == "orders": show_order_details_modal(entry_id)
+                elif target_table == "arrivals": show_arrival_details_modal(entry_id)
+                elif target_table == "defects": show_defect_details_modal(entry_id)
+                elif target_table == "extras": show_extra_details_modal(entry_id)
 
-        with col_btn3:
-            if st.button("🖨️ ПЕЧАТЬ ТТН", key=f"print_btn_{entry_id}", use_container_width=True):
-                # Логика печати
-                st.toast(f"Генерация документа для {entry_id}...")
-                # Здесь вызывается функция формирования PDF
+        with c3: # Печать
+            if st.button("🖨️ ПЕЧАТЬ", key=f"pr_{entry_id}"):
+                if target_table == "orders": show_print_modal(entry_id)
+                elif target_table == "arrivals": show_arrival_print_modal(entry_id)
+                elif target_table == "defects": show_defect_print_modal(entry_id)
+                elif target_table == "extras": show_extra_print_modal(entry_id)
 
     else:
         # Если ничего не выбрано, показываем подсказку
@@ -2399,6 +2403,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
