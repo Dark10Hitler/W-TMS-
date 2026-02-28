@@ -129,7 +129,7 @@ def edit_order_modal(entry_id, table_key="orders"):
     from database import supabase  # Гарантируем импорт клиента Supabase
     import datetime
 
-    # Вспомогательная функция для времени (если нет внешней)
+    # Вспомогательная функция для времени
     def get_moldova_time():
         return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=2)))
 
@@ -144,8 +144,7 @@ def edit_order_modal(entry_id, table_key="orders"):
                 
                 db_row = response.data[0]
                 
-                # Маппинг: БД (английский) -> Интерфейс (русский)
-                # Добавлена проверка photo_url: если там не ссылка, ставим None
+                # Проверка photo_url: если там не ссылка, ставим None
                 raw_photo = db_row.get('photo_url', '')
                 valid_photo = raw_photo if isinstance(raw_photo, str) and raw_photo.startswith('http') else None
 
@@ -153,11 +152,11 @@ def edit_order_modal(entry_id, table_key="orders"):
                     'id': db_row.get('id'),
                     'Клиент': db_row.get('client_name', ''),
                     'Телефон': db_row.get('phone', ''),
-                    'Адрес клиента': db_row.get('delivery_address', ''),
+                    'Адрес клиента': db_row.get('delivery_address', ''), # Синхронизировано с create_modal
                     'Координаты': db_row.get('coordinates', ''),
                     'Статус': db_row.get('status', 'ОЖИДАНИЕ'),
-                    'Водитель': db_row.get('driver', ''),
-                    'ТС': db_row.get('vehicle', ''),
+                    'Водитель': db_row.get('driver', ''),               # Синхронизировано с create_modal
+                    'ТС': db_row.get('vehicle', ''),                  # Синхронизировано с create_modal
                     'Адрес загрузки': db_row.get('load_address', 'Центральный склад'),
                     'Сумма заявки': float(db_row.get('total_sum', 0.0) or 0.0),
                     'Общий объем (м3)': float(db_row.get('total_volume', 0.0) or 0.0),
@@ -191,7 +190,7 @@ def edit_order_modal(entry_id, table_key="orders"):
 
     st.markdown(f"### 🖋️ Редактор документа `{entry_id}`")
     
-    # ОСТАВЛЯЕМ ТОЛЬКО 2 ВКЛАДКИ (Склад удален)
+    # ВКЛАДКИ
     tab_main, tab_map = st.tabs(["📝 Основные данные и Товары", "📍 Геолокация и Карта"])
 
     # --- ВКЛАДКА 1: ОСНОВНЫЕ ДАННЫЕ ---
@@ -209,30 +208,17 @@ def edit_order_modal(entry_id, table_key="orders"):
         st_idx = status_list.index(row['Статус']) if row['Статус'] in status_list else 0
         row['Статус'] = r2_1.selectbox("📍 Статус", status_list, index=st_idx, key=f"e_st_{entry_id}")
 
-        # ВОДИТЕЛЬ
-        drivers_list = ["Наемный водитель"]
-        if 'drivers' in st.session_state and st.session_state.drivers is not None:
-            d_col = "Фамилия" if "Фамилия" in st.session_state.drivers.columns else "last_name"
-            if d_col in st.session_state.drivers.columns:
-                drivers_list += st.session_state.drivers[d_col].dropna().tolist()
-        
-        current_dr = row['Водитель']
-        dr_index = drivers_list.index(current_dr) if current_dr in drivers_list else 0
-        selected_dr_base = r2_2.selectbox("👤 Водитель (Выбор)", drivers_list, index=dr_index, key=f"e_dr_s_{entry_id}")
-        
-        if selected_dr_base == "Наемный водитель":
-            row['Водитель'] = r2_2.text_input("Укажите ФИО вручную", value="" if current_dr == "Наемный водитель" else current_dr, key=f"e_dr_i_{entry_id}")
-        else:
-            row['Водитель'] = selected_dr_base
+        # ВОДИТЕЛЬ (Исправлено: теперь это текстовое поле для синхронизации)
+        row['Водитель'] = r2_2.text_input("👤 Водитель (ФИО)", value=row['Водитель'], key=f"e_dr_i_{entry_id}")
 
+        # ТС И АДРЕС ЗАГРУЗКИ
         row['ТС'] = r2_3.text_input("🚛 ТС (Госномер)", value=row['ТС'], key=f"e_ts_{entry_id}")
         row['Адрес загрузки'] = r2_4.text_input("🏗️ Адрес загрузки", value=row['Адрес загрузки'], key=f"e_adr_z_{entry_id}")
 
-        # РАБОТА С ФОТО (Исправлено)
+        # РАБОТА С ФОТО
         st.markdown("---")
         f_c1, f_c2 = st.columns([1, 2])
         with f_c1:
-            # Проверяем, что в photo_url реально ссылка, а не текст "Прикреплено"
             if row.get('photo_url') and str(row['photo_url']).startswith('http'):
                 st.image(row['photo_url'], caption="Текущее фото", width=200)
             else:
@@ -250,16 +236,16 @@ def edit_order_modal(entry_id, table_key="orders"):
         col_m1, col_m2 = st.columns([2, 1])
         
         with col_m2:
-            manual_coords = st.text_input("Координаты (Lat, Lon)", value=row['Координаты'], placeholder="Напр: 47.0123, 28.8642")
+            manual_coords = st.text_input("Координаты (Lat, Lon)", value=row['Координаты'], placeholder="Напр: 47.0123, 28.8642", key=f"coord_inp_{entry_id}")
             row['Координаты'] = manual_coords
             st.info("Кликните на карту слева, чтобы получить точные координаты точки.")
 
         with col_m1:
-            # Центрируем на Кишинев, если координат нет
             start_lat, start_lon = 47.01, 28.86
             if row['Координаты'] and ',' in row['Координаты']:
                 try:
-                    start_lat, start_lon = map(float, row['Координаты'].split(','))
+                    parts = row['Координаты'].split(',')
+                    start_lat, start_lon = float(parts[0].strip()), float(parts[1].strip())
                 except: pass
 
             m = folium.Map(location=[start_lat, start_lon], zoom_start=12)
@@ -276,7 +262,7 @@ def edit_order_modal(entry_id, table_key="orders"):
                 new_lat = map_data['last_clicked']['lat']
                 new_lng = map_data['last_clicked']['lng']
                 new_coords_str = f"{new_lat:.6f}, {new_lng:.6f}"
-                if st.button(f"📍 Использовать: {new_coords_str}"):
+                if st.button(f"📍 Использовать: {new_coords_str}", key=f"btn_set_coord_{entry_id}"):
                     row['Координаты'] = new_coords_str
                     st.rerun()
 
@@ -286,7 +272,7 @@ def edit_order_modal(entry_id, table_key="orders"):
     save_col, cancel_col = st.columns(2)
     
     with save_col:
-        if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
+        if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary", key=f"btn_save_{entry_id}"):
             with st.spinner("⏳ Сохранение в базу данных..."):
                 try:
                     # 1. Загрузка фото в Storage (если есть новое)
@@ -294,19 +280,20 @@ def edit_order_modal(entry_id, table_key="orders"):
                     if new_photo:
                         file_ext = new_photo.name.split('.')[-1]
                         file_name = f"{entry_id}_{int(time.time())}.{file_ext}"
+                        # ИСПРАВЛЕНО: Правильный бакет 'order-photos'
                         supabase.storage.from_("order-photos").upload(file_name, new_photo.getvalue())
-                        final_photo_url = supabase.storage.from_("orders").get_public_url(file_name)
+                        final_photo_url = supabase.storage.from_("order-photos").get_public_url(file_name)
 
                     # 2. Формируем Payload для БД
                     now_md = get_moldova_time()
                     db_payload = {
                         "client_name": row['Клиент'],
                         "phone": row['Телефон'],
-                        "delivery_address": row['Адрес клиента'],
+                        "delivery_address": row['Адрес клиента'], # Синхронно
                         "coordinates": row['Координаты'],
                         "status": row['Статус'],
-                        "driver": row['Водитель'],
-                        "vehicle": row['ТС'],
+                        "driver": row['Водитель'],             # Синхронно
+                        "vehicle": row['ТС'],                # Синхронно
                         "load_address": row['Адрес загрузки'],
                         "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
                         "photo_url": final_photo_url,
@@ -318,23 +305,24 @@ def edit_order_modal(entry_id, table_key="orders"):
 
                     # 4. Локальное обновление DataFrame (UI)
                     if idx is not None and table_key in st.session_state:
-                        # Обновляем те поля, которые отображаются в главной таблице
                         st.session_state[table_key].at[idx, 'Клиент'] = row['Клиент']
                         st.session_state[table_key].at[idx, 'Статус'] = row['Статус']
                         st.session_state[table_key].at[idx, 'Водитель'] = row['Водитель']
                         st.session_state[table_key].at[idx, 'ТС'] = row['ТС']
-                        if 'photo_url' in st.session_state[table_key].columns:
-                            st.session_state[table_key].at[idx, 'photo_url'] = final_photo_url
+                        # Обновляем адрес клиента в локальной таблице, если такая колонка есть
+                        if 'Адрес клиента' in st.session_state[table_key].columns:
+                             st.session_state[table_key].at[idx, 'Адрес клиента'] = row['Адрес клиента']
 
                     st.success("✅ Данные успешно обновлены!")
                     time.sleep(1)
+                    st.session_state.pop(f"temp_row_{entry_id}", None)
                     st.rerun()
 
                 except Exception as e:
                     st.error(f"🚨 Ошибка при сохранении: {e}")
 
     with cancel_col:
-        if st.button("❌ ОТМЕНИТЬ", use_container_width=True):
+        if st.button("❌ ОТМЕНИТЬ", use_container_width=True, key=f"btn_cancel_{entry_id}"):
             st.session_state.pop(f"temp_row_{entry_id}", None)
             st.rerun()
             
@@ -1663,6 +1651,7 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
+
 
 
 
