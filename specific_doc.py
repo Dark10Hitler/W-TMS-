@@ -631,7 +631,7 @@ def create_defect_modal(*args, **kwargs):
     import time
     import uuid
 
-    # --- ВНУТРЕННЯЯ ФУНКЦИЯ ЗАГРУЗКИ ФОТО ---
+    # 1. Функция загрузки фото в Bucket
     def local_upload_image(file):
         try:
             file_ext = file.name.split(".")[-1]
@@ -646,108 +646,103 @@ def create_defect_modal(*args, **kwargs):
             st.error(f"Ошибка загрузки фото: {e}")
             return None
 
-    # --- ПОДГОТОВКА ДАННЫХ ИЗ ИНВЕНТАРЯ ---
+    # 2. Получение данных из inventory для выпадающего списка
     try:
-        inv_res = supabase.table("inventory").select("item_name, doc_id, cell_address").execute()
+        inv_data = supabase.table("inventory").select("item_name, doc_id, cell_address").execute()
         inventory_options = [
             f"{i['item_name']} | Док: {i['doc_id']} | Ячейка: {i['cell_address']}" 
-            for i in inv_res.data
-        ] if inv_res.data else []
+            for i in inv_data.data
+        ] if inv_data.data else []
     except:
         inventory_options = []
 
-    with st.form("defect_detailed_form", clear_on_submit=False):
-        st.subheader("🚨 Акт о выявлении дефектов")
+    # --- ФОРМА ВВОДА ---
+    with st.form("defect_final_form", clear_on_submit=False):
+        st.subheader("🚨 Создание Акта Дефектовки")
         
-        selected_inventory = st.selectbox("📦 Выберите товар", options=inventory_options)
+        selected_inv = st.selectbox("📦 Выберите товар из инвентаря", options=inventory_options)
         
-        c1, c2 = st.columns(2)
-        reporter_name = c1.text_input("Кто выявил (ФИО)", placeholder="Иванов И.И.")
-        defect_cat = c2.selectbox("Тип дефекта", ["Бой", "Порча", "Брак производителя", "Некомплект"])
+        col1, col2 = st.columns(2)
+        fio = col1.text_input("Кто выявил (ФИО)", placeholder="ФИО сотрудника")
+        d_type = col2.selectbox("Тип дефекта", ["Бой", "Порча", "Брак производителя", "Некомплект"])
         
-        detail_desc = st.text_area("Детальное описание проблемы")
+        desc = st.text_area("Описание повреждений")
         
-        c3, c4, c5 = st.columns(3)
-        qty_val = c3.number_input("Кол-во (ед)", min_value=1, value=1)
-        addr_val = c4.text_input("Зона/Ячейка", value="ZONE-BRAK")
-        decision_val = c5.selectbox("Решение", ["На проверку", "Списание", "Уценка", "Возврат"])
+        col3, col4, col5 = st.columns(3)
+        qty = col3.number_input("Кол-во (ед)", min_value=1, value=1)
+        zone = col4.text_input("Локация брака", value="ZONE-BRAK")
+        reshenie = col5.selectbox("Решение", ["На проверку", "Списание", "Уценка", "Возврат"])
         
-        uploaded_file = st.file_uploader("📸 Фотофиксация (Обязательно)", type=['png', 'jpg', 'jpeg'])
+        uploaded_file = st.file_uploader("📸 Загрузить фото повреждения", type=['png', 'jpg', 'jpeg'])
         
-        # Кнопка отправки
-        submit_btn = st.form_submit_button("🚨 ЗАРЕГИСТРИРОВАТЬ АКТ", use_container_width=True)
+        submit = st.form_submit_button("🔥 ЗАРЕГИСТРИРОВАТЬ АКТ", use_container_width=True)
 
-    if submit_btn:
-        if not uploaded_file or not reporter_name or not selected_inventory:
-            st.error("❌ Заполните ФИО, выберите товар и добавьте фото!")
+    if submit:
+        if not uploaded_file or not fio or not selected_inv:
+            st.error("❌ Заполните ФИО, выберите товар и прикрепите фото!")
             return
 
-        # --- БЛОК СОХРАНЕНИЯ (ВНУТРИ IF SUBMITTED) ---
-        with st.spinner("Регистрация акта в системе..."):
-            # 1. Сначала загружаем фото в бакет
-            photo_link = local_upload_image(uploaded_file)
-            if not photo_link:
-                st.error("Ошибка при загрузке фото. Попробуйте снова.")
-                return
+        with st.spinner("Сохранение..."):
+            # Загружаем фото
+            url = local_upload_image(uploaded_file)
+            if not url: return
 
-            # 2. Формируем Payload строго по твоим колонкам
-            now_iso = datetime.now().isoformat()
-            defect_id = f"DEF-{uuid.uuid4().hex[:6].upper()}"
+            # Подготовка ID и даты
+            d_id = f"DEF-{uuid.uuid4().hex[:6].upper()}"
+            now = datetime.now().isoformat()
             
-            # Очищаем данные из селектора (берем только имя товара)
-            item_clean_name = selected_inventory.split(" | ")[0] if selected_inventory else "Неизвестно"
-            doc_ref = selected_inventory.split("Док: ")[1].split(" | ")[0] if "Док: " in selected_inventory else "N/A"
+            # Парсим данные из выбора
+            item_name_clean = selected_inv.split(" | ")[0]
+            doc_id_ref = selected_inv.split("Док: ")[1].split(" | ")[0] if "Док: " in selected_inv else "N/A"
 
-            # ЗАПОЛНЯЕМ ВСЕ КОЛОНКИ (дублируем, чтобы не было NULL)
-            supabase_payload = {
-                "id": defect_id,
-                "created_at": now_iso,
-                "updated_at": now_iso,
+            # 3. ФОРМИРУЕМ PAYLOAD ПО ТВОИМ КОЛОНКАМ (заполняем всё!)
+            payload = {
+                "id": d_id,
+                "created_at": now,
+                "updated_at": now,
                 
-                # Поля товара
-                "item_name": item_clean_name,
-                "main_item": item_clean_name,
+                # Товар
+                "item_name": item_name_clean,
+                "main_item": item_name_clean,
                 
-                # Поля количества
-                "quantity": int(qty_val),
-                "total_defective": int(qty_val),
+                # Количества
+                "quantity": int(qty),
+                "total_defective": int(qty),
                 
-                # Поля адреса
-                "storage_address": addr_val,
-                "quarantine_address": addr_val,
+                # Адреса
+                "storage_address": zone,
+                "quarantine_address": zone,
                 
-                # Тип и описание
-                "defect_type": defect_cat,
-                "description": detail_desc,
+                # Описания и причины
+                "defect_type": d_type,
+                "description": desc,
                 "culprit": "Не установлен",
                 
-                # Ответственные лица
-                "responsible_party": reporter_name,
-                "reported_by": reporter_name,
+                # Ответственные
+                "responsible_party": fio,
+                "reported_by": fio,
                 
                 # Статусы и связи
-                "decision": decision_val,
+                "decision": reshenie,
                 "status": "ОБНАРУЖЕНО",
-                "linked_doc_id": doc_ref,
-                "related_doc_id": doc_ref,
+                "linked_doc_id": doc_id_ref,
+                "related_doc_id": doc_id_ref,
                 
-                # Технические данные
-                "photo_url": photo_link,
-                "items_data": [{"item": item_clean_name, "qty": qty_val, "note": detail_desc}]
+                # Допы
+                "photo_url": url,
+                "items_data": [{"item": item_name_clean, "qty": qty, "desc": desc}]
             }
 
             try:
-                # ВАЖНО: Записываем ТОЛЬКО в 'defects'
-                # Удалена любая попытка записи в 'main_registry'
-                supabase.table("defects").insert(supabase_payload).execute()
+                # ВАЖНО: Только в таблицу 'defects'! Ошибки View больше не будет.
+                supabase.table("defects").insert(payload).execute()
                 
-                st.success(f"✅ Акт {defect_id} успешно сохранен в базу!")
+                st.success(f"✅ Акт {d_id} успешно добавлен!")
                 st.balloons()
                 time.sleep(1.5)
                 st.rerun()
-                
             except Exception as e:
-                st.error(f"🚨 Ошибка записи в таблицу defects: {e}")
+                st.error(f"🚨 Ошибка записи в таблицу: {e}")
             
 @st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
@@ -1028,6 +1023,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
