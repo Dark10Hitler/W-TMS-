@@ -1520,11 +1520,21 @@ def show_defect_print_modal(defect_id):
         # Превращаем в DataFrame и проверяем ключи (унификация)
         if items_list:
             items_df = pd.DataFrame(items_list)
-            # Если в базе старый ключ, переименовываем для печати
-            if 'Описание дефекта' in items_df.columns:
-                items_df = items_df.rename(columns={'Описание дефекта': 'Описание'})
+            # Принудительная унификация названий колонок для таблицы печати
+            rename_map = {
+                'item': 'Товар', 
+                'Наименование': 'Товар', 
+                'Описание дефекта': 'Описание',
+                'Детали': 'Описание'
+            }
+            items_df = items_df.rename(columns={k: v for k, v in rename_map.items() if k in items_df.columns})
+            
+            # Если каких-то колонок не хватает, создаем пустые, чтобы таблица не ломалась
+            for col in ['Товар', 'Кол-во', 'Описание']:
+                if col not in items_df.columns:
+                    items_df[col] = "---"
         else:
-            items_df = pd.DataFrame()
+            items_df = pd.DataFrame(columns=['Товар', 'Кол-во', 'Описание'])
             
     except Exception as e:
         st.error(f"Ошибка связи с БД: {e}")
@@ -1533,18 +1543,19 @@ def show_defect_print_modal(defect_id):
     # --- 2. ПОДГОТОВКА ТАБЛИЦЫ ---
     if not items_df.empty:
         # Берем только нужные колонки для печати
-        cols = [c for c in ['Товар', 'Кол-во', 'Описание'] if c in items_df.columns]
+        cols = ['Товар', 'Кол-во', 'Описание']
         items_html = items_df[cols].to_html(index=False, border=1, classes='data-table')
     else:
         items_html = "<p style='text-align:center; padding: 20px;'>Спецификация товаров пуста</p>"
 
-    # Подготовка фото
+    # Подготовка фото (Синхронизировано с photo_url)
     photo_html = ""
-    if row.get('photo_url'):
+    current_photo = row.get('photo_url')
+    if current_photo:
         photo_html = f"""
-        <div style="margin-top: 20px; text-align: center;">
-            <h3 style="font-size: 14px;">ФОТОФИКСАЦИЯ ПОВРЕЖДЕНИЙ:</h3>
-            <img src="{row['photo_url']}" style="max-width: 100%; max-height: 400px; border: 1px solid #ccc; border-radius: 8px;">
+        <div style="margin-top: 20px; text-align: center; page-break-inside: avoid;">
+            <h3 style="font-size: 14px; text-align: left; border-left: 4px solid #d32f2f; padding-left: 8px;">ФОТОФИКСАЦИЯ ПОВРЕЖДЕНИЙ:</h3>
+            <img src="{current_photo}" style="max-width: 100%; max-height: 450px; border: 1px solid #333; margin-top: 10px;">
         </div>
         """
 
@@ -1555,44 +1566,46 @@ def show_defect_print_modal(defect_id):
     <head>
         <meta charset="utf-8">
         <style>
-            body {{ font-family: 'Segoe UI', Arial, sans-serif; padding: 10px; color: #333; }}
-            .act-border {{ border: 2px solid #d32f2f; padding: 25px; background: #fff; }}
+            body {{ font-family: 'Segoe UI', Arial, sans-serif; padding: 10px; color: #333; line-height: 1.4; }}
+            .act-border {{ border: 2px solid #d32f2f; padding: 25px; background: #fff; max-width: 900px; margin: auto; }}
             .header {{ text-align: center; border-bottom: 2px solid #d32f2f; margin-bottom: 20px; padding-bottom: 10px; }}
-            .header h1 {{ color: #d32f2f; margin: 0; font-size: 22px; text-transform: uppercase; }}
+            .header h1 {{ color: #d32f2f; margin: 0; font-size: 24px; text-transform: uppercase; }}
             
-            .info-table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 13px; }}
-            .info-table td {{ padding: 8px; border-bottom: 1px solid #eee; }}
+            .info-table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 14px; }}
+            .info-table td {{ padding: 10px; border-bottom: 1px solid #eee; width: 50%; }}
             
-            .data-table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }}
+            .data-table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }}
             .data-table th {{ background: #f4f4f4; padding: 10px; border: 1px solid #333; text-align: left; }}
             .data-table td {{ padding: 8px; border: 1px solid #333; }}
             
-            .decision-box {{ background: #fff4f4; border: 1px solid #d32f2f; padding: 12px; margin-top: 15px; font-style: italic; font-size: 13px; }}
+            .decision-box {{ background: #fff4f4; border: 1px solid #d32f2f; padding: 15px; margin-top: 20px; font-size: 14px; }}
             
-            .footer {{ margin-top: 40px; display: flex; justify-content: space-between; }}
-            .signature-line {{ border-top: 1px solid #000; width: 200px; text-align: center; font-size: 10px; margin-top: 35px; }}
+            .footer {{ margin-top: 50px; display: flex; justify-content: space-between; align-items: flex-start; }}
+            .signature-block {{ display: flex; flex-direction: column; gap: 30px; }}
+            .signature-line {{ border-top: 1px solid #000; width: 250px; text-align: center; font-size: 11px; margin-top: 30px; padding-top: 5px; }}
             
-            .stamp {{ border: 3px double #0000FF; color: #0000FF; width: 120px; height: 120px; 
-                        text-align: center; border-radius: 50%; opacity: 0.6; font-size: 10px; 
+            .stamp {{ border: 4px double #0000FF; color: #0000FF; width: 130px; height: 130px; 
+                        text-align: center; border-radius: 50%; opacity: 0.7; font-size: 11px; 
                         display: flex; align-items: center; justify-content: center;
-                        transform: rotate(-15deg); font-weight: bold; }}
+                        transform: rotate(-15deg); font-weight: bold; margin-right: 20px; }}
             
             @media print {{ 
                 .no-print {{ display: none !important; }} 
-                body {{ padding: 0; }}
-                .act-border {{ border: 1px solid #000; }}
+                body {{ padding: 0; background: none; }}
+                .act-border {{ border: 1px solid #000; width: 100%; max-width: 100%; }}
+                .stamp {{ -webkit-print-color-adjust: exact; }}
             }}
             
             .print-btn {{
-                width: 100%; padding: 15px; background: #d32f2f; color: white; 
+                width: 100%; padding: 18px; background: #d32f2f; color: white; 
                 border: none; cursor: pointer; font-weight: bold; border-radius: 4px; 
-                margin-bottom: 20px; font-size: 16px;
+                margin-bottom: 20px; font-size: 18px; transition: 0.3s;
             }}
+            .print-btn:hover {{ background: #b71c1c; }}
         </style>
         
         <script>
             function doPrint() {{
-                window.focus();
                 window.print();
             }}
         </script>
@@ -1605,53 +1618,60 @@ def show_defect_print_modal(defect_id):
         <div class="act-border">
             <div class="header">
                 <h1>АКТ ДЕФЕКТОВКИ №{defect_id}</h1>
-                <p style="font-size: 10px;">IMPERIA WMS | ОТДЕЛ КОНТРОЛЯ КАЧЕСТВА</p>
+                <p style="font-size: 11px; margin-top: 5px;">IMPERIA WMS | СИСТЕМА УПРАВЛЕНИЯ СКЛАДОМ | ОТДЕЛ КОНТРОЛЯ КАЧЕСТВА</p>
             </div>
             
             <table class="info-table">
                 <tr>
-                    <td><b>Дата:</b> {str(row.get('updated_at', '---'))[:10]}</td>
-                    <td><b>Статус:</b> <span style="color:#d32f2f;">{row.get('status', '---')}</span></td>
+                    <td><b>Дата документа:</b> {str(row.get('updated_at', row.get('created_at', '---')))[:10]}</td>
+                    <td><b>Текущий статус:</b> <span style="color:#d32f2f;">{row.get('status', 'ЗАРЕГИСТРИРОВАНО')}</span></td>
                 </tr>
                 <tr>
-                    <td><b>Виновник:</b> {row.get('culprit', '---')}</td>
-                    <td><b>Тип дефекта:</b> {row.get('defect_type', '---')}</td>
+                    <td><b>Виновная сторона:</b> {row.get('culprit', 'Не установлен')}</td>
+                    <td><b>Тип повреждения:</b> {row.get('defect_type', '---')}</td>
                 </tr>
                 <tr>
-                    <td><b>Основной товар:</b> {row.get('main_item', '---')}</td>
-                    <td><b>Локация:</b> {row.get('quarantine_address', '---')}</td>
+                    <td><b>Товар (осн.):</b> {row.get('main_item', '---')}</td>
+                    <td><b>Зона карантина:</b> {row.get('quarantine_address', 'ZONE-BRAK')}</td>
                 </tr>
                 <tr>
-                    <td colspan="2"><b>Основание:</b> {row.get('related_doc_id', '---')}</td>
+                    <td colspan="2"><b>Связанный документ (ID):</b> {row.get('related_doc_id', '---')}</td>
                 </tr>
             </table>
             
             <div class="decision-box">
-                <b>РЕШЕНИЕ:</b> {row.get('decision', 'На рассмотрении.')}
+                <b style="color:#d32f2f;">ЗАКЛЮЧЕНИЕ КОМИССИИ / РЕШЕНИЕ:</b><br>
+                <p style="margin-top: 8px; line-height: 1.5;">{row.get('decision', 'На стадии рассмотрения и экспертизы.')}</p>
             </div>
             
-            <h3 style="margin-top: 20px; font-size: 14px; border-left: 4px solid #d32f2f; padding-left: 8px;">СПЕЦИФИКАЦИЯ:</h3>
+            <h3 style="margin-top: 25px; font-size: 15px; border-left: 4px solid #d32f2f; padding-left: 8px;">ПОЗИЦИИ, ВКЛЮЧЕННЫЕ В АКТ:</h3>
             {items_html}
 
             {photo_html}
 
             <div class="footer">
-                <div class="signatures">
-                    <div class="signature-line">Сдал (Перевозчик/Поставщик)</div>
-                    <div class="signature-line">Принял (Склад)</div>
-                    <div class="signature-line">Утвердил (QC)</div>
+                <div class="signature-block">
+                    <div class="signature-line">Сдал (Перевозчик / Поставщик)</div>
+                    <div class="signature-line">Принял (Ответственный кладовщик)</div>
+                    <div class="signature-line">Утвердил (Инспектор по качеству)</div>
                 </div>
-                <div class="stamp">IMPERIA WMS<br>КОНТРОЛЬ<br>ПРОЙДЕН</div>
+                <div class="stamp">
+                    <div>IMPERIA WMS<br>КОНТРОЛЬ<br>ПРОЙДЕН<br>_________</div>
+                </div>
             </div>
+        </div>
+        <div style="text-align: center; margin-top: 10px; font-size: 10px; color: #888;" class="no-print">
+            Сформировано автоматически в системе Imperia WMS. ID: {row.get('id')}
         </div>
     </body>
     </html>
     """
 
-    # Важно: height должен быть достаточным, чтобы не появлялось двойной прокрутки
-    st.components.v1.html(full_html, height=1000, scrolling=True)
+    # Отображение HTML в Streamlit
+    st.components.v1.html(full_html, height=1200, scrolling=True)
     
-    if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
+    st.divider()
+    if st.button("❌ ЗАКРЫТЬ ПРОСМОТР ПЕЧАТИ", use_container_width=True, type="secondary"):
         st.rerun()
 
 
