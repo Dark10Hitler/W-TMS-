@@ -454,11 +454,12 @@ def show_order_details_modal(order_id):
             st.write(f"**Обновлен:** {updated}")
             st.write(f"**Автор правок:** {db_row.get('updated_by', 'Система')}")
 
-    # --- 6. КНОПКИ УПРАВЛЕНИЯ ---
+   # --- 6. КНОПКИ УПРАВЛЕНИЯ ---
     st.markdown("<br>", unsafe_allow_html=True)
-    b1 = st.columns(2)
-    
-    if b1.button("❌ ЗАКРЫТЬ", use_container_width=True):
+    col_close, col_extra = st.columns(2) # Распаковываем список на две колонки
+
+# Теперь вызываем кнопку ВНУТРИ колонки
+    if col_close.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
         
 
@@ -1651,6 +1652,7 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
+
 
 
 
