@@ -294,7 +294,7 @@ def edit_order_modal(entry_id, table_key="orders"):
                     if new_photo:
                         file_ext = new_photo.name.split('.')[-1]
                         file_name = f"{entry_id}_{int(time.time())}.{file_ext}"
-                        supabase.storage.from_("orders").upload(file_name, new_photo.getvalue())
+                        supabase.storage.from_("order-photos").upload(file_name, new_photo.getvalue())
                         final_photo_url = supabase.storage.from_("orders").get_public_url(file_name)
 
                     # 2. Формируем Payload для БД
@@ -1663,6 +1663,7 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
+
 
 
 
