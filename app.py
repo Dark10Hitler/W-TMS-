@@ -623,9 +623,6 @@ render_view_button = JsCode("""
     }
 """)
 
-# 2. ПОЛНОСТЬЮ ОБНОВЛЕННАЯ ФУНКЦИЯ ТАБЛИЦЫ
-from database import load_data_from_supabase # Предполагаем наличие этой функции
-
 # --- ГЛАВНАЯ ФУНКЦИЯ ТАБЛИЦЫ ---
 def render_aggrid_table(table_key, title):
     """
@@ -2402,6 +2399,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
