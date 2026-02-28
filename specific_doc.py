@@ -682,44 +682,46 @@ def create_defect_modal(*args, **kwargs):
             st.error("❌ Заполните ФИО, выберите товар и добавьте фото!")
             return
 
-        with st.spinner("Сохранение акта..."):
-            # 1. Загрузка фото в Bucket
+        # --- БЛОК СОХРАНЕНИЯ (ВНУТРИ IF SUBMITTED) ---
+        with st.spinner("Регистрация акта в системе..."):
+            # 1. Сначала загружаем фото в бакет
             photo_link = local_upload_image(uploaded_file)
             if not photo_link:
+                st.error("Ошибка при загрузке фото. Попробуйте снова.")
                 return
 
-            # 2. Подготовка данных (Синхронизировано с вашим списком колонок)
+            # 2. Формируем Payload строго по твоим колонкам
             now_iso = datetime.now().isoformat()
             defect_id = f"DEF-{uuid.uuid4().hex[:6].upper()}"
             
-            # Разбираем строку выбора
-            item_clean_name = selected_inventory.split(" | ")[0]
-            doc_ref = selected_inventory.split("Док: ")[1].split(" | ")[0] if "Док: " in selected_inventory else ""
+            # Очищаем данные из селектора (берем только имя товара)
+            item_clean_name = selected_inventory.split(" | ")[0] if selected_inventory else "Неизвестно"
+            doc_ref = selected_inventory.split("Док: ")[1].split(" | ")[0] if "Док: " in selected_inventory else "N/A"
 
-            # МЫ ЗАПОЛНЯЕМ ВСЕ КОЛОНКИ, ЧТОБЫ ИЗБЕЖАТЬ NULL
+            # ЗАПОЛНЯЕМ ВСЕ КОЛОНКИ (дублируем, чтобы не было NULL)
             supabase_payload = {
                 "id": defect_id,
                 "created_at": now_iso,
                 "updated_at": now_iso,
                 
-                # Колонки для товара (дублируем для надежности вашей схемы)
+                # Поля товара
                 "item_name": item_clean_name,
                 "main_item": item_clean_name,
                 
-                # Колонки для количества
+                # Поля количества
                 "quantity": int(qty_val),
                 "total_defective": int(qty_val),
                 
-                # Колонки для адреса
+                # Поля адреса
                 "storage_address": addr_val,
                 "quarantine_address": addr_val,
                 
-                # Информация о дефекте
+                # Тип и описание
                 "defect_type": defect_cat,
                 "description": detail_desc,
-                "culprit": "Не установлен", # По умолчанию
+                "culprit": "Не установлен",
                 
-                # Ответственные (дублируем)
+                # Ответственные лица
                 "responsible_party": reporter_name,
                 "reported_by": reporter_name,
                 
@@ -729,17 +731,17 @@ def create_defect_modal(*args, **kwargs):
                 "linked_doc_id": doc_ref,
                 "related_doc_id": doc_ref,
                 
-                # Фото и доп. данные
+                # Технические данные
                 "photo_url": photo_link,
                 "items_data": [{"item": item_clean_name, "qty": qty_val, "note": detail_desc}]
             }
 
             try:
-                # ВАЖНО: Записываем ТОЛЬКО в таблицу 'defects'
-                # Ошибки 'cannot insert into view' НЕ БУДЕТ, так как мы не трогаем main_registry
+                # ВАЖНО: Записываем ТОЛЬКО в 'defects'
+                # Удалена любая попытка записи в 'main_registry'
                 supabase.table("defects").insert(supabase_payload).execute()
                 
-                st.success(f"✅ Акт {defect_id} успешно сохранен!")
+                st.success(f"✅ Акт {defect_id} успешно сохранен в базу!")
                 st.balloons()
                 time.sleep(1.5)
                 st.rerun()
@@ -1026,6 +1028,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
