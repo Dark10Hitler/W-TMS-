@@ -38,6 +38,18 @@ import math
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
+import pytz
+from datetime import datetime
+
+def get_moldova_time():
+    tz = pytz.timezone('Europe/Chisinau')
+    return datetime.now(tz)
+
+# При создании/обновлении:
+now = get_moldova_time()
+current_date = now.strftime("%Y-%m-%d")
+current_time = now.strftime("%H:%M:%S")
+
 # Инициализация геокодера (User_agent обязателен!)
 geolocator = Nominatim(user_agent="imperia_logistics_monitor_2026")
 
@@ -2350,6 +2362,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
