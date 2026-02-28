@@ -650,7 +650,6 @@ def render_aggrid_table(table_key, title):
             edit_vehicle_modal, edit_driver_modal
         )
         # Импорт функции загрузки (предположим, она в database или основном файле)
-        from database import load_data_from_supabase 
     except ImportError as e:
         st.error(f"❌ Ошибка импорта: {e}. Проверьте наличие файлов config.py и specific_doc.py")
         return
@@ -2413,6 +2412,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
