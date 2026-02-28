@@ -496,8 +496,13 @@ def create_arrival_modal(table_key="arrivals"):
         
     
 @st.dialog("➕ Регистрация Дополнительного События/Услуги", width="large")
-def create_extras_modal():
+def create_extras_modal(*args, **kwargs):
     from database import supabase  # Наше подключение
+    import uuid
+    from datetime import datetime
+    import time
+    import pandas as pd
+
     st.subheader("🛠️ Фиксация доп. работ, ресурсов и согласований")
     
     with st.form("extras_detailed_form"):
@@ -507,8 +512,10 @@ def create_extras_modal():
         approved_by = r1_c1.text_input("👤 Кто одобрил (ФИО)", placeholder="Напр: Иванов И.И.")
         executor = r1_c2.text_input("👷 Исполнитель", placeholder="Бригада 2 / Сотрудник")
         
-        selected_date = r1_c3.date_input("📅 Дата события", datetime.now())
-        selected_time = r1_c3.time_input("🕒 Время", datetime.now().time())
+        # Устанавливаем текущую дату и время
+        now_for_input = datetime.now()
+        selected_date = r1_c3.date_input("📅 Дата события", now_for_input)
+        selected_time = r1_c3.time_input("🕒 Время", now_for_input.time())
 
         st.divider()
 
@@ -545,7 +552,6 @@ def create_extras_modal():
             return
 
         # 2. Генерация ID и времени
-        import uuid
         extra_id = f"EXT-{str(uuid.uuid4())[:6].upper()}"
         now = datetime.now()
         
@@ -596,12 +602,13 @@ def create_extras_modal():
 
         # Обновляем реестр extras в session_state
         new_row_df = pd.DataFrame([ui_extra_data])
-        if "extras" not in st.session_state:
-            st.session_state["extras"] = pd.DataFrame()
-        st.session_state["extras"] = pd.concat([st.session_state["extras"], new_row_df], ignore_index=True)
+        if "extras" not in st.session_state or st.session_state["extras"] is None:
+            st.session_state["extras"] = new_row_df
+        else:
+            st.session_state["extras"] = pd.concat([st.session_state["extras"], new_row_df], ignore_index=True)
 
         # 6. ЗЕРКАЛИРОВАНИЕ В ТАБЛИЦУ MAIN
-        if "main" in st.session_state:
+        if "main" in st.session_state and st.session_state["main"] is not None:
             main_entry = ui_extra_data.copy()
             main_entry["Тип документа"] = "ДОП.УСЛУГА"
             main_entry["Время создания"] = main_entry.pop("Время")
@@ -617,143 +624,109 @@ def create_extras_modal():
         st.rerun()
         
 @st.dialog("⚠️ Регистрация Брака / Повреждений", width="large")
-def create_defect_modal():
+def create_defect_modal(*args, **kwargs):
     from database import supabase
     import pandas as pd
     import json
     from datetime import datetime
     import time
+    import uuid
+    import numpy as np
 
     st.subheader("🚨 Акт о выявлении дефектов")
-
-    # --- 1. ТВОЯ ЛОГИКА СБОРА ДАННЫХ (БЕРЕМ ВСЁ ИЗ БД) ---
-    def get_full_inventory_df():
-        all_items = []
-        try:
-            # ===== ПРИХОДЫ (ARRIVALS) =====
-            res_arr = supabase.table("arrivals").select("*").execute()
-            arrivals_data = pd.DataFrame(res_arr.data) if res_arr.data else pd.DataFrame()
-
-            if not arrivals_data.empty:
-                for _, row in arrivals_data.iterrows():
-                    data = row.get('items_data')
-                    if isinstance(data, str):
-                        try: data = json.loads(data)
-                        except: continue
-                    
-                    if isinstance(data, list):
-                        for item in data:
-                            if not isinstance(item, dict): continue
-                            name = item.get('Название товара') or item.get('Наименование') or "Без имени"
-                            if str(name).upper() in ["TOTAL", "ИТОГО"]: continue
-                            
-                            # Твои ключи: 'Количесво товаров' (с опечаткой) или 'Количество'
-                            qty = item.get('Количесво товаров') or item.get('Количество') or 0
-                            
-                            all_items.append({
-                                "id": row.get('id'),
-                                "Название товара": str(name),
-                                "Количество": float(qty) if qty else 0,
-                                "Адрес": str(item.get('Адрес') or "НЕ НАЗНАЧЕНО"),
-                                "Тип": "📦 ПРИХОД",
-                                "ID Документа": str(row.get('doc_number', row.get('id', 'Н/Д')))
-                            })
-
-            # ===== ЗАКАЗЫ (ORDERS) =====
-            res_ord = supabase.table("orders").select("*").execute()
-            orders_data = pd.DataFrame(res_ord.data) if res_ord.data else pd.DataFrame()
-
-            if not orders_data.empty:
-                for _, row in orders_data.iterrows():
-                    data = row.get('items_data')
-                    if isinstance(data, str):
-                        try: data = json.loads(data)
-                        except: continue
-                    
-                    if isinstance(data, list):
-                        for item in data:
-                            if not isinstance(item, dict): continue
-                            name = item.get('Название товара') or item.get('Наименование') or "Без имени"
-                            if str(name).upper() in ["TOTAL", "ИТОГО"]: continue
-                            
-                            qty = item.get('Количесво товаров') or item.get('Количество') or 0
-                            
-                            all_items.append({
-                                "id": row.get('id'),
-                                "Название товара": str(name),
-                                "Количество": float(qty) if qty else 0,
-                                "Адрес": str(item.get('Адрес') or "НЕ НАЗНАЧЕНО"),
-                                "Тип": "🚚 ЗАКАЗ",
-                                "ID Документа": str(row.get('id', 'Н/Д'))
-                            })
-            
-            st.write(f"DEBUG: Всего товаров найдено: {len(all_items)}") 
-        except Exception as e:
-            st.error(f"❌ Ошибка парсинга: {e}")
-            return pd.DataFrame()
-
-        return pd.DataFrame(all_items)
-
-    # Запускаем сбор
-    inventory_df = get_full_inventory_df()
-
-    if inventory_df.empty:
-        st.warning("В базе данных нет товаров для оформления брака.")
-        return
-
-    # Формируем красивое имя для селекбокса
-    inventory_df['display_name'] = (
-        inventory_df['Тип'] + ": " + 
-        inventory_df['Название товара'] + 
-        " (Док: " + inventory_df['ID Документа'] + ")"
-    )
-
-    with st.form("defect_form"):
-        st.markdown("### 1️⃣ Выбор поврежденного товара")
-        selected_display = st.selectbox("🔍 Выберите товар", inventory_df['display_name'].unique())
+    
+    with st.form("defect_detailed_form"):
+        st.markdown("### 🔍 Информация о повреждении")
+        d_c1, d_c2, d_c3 = st.columns(3)
         
-        # Берем данные конкретной выбранной строки
-        item_info = inventory_df[inventory_df['display_name'] == selected_display].iloc[0]
-        st.info(f"📍 Адрес: {item_info['Адрес']} | Доступно: {item_info['Количество']}")
-
+        reporter = d_c1.text_input("Кто выявил (ФИО)", placeholder="ФИО сотрудника")
+        defect_type = d_c2.selectbox("Тип дефекта", ["Бой товара", "Помятая упаковка", "Намокание", "Заводской брак", "Недостача", "Прочее"])
+        defect_severity = d_c3.selectbox("Критичность", ["Низкая (Продажа возможна)", "Средняя (Уценка)", "Высокая (Списание/Утиль)"])
+        
         st.divider()
-        st.markdown("### 2️⃣ Детали и Решение")
-        c1, c2, c3 = st.columns(3)
-        qty_defect = c1.number_input("Кол-во брака", min_value=1, value=1)
-        defect_type = c2.selectbox("Тип", ["Бой", "Механика", "Заводской", "Срок"])
-        responsibility = c3.selectbox("Виновник", ["Склад", "Поставщик", "Транспорт"])
-
-        desc = st.text_area("Описание")
-        decision = st.selectbox("Решение", ["Списание", "Возврат", "Карантин"])
-
-        submitted = st.form_submit_button("🚨 ОФОРМИТЬ АКТ", use_container_width=True)
-
-    if submitted:
-        import uuid
-        def_id = f"DEF-{str(uuid.uuid4())[:6].upper()}"
         
-        # Твой ПОЛНЫЙ PAYLOAD для Supabase
-        payload = {
-            "id": def_id,
-            "main_item": item_info['Название товара'],
-            "total_defective": int(qty_defect),
-            "related_doc_id": item_info['ID Документа'],
+        d_c4, d_c5 = st.columns([2, 1])
+        item_name = d_c4.text_input("Название поврежденного товара", placeholder="Введите название товара или артикул")
+        linked_id = d_c5.text_input("🔗 Связанный ID (Заявка/Приход)")
+        
+        description = st.text_area("Детальное описание повреждений", placeholder="Опишите характер повреждений, количество и обстоятельства...")
+        
+        st.markdown("### 💰 Оценка и решение")
+        d_c6, d_c7, d_c8 = st.columns(3)
+        defect_qty = d_c6.number_input("Кол-во брака", min_value=0.0, value=1.0)
+        estimated_loss = d_c7.number_input("Оценочный ущерб (₽)", min_value=0.0, value=0.0)
+        decision = d_c8.selectbox("Решение", ["На проверку", "Списание", "Уценка", "Возврат поставщику"])
+        
+        submitted_defect = st.form_submit_button("🚨 ЗАРЕГИСТРИРОВАТЬ АКТ БРАКА", use_container_width=True)
+
+    if submitted_defect:
+        if not reporter or not item_name or not description:
+            st.error("❌ Заполните обязательные поля: Кто выявил, Товар и Описание!")
+            return
+
+        defect_id = f"BAD-{str(uuid.uuid4())[:6].upper()}"
+        now = datetime.now()
+
+        # Payload для Supabase
+        supabase_payload = {
+            "id": defect_id,
+            "reporter": reporter,
             "defect_type": defect_type,
-            "culprit": responsibility,
-            "status": "ОБНАРУЖЕНО",
+            "severity": defect_severity,
+            "item_name": item_name,
+            "linked_id": linked_id,
+            "description": description,
+            "quantity": float(defect_qty),
+            "estimated_loss": float(estimated_loss),
             "decision": decision,
-            "quarantine_address": item_info['Адрес'],
-            "items_data": [{"Товар": item_info['Название товара'], "Кол-во": int(qty_defect), "Описание": desc}],
-            "updated_at": datetime.now().isoformat()
+            "status": "ЗАРЕГИСТРИРОВАНО",
+            "created_at": now.isoformat()
         }
 
         try:
-            supabase.table("defects").insert(payload).execute()
-            st.success("✅ Акт зафиксирован!")
-            time.sleep(1)
-            st.rerun()
+            supabase.table("defects").insert(supabase_payload).execute()
         except Exception as e:
-            st.error(f"Ошибка сохранения: {e}")
+            st.error(f"🚨 Ошибка сохранения акта брака: {e}")
+            return
+
+        # UI Data
+        ui_defect_data = {
+            "📝 Ред.": "⚙️",
+            "id": defect_id,
+            "Выявил": reporter,
+            "Тип": defect_type,
+            "Товар": item_name,
+            "Кол-во": defect_qty,
+            "Ущерб": estimated_loss,
+            "Решение": decision,
+            "Дата создания": now.strftime("%Y-%m-%d"),
+            "Время": now.strftime("%H:%M"),
+            "🔍 Просмотр": "👀",
+            "🖨️ Печать": False
+        }
+
+        # Обновление реестра в session_state
+        new_defect_df = pd.DataFrame([ui_defect_data])
+        if "defects" not in st.session_state or st.session_state["defects"] is None:
+            st.session_state["defects"] = new_defect_df
+        else:
+            st.session_state["defects"] = pd.concat([st.session_state["defects"], new_defect_df], ignore_index=True)
+
+        # Зеркалирование в MAIN
+        if "main" in st.session_state and st.session_state["main"] is not None:
+            main_entry = ui_defect_data.copy()
+            main_entry["Тип документа"] = "АКТ БРАКА"
+            main_entry["Время создания"] = main_entry.pop("Время")
+            main_entry["Описание"] = f"Брак: {item_name}. {defect_type}. Решение: {decision}"
+            main_entry["Статус"] = f"БРАК: {decision}"
+            
+            main_row_df = pd.DataFrame([main_entry])
+            main_row_df = main_row_df.reindex(columns=st.session_state["main"].columns, fill_value="")
+            st.session_state["main"] = pd.concat([st.session_state["main"], main_row_df], ignore_index=True)
+
+        st.success(f"✅ Акт брака {defect_id} успешно оформлен!")
+        time.sleep(1)
+        st.rerun()
             
 @st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
@@ -1034,6 +1007,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
