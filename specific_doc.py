@@ -632,6 +632,23 @@ def create_defect_modal(*args, **kwargs):
     import uuid
     import numpy as np
 
+    # --- ВНУТРЕННЯЯ ФУНКЦИЯ ЗАГРУЗКИ (чтобы не было NameError) ---
+    def local_upload_image(file):
+        try:
+            file_ext = file.name.split(".")[-1]
+            # Генерируем уникальное имя файла
+            file_name = f"defect_{uuid.uuid4().hex[:8]}_{int(time.time())}.{file_ext}"
+            
+            supabase.storage.from_("defects_photos").upload(
+                path=file_name,
+                file=file.getvalue(),
+                file_options={"content-type": f"image/{file_ext}"}
+            )
+            return supabase.storage.from_("defects_photos").get_public_url(file_name)
+        except Exception as e:
+            st.error(f"Ошибка загрузки фото: {e}")
+            return None
+
     st.subheader("🚨 Акт о выявлении дефектов")
 
     # --- ШАГ 0: ПОЛУЧЕНИЕ ДАННЫХ ИЗ INVENTORY ---
@@ -668,56 +685,50 @@ def create_defect_modal(*args, **kwargs):
         d_c1, d_c2 = st.columns([2, 1])
         
         reporter = d_c1.text_input("Кто выявил (ФИО)", placeholder="ФИО сотрудника склада")
-        linked_doc = d_c2.selectbox("🔗 Связанный документ (из Реестра)", options=["Без привязки"] + main_registry_options)
+        linked_doc = d_c2.selectbox("🔗 Связанный документ", options=["Без привязки"] + main_registry_options)
         
         d_c3, d_c4 = st.columns(2)
         defect_opts = ["Бой", "Порча", "Брак производителя", "Некомплект"]
         defect_type = d_c3.selectbox("Тип дефекта", defect_opts)
         
         culprit_opts = ["Склад", "Перевозчик", "Поставщик", "Не установлен"]
-        culprit = d_c4.selectbox("Виновник (Кто виноват)", culprit_opts)
+        culprit = d_c4.selectbox("Виновник", culprit_opts)
 
-        description = st.text_area("Детальное описание обстоятельств и характера повреждений")
+        description = st.text_area("Детальное описание повреждений")
 
         st.markdown("### 📸 Фотофиксация")
-        uploaded_file = st.file_uploader(
-            "Загрузите фото повреждения", 
-            type=['png', 'jpg', 'jpeg'], 
-            key="defect_photo_uploader_main"
-        )
+        uploaded_file = st.file_uploader("Загрузите фото (PNG, JPG)", type=['png', 'jpg', 'jpeg'])
         
         st.divider()
         
-        st.markdown("### 3️⃣ Количественные показатели и Решение")
+        st.markdown("### 3️⃣ Количественные показатели")
         d_c6, d_c7, d_c8 = st.columns(3)
-        defect_qty = d_c6.number_input("Кол-во брака (ед.)", min_value=1.0, value=1.0, step=1.0)
-        quarantine_address = d_c7.text_input("Адрес хранения брака", value="ZONE-BRAK")
-        decision = d_c8.selectbox("Предварительное решение", [
-            "На проверку", "Списание", "Уценка", "Возврат поставщику"
-        ])
+        defect_qty = d_c6.number_input("Кол-во (ед.)", min_value=1.0, value=1.0, step=1.0)
+        quarantine_address = d_c7.text_input("Зона брака", value="ZONE-BRAK")
+        decision = d_c8.selectbox("Решение", ["На проверку", "Списание", "Уценка", "Возврат"])
         
         submitted_defect = st.form_submit_button("🚨 ЗАРЕГИСТРИРОВАТЬ АКТ БРАКА", use_container_width=True)
 
     if submitted_defect:
         if not reporter or not selected_inventory_item or not uploaded_file:
-            st.error("❌ Заполните ФИО, выберите товар и загрузите ФОТО!")
+            st.error("❌ Заполните ФИО, выберите товар и добавьте фото!")
             return
 
-        # Парсинг товара
         item_full_name = selected_inventory_item.split(" | ")[0]
         base_doc_id = selected_inventory_item.split("Док: ")[1] if "Док: " in selected_inventory_item else "N/A"
-
         defect_id = f"BAD-{str(uuid.uuid4())[:6].upper()}"
         now = datetime.now()
         
-        # 1. Загрузка фото через вспомогательную функцию
-        with st.spinner("Загрузка фото..."):
-            photo_url = upload_image(uploaded_file)
+        # ВЫЗОВ ВНУТРЕННЕЙ ФУНКЦИИ
+        with st.spinner("Загрузка фото в хранилище..."):
+            photo_url = local_upload_image(uploaded_file)
 
-        # 2. Подготовка Спецификации (items_data) для совместимости с Edit/Show
+        if not photo_url:
+            st.error("Не удалось загрузить фото. Сохранение прервано.")
+            return
+
         items_data = [{"Товар": item_full_name, "Кол-во": defect_qty, "Описание": description}]
 
-        # 3. Payload для 'defects'
         supabase_payload = {
             "id": defect_id,
             "main_item": item_full_name,
@@ -747,15 +758,15 @@ def create_defect_modal(*args, **kwargs):
                 "total_sum": 0.0,
                 "created_at": now.strftime("%Y-%m-%d"),
                 "created_time": now.strftime("%H:%M:%S"),
-                "description": f"Брак: {item_full_name}. Виновник: {culprit}"
+                "description": f"Товар: {item_full_name}. Виновник: {culprit}"
             }
             supabase.table("main_registry").insert(main_entry).execute()
             
-            st.success(f"✅ Акт {defect_id} успешно создан!")
+            st.success(f"✅ Акт {defect_id} зарегистрирован!")
             time.sleep(1)
             st.rerun()
         except Exception as e:
-            st.error(f"🚨 Ошибка сохранения: {e}")
+            st.error(f"🚨 Ошибка базы: {e}")
             
 @st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
@@ -1036,6 +1047,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
