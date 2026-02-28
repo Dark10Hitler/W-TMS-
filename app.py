@@ -1580,74 +1580,54 @@ elif selected == "Аналитика":
                 st.rerun()
 
         # --- 3. ИНЖЕНЕРНЫЙ ВЕРДИКТ: ГЛУБОКАЯ СИНХРОНИЗАЦИЯ ---
-    # 1. Безопасно получаем данные из сессии
-    audit_data = st.session_state.get('audit_results')
+audit_data = st.session_state.get('audit_results')
 
-    if audit_data is not None:
-        df = audit_data.get('df')
+if audit_data is not None:
+    df = audit_data.get('df')
     
-        if df is not None and not df.empty:
-            st.header("🛠️ Технический аудит систем")
+    if df is not None and not df.empty:
+        st.header("🛠️ Технический аудит систем")
         
-        # --- ВСЕ РАСЧЕТЫ ДОЛЖНЫ БЫТЬ ЗДЕСЬ (ВНУТРИ IF DF) ---
+        # --- 1. ВСЕ РАСЧЕТЫ (Внутри проверки данных) ---
+        total_dist_end = df['total_dist_km'].iloc[-1] 
+        total_dist_start = df['total_dist_km'].iloc[0]
+        actual_period_km = max(0, total_dist_end - total_dist_start)
         
-        # 1. ДАННЫЕ ОДОМЕТРИИ
-            total_dist_end = df['total_dist_km'].iloc[-1] 
-            total_dist_start = df['total_dist_km'].iloc[0]
-            actual_period_km = max(0, total_dist_end - total_dist_start)
+        if actual_period_km <= 0:
+            actual_period_km = df['attributes'].apply(lambda x: x.get('distance', 0)).sum() / 1000.0
         
-        # Защита: если totalDistance не изменился, считаем по дельтам точек
-            if actual_period_km <= 0:
-                actual_period_km = df['attributes'].apply(lambda x: x.get('distance', 0)).sum() / 1000.0
-        
-        # Физический одометр
-            device_odo_current = df['attributes'].apply(lambda x: x.get('odometer', 0) / 1000.0).iloc[-1]
+        device_odo_current = df['attributes'].apply(lambda x: x.get('odometer', 0) / 1000.0).iloc[-1]
 
-        # 2. СКОРОСТНЫЕ ПОКАЗАТЕЛИ
-            moving_df = df[df['speed_kmh'] > 2]
-            avg_speed = moving_df['speed_kmh'].mean() if not moving_df.empty else 0
-            max_speed = df['speed_kmh'].max()
+        moving_df = df[df['speed_kmh'] > 2]
+        avg_speed = moving_df['speed_kmh'].mean() if not moving_df.empty else 0
+        max_speed = df['speed_kmh'].max()
         
-            overspeeds_df = df[df['speed_kmh'] > 90]
-            overspeeds_count = len(overspeeds_df)
+        overspeeds_df = df[df['speed_kmh'] > 90]
+        overspeeds_count = len(overspeeds_df)
         
-        # 3. АНАЛИЗ АГРЕССИИ (ускорение)
-            df['accel_ms2'] = df['speed_kmh'].diff().fillna(0) / 3.6
-            hard_maneuvers = len(df[df['accel_ms2'].abs() > 3.0]) 
+        df['accel_ms2'] = df['speed_kmh'].diff().fillna(0) / 3.6
+        hard_maneuvers = len(df[df['accel_ms2'].abs() > 3.0]) 
 
-        # 4. ИНЖЕНЕРНЫЙ РАСЧЕТ РАСХОДА
-            base_rate = 9.0  
+        base_rate = 9.0  
         
-        # А. Фактор аэродинамики
-            if not overspeeds_df.empty:
-                avg_over_speed = overspeeds_df['speed_kmh'].mean() - 90
-                speed_factor = 1 + (avg_over_speed / 10) * 0.15
-            else:
-                speed_factor = 1.0
-
-        # Б. Фактор динамики
-            positive_accel = df[df['accel_ms2'] > 0.5]['accel_ms2']
-            accel_factor = 1 + (max(0, positive_accel.mean() - 0.8) * 0.2) if not positive_accel.empty else 1.0
-
-            load_factor = min(1.4, speed_factor * accel_factor)
-            fuel_total = (actual_period_km / 100) * base_rate * load_factor
-            cost_mdl = fuel_total * 21.0
-        
-        # --- ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ---
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Пробег (период)", f"{actual_period_km:.1f} км")
-            col2.metric("Расход топлива", f"{fuel_total:.1f} л")
-            col3.metric("Затраты", f"{cost_mdl:.0f} MDL")
-            col4.metric("Нарушения", overspeeds_count, delta=hard_maneuvers, delta_color="inverse")
-
-            st.write("### 📋 Таблица сырых данных")
-            st.dataframe(df, use_container_width=True)
+        if not overspeeds_df.empty:
+            avg_over_speed = overspeeds_df['speed_kmh'].mean() - 90
+            speed_factor = 1 + (avg_over_speed / 10) * 0.15
         else:
-            st.warning("⚠️ Таблица данных аудита пуста.")
-    else:
-        st.info("🔍 Данные аудита еще не сформированы. Пожалуйста, запустите проверку в соответствующем разделе.")
-    
-    # Ряд 1: Пробеги
+            speed_factor = 1.0
+
+        positive_accel = df[df['accel_ms2'] > 0.5]['accel_ms2']
+        accel_factor = 1 + (max(0, positive_accel.mean() - 0.8) * 0.2) if not positive_accel.empty else 1.0
+
+        load_factor = min(1.4, speed_factor * accel_factor)
+        fuel_total = (actual_period_km / 100) * base_rate * load_factor
+        cost_mdl = fuel_total * 21.0
+        # Расчет перерасхода для вердикта
+        extra_fuel = max(0, fuel_total - (actual_period_km / 100 * base_rate))
+
+        # --- 2. ВИЗУАЛИЗАЦИЯ (Все еще внутри проверки данных) ---
+        
+        # Ряд 1: Пробеги
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("🏁 Пробег (Период)", f"{actual_period_km:.2f} км")
         c2.metric("📟 Total Distance", f"{total_dist_end:.2f} км")
@@ -1655,24 +1635,32 @@ elif selected == "Аналитика":
         c4.metric("⏱️ Ср. Скорость", f"{avg_speed:.1f} км/ч", delta=f"Max: {max_speed}")
 
         st.markdown("---")
-    
-    # Ряд 2: Экономика и Безопасность
+        
+        # Ряд 2: Экономика и Безопасность
         e1, e2, e3, e4 = st.columns(4)
         e1.metric("⛽ Расход топлива", f"{fuel_total:.1f} л", 
-              delta=f"{((load_factor-1)*100):.1f}% Нагрузка", delta_color="inverse")
+                  delta=f"{((load_factor-1)*100):.1f}% Нагрузка", delta_color="inverse")
         e2.metric("💰 Финансовый итог", f"{int(cost_mdl)} MDL")
         e3.metric("⚠️ Нарушения (>90)", overspeeds_count, 
-              delta="Критично" if overspeeds_count > 10 else "Норма", delta_color="inverse")
+                  delta="Критично" if overspeeds_count > 10 else "Норма", delta_color="inverse")
         e4.metric("💢 Резкие маневры", hard_maneuvers)
 
-    # --- ТЕХНИЧЕСКИЙ ВЕРДИКТ ---
+        # Инженерное заключение
         st.info(f"""
-    **Инженерное заключение:**
-    * На дистанции **{actual_period_km:.2f} км** зафиксировано **{hard_maneuvers}** резких маневров и **{overspeeds_count}** превышений.
-    * Это привело к работе двигателя с коэффициентом нагрузки **{load_factor:.2f}x**.
-    * Фактический перерасход составил **{extra_fuel:.2f} л** топлива.
-    * Ресурс моторного масла и тормозной системы снижается на **{min(25, 0.1 * (hard_maneuvers + overspeeds_count/10)):.1f}%** быстрее стандартного цикла.
-    """)
+        **Инженерное заключение:**
+        * На дистанции **{actual_period_km:.2f} км** зафиксировано **{hard_maneuvers}** резких маневров и **{overspeeds_count}** превышений.
+        * Это привело к работе двигателя с коэффициентом нагрузки **{load_factor:.2f}x**.
+        * Фактический перерасход составил **{extra_fuel:.2f} л** топлива.
+        * Ресурс моторного масла снижается на **{min(25, 0.1 * (hard_maneuvers + overspeeds_count/10)):.1f}%** быстрее стандартного цикла.
+        """)
+
+        st.write("### 📋 Таблица сырых данных")
+        st.dataframe(df, use_container_width=True)
+
+    else:
+        st.warning("⚠️ Таблица данных аудита пуста.")
+else:
+    st.info("🔍 Данные аудита еще не сформированы. Запустите проверку.")
 
         # --- БЛОК УЛУЧШЕННОЙ КАРТЫ (PREMIUM AUDIT) ---
         import folium
@@ -2362,6 +2350,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
