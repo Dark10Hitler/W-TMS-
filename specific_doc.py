@@ -294,22 +294,39 @@ def create_modal(table_key):
         time.sleep(1.5)
         st.rerun()
 
+import streamlit as st
+import pandas as pd
+import numpy as np
+import uuid
+import time
+from datetime import datetime
+
 @st.dialog("📥 Регистрация нового Прихода (Поставка)", width="large")
 def create_arrival_modal():
-    from database import supabase # Импортируем наше подключение
-    import numpy as np
+    # Импортируем внутри, если они не импортированы глобально, 
+    # но лучше делать это в начале функции
+    from database import supabase 
     
     st.subheader("🚚 Приемка товаров на склад")
     
+    # 0. Проверка инициализации необходимых данных в session_state
+    if "drivers" not in st.session_state:
+        st.session_state.drivers = pd.DataFrame(columns=["Фамилия", "Имя"])
+
     # Имя оператора
     try:
+        # Пытаемся достать имя из профиля
         operator_name = st.session_state.profile_data.iloc[0]['Значение']
-    except:
+    except Exception:
         operator_name = "Системный администратор"
 
     # --- 1. ПАРСИНГ СПЕЦИФИКАЦИИ ПОСТАВЩИКА ---
     st.markdown("### 1️⃣ Загрузка накладной (Excel/CSV)")
-    uploaded_file = st.file_uploader("📥 Загрузите файл от поставщика", type=["xlsx", "xls", "csv"], key="arrival_uploader")
+    uploaded_file = st.file_uploader(
+        "📥 Загрузите файл от поставщика", 
+        type=["xlsx", "xls", "csv"], 
+        key="arrival_uploader"
+    )
     
     parsed_items_df = pd.DataFrame()
     total_vol = 0.0
@@ -317,24 +334,40 @@ def create_arrival_modal():
 
     if uploaded_file:
         try:
-            df = pd.read_excel(uploaded_file) if "xls" in uploaded_file.name else pd.read_csv(uploaded_file)
-            name_col = next((c for c in df.columns if any(k in c.lower() for k in ['товар', 'назван', 'артикул'])), None)
+            # Чтение файла
+            if "xls" in uploaded_file.name:
+                df = pd.read_excel(uploaded_file)
+            else:
+                df = pd.read_csv(uploaded_file)
+            
+            # Поиск колонки с товаром
+            name_col = next((c for c in df.columns if any(k in c.lower() for k in ['товар', 'назван', 'артикул', 'наимен'])), None)
+            
             if name_col:
                 df = df.rename(columns={name_col: 'Название товара'})
-                if 'Адрес' not in df.columns: df['Адрес'] = "НЕ НАЗНАЧЕНО"
+                if 'Адрес' not in df.columns: 
+                    df['Адрес'] = "НЕ НАЗНАЧЕНО"
                 
-                # Авто-сумма, если есть колонки суммы
-                sum_col = next((c for c in df.columns if 'сумма' in c.lower() or 'цена' in c.lower()), None)
-                if sum_col: total_sum = float(df[sum_col].sum())
+                # Поиск колонки суммы/цены
+                sum_col = next((c for c in df.columns if any(k in c.lower() for k in ['сумма', 'цена', 'итого'])), None)
+                if sum_col: 
+                    # Очистка данных от лишних символов и перевод в float
+                    df[sum_col] = pd.to_numeric(df[sum_col], errors='coerce').fillna(0)
+                    total_sum = float(df[sum_col].sum())
                 
                 parsed_items_df = df
                 st.success(f"✅ Найдено товаров в накладной: {len(df)}")
-                st.dataframe(df.head(3), use_container_width=True)
+                with st.expander("👀 Предпросмотр позиций"):
+                    st.dataframe(df.head(5), use_container_width=True)
+            else:
+                st.warning("⚠️ Не удалось автоматически определить колонку с названием товара.")
+                
         except Exception as e:
-            st.error(f"Ошибка парсинга файла: {e}")
+            st.error(f"❌ Ошибка парсинга файла: {e}")
 
     # --- 2. ФОРМА ПРИЕМКИ ---
-    with st.form("arrival_create_form"):
+    # Используем форму, чтобы избежать перезагрузки при каждом вводе символа
+    with st.form("arrival_create_form", clear_on_submit=False):
         st.markdown("### 2️⃣ Данные поставки и Сопроводительные документы")
         
         r1_c1, r1_c2, r1_c3 = st.columns([2, 1, 1])
@@ -345,7 +378,12 @@ def create_arrival_modal():
         st.markdown("🚢 **Логистика**")
         r2_c1, r2_c2, r2_c3, r2_c4 = st.columns(4)
         
-        drivers_list = ["Наемный (внешний)"] + (st.session_state.drivers["Фамилия"].tolist() if not st.session_state.drivers.empty else [])
+        # Безопасное получение списка водителей
+        if not st.session_state.drivers.empty and "Фамилия" in st.session_state.drivers.columns:
+            drivers_list = ["Наемный (внешний)"] + st.session_state.drivers["Фамилия"].dropna().tolist()
+        else:
+            drivers_list = ["Наемный (внешний)"]
+            
         selected_driver = r2_c1.selectbox("👤 Водитель (Привез)", drivers_list)
         vehicle_num = r2_c2.text_input("🚛 Госномер ТС")
         gate_num = r2_c3.text_input("🚪 Ворота разгрузки", value="Док-1")
@@ -361,25 +399,27 @@ def create_arrival_modal():
         st.divider()
         r4_c1, r4_c2 = st.columns([2, 1])
         comments = r4_c1.text_area("📝 Замечания по приемке", height=70)
-        total_sum_input = r4_c2.number_input("💰 Общая сумма по накладной (₽)", min_value=0.0, value=float(total_sum))
+        # Сумма подтягивается из файла, но можно изменить вручную
+        total_sum_input = r4_c2.number_input("💰 Общая сумма по накладной", min_value=0.0, value=float(total_sum))
 
         submitted = st.form_submit_button("📥 ПОДТВЕРДИТЬ ПРИЕМКУ И ВНЕСТИ В РЕЕСТР", use_container_width=True)
 
+    # --- 3. ОБРАБОТКА РЕЗУЛЬТАТОВ ---
     if submitted:
         if not vendor_name or not doc_number:
-            st.error("❌ Укажите поставщика и номер документа!")
+            st.error("❌ Ошибка: Поле 'Поставщик' и '№ Накладной' обязательны!")
             return
 
-        # 1. Генерация ID
+        # 1. Генерация уникального ID
         arrival_id = f"IN-{str(uuid.uuid4())[:6].upper()}"
         
-        # 2. Очистка данных товара (NaN -> None) для JSONB
+        # 2. Очистка состава товаров для JSONB (Supabase не принимает NaN)
         items_json = []
         if not parsed_items_df.empty:
             clean_items_df = parsed_items_df.replace({np.nan: None})
             items_json = clean_items_df.to_dict(orient='records')
 
-        # 3. ПОДГОТОВКА ДАННЫХ ДЛЯ SUPABASE (английские ключи)
+        # 3. Формирование Payload для базы
         supabase_payload = {
             "id": arrival_id,
             "status": "На приемке",
@@ -396,19 +436,21 @@ def create_arrival_modal():
             "temp_mode": temp_mode,
             "comments": comments,
             "gate_number": gate_num,
-            "items_data": items_json, # Состав накладной
+            "items_data": items_json,
             "print_flag": False
         }
 
-        # 4. ОТПРАВКА В SUPABASE
+        # 4. Сохранение в Supabase
         try:
-            supabase.table("arrivals").insert(supabase_payload).execute()
+            with st.spinner("💾 Сохранение в облако..."):
+                supabase.table("arrivals").insert(supabase_payload).execute()
         except Exception as e:
-            st.error(f"🚨 Ошибка сохранения прихода в облако: {e}")
+            st.error(f"🚨 Ошибка Supabase: {e}")
             return
 
-        # 5. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО ИНТЕРФЕЙСА (русские названия)
-        now = datetime.now()
+        # 5. Обновление локальных Session State для мгновенного отображения
+        now_dt = datetime.now()
+        
         ui_arrival_data = {
             "📝 Ред.": "⚙️",
             "id": arrival_id,
@@ -422,30 +464,33 @@ def create_arrival_modal():
             "Сумма заявки": total_sum_input,
             "Приемщик": receiver_name,
             "Целостность": package_integrity,
-            "Дата создания": now.strftime("%Y-%m-%d"),
-            "Время": now.strftime("%H:%M"),
+            "Дата создания": now_dt.strftime("%Y-%m-%d"),
+            "Время": now_dt.strftime("%H:%M"),
             "🔍 Просмотр": "👀",
             "🖨️ Печать": False
         }
 
-        # Обновляем реестр arrivals
+        # Добавление в реестр Arrivals
         new_row_df = pd.DataFrame([ui_arrival_data])
-        if "arrivals" not in st.session_state:
-            st.session_state["arrivals"] = pd.DataFrame()
-        st.session_state["arrivals"] = pd.concat([st.session_state["arrivals"], new_row_df], ignore_index=True)
+        if "arrivals" not in st.session_state or st.session_state["arrivals"] is None:
+            st.session_state["arrivals"] = new_row_df
+        else:
+            st.session_state["arrivals"] = pd.concat([st.session_state["arrivals"], new_row_df], ignore_index=True)
 
-        # Обновляем MAIN
-        if "main" in st.session_state:
+        # Добавление в MAIN реестр
+        if "main" in st.session_state and st.session_state["main"] is not None:
             main_entry = ui_arrival_data.copy()
             main_entry["Тип документа"] = "ПРИХОД"
+            # Синхронизация имен колонок с главной таблицей
             main_entry["Время создания"] = main_entry.pop("Время")
-            main_entry["Описание"] = f"Приход: {arrival_type}. Док: {doc_number}. Пост: {vendor_name}"
+            main_entry["Описание"] = f"Приход: {arrival_type}. Док: {doc_number}. От: {vendor_name}"
             
             main_row_df = pd.DataFrame([main_entry])
+            # Приводим структуру к главной таблице (чтобы не было пустых колонок)
             main_row_df = main_row_df.reindex(columns=st.session_state["main"].columns, fill_value="")
             st.session_state["main"] = pd.concat([st.session_state["main"], main_row_df], ignore_index=True)
 
-        st.success(f"✅ Приход {arrival_id} успешно зарегистрирован в базе!")
+        st.success(f"✅ Приход {arrival_id} зарегистрирован!")
         time.sleep(1)
         st.rerun()
         
@@ -989,6 +1034,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
