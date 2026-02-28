@@ -66,8 +66,18 @@ def get_full_inventory_df():
 @st.dialog("📝 Создание новой заявки / документа", width="large")
 def create_modal(table_key):
     from database import supabase
-    # Получаем структуру колонок
-    columns = TABLE_STRUCT.get(table_key, ORDER_COLUMNS) 
+    import uuid
+    import time
+    import numpy as np
+    import pandas as pd
+    from datetime import datetime
+
+    # Получаем структуру колонок (предполагается, что TABLE_STRUCT и ORDER_COLUMNS определены глобально)
+    try:
+        columns = TABLE_STRUCT.get(table_key, ORDER_COLUMNS) 
+    except:
+        columns = []
+
     st.subheader(f"📦 Регистрация нового документа: {table_key.upper()}")
     
     # Пытаемся безопасно получить имя оператора
@@ -78,7 +88,7 @@ def create_modal(table_key):
     
     st.markdown(f"**Оператор:** {operator_name}")
 
-    # --- 1. ПАРСИНГ ФАЙЛА СПЕЦИФИКАЦИИ (БЕЗ ИЗМЕНЕНИЙ) ---
+    # --- 1. ПАРСИНГ ФАЙЛА СПЕЦИФИКАЦИИ ---
     st.markdown("### 1️⃣ Загрузка спецификации")
     uploaded_file = st.file_uploader("📥 Выберите файл Excel или CSV для автоматического разбора позиций", type=["xlsx", "xls", "csv"])
     
@@ -114,7 +124,7 @@ def create_modal(table_key):
         except Exception as e:
             st.error(f"❌ Ошибка парсинга файла: {e}")
 
-    # --- 2. ФОРМА ВВОДА ДАННЫХ (БЕЗ ИЗМЕНЕНИЙ) ---
+    # --- 2. ФОРМА ВВОДА ДАННЫХ ---
     st.markdown("### 2️⃣ Параметры заявки и Логистика")
     with st.form(f"full_create_form_{table_key}", clear_on_submit=False):
         
@@ -126,6 +136,7 @@ def create_modal(table_key):
             default_client = str(parsed_items_df['Клиент'].iloc[0])
             
         input_client = r1_c1.text_input("Название Клиента*", value=default_client, help="Обязательное поле")
+        # Изменено: Название переменной для синхронизации с delivery_address
         input_address = r1_c2.text_input("Адрес доставки (Адрес клиента)")
         input_phone = r1_c3.text_input("Телефон")
 
@@ -137,27 +148,12 @@ def create_modal(table_key):
         status_options = ["ОЖИДАНИЕ", "Стоит на точке загрузки", "Выехал", "Ожидает догруз", "В пути", "Доставлено"]
         selected_status = r2_c1.selectbox("📍 Статус заявки", status_options)
 
-        drivers_list = ["Наемный водитель"]
-        if 'drivers' in st.session_state and not st.session_state.drivers.empty:
-        # Проверяем наличие колонки (last_name или Фамилия)
-            df_d = st.session_state.drivers
-            d_col = "Фамилия" if "Фамилия" in df_d.columns else "last_name"
-            if d_col in df_d.columns:
-                drivers_list += df_d[d_col].dropna().tolist()
+        # 1. Изменено: Текстовый ввод водителя вместо выпадающего списка
+        input_driver = r2_c2.text_input("👤 Водитель (ФИО)", placeholder="Введите ФИО водителя")
 
-    # 2. Формируем список ТС
-        vehicles_list = ["Стороннее ТС"]
-        if 'vehicles' in st.session_state and not st.session_state.vehicles.empty:
-            df_v = st.session_state.vehicles
-        # Пытаемся найти Госномер или gov_num
-            v_col = "Госномер" if "Госномер" in df_v.columns else "gov_num"
-            if v_col in df_v.columns:
-                vehicles_list += df_v[v_col].dropna().tolist()
-            else:
-                st.error(f"Колонка с госномером не найдена. Доступны: {list(df_v.columns)}")
+        # 2. Изменено: Текстовый ввод ТС (для гибкости синхронизации)
+        input_ts = r2_c3.text_input("🚛 ТС (Госномер)", placeholder="Напр: AA 123 B")
         
-        selected_driver = r2_c2.selectbox("👤 Водитель", drivers_list)
-        selected_ts = r2_c3.selectbox("🚛 ТС (Госномер)", vehicles_list)
         has_certificate = r2_c4.selectbox("📜 Сертификат", ["Нет", "Да"])
 
         st.divider()
@@ -176,8 +172,8 @@ def create_modal(table_key):
         r4_c1, r4_c2 = st.columns([2, 1])
         
         input_desc = r4_c1.text_area("Описание (детально по товару или особые отметки)", height=100)
+        # Поле для загрузки фото
         uploaded_photo = r4_c2.file_uploader("📸 Прикрепить фото (Накладная/Груз)", type=['png', 'jpg', 'jpeg'])
-        photo_status = "Прикреплено" if uploaded_photo else "Нет"
 
         st.markdown("<br>", unsafe_allow_html=True)
         submitted = st.form_submit_button("🚀 СФОРМИРОВАТЬ И СОХРАНИТЬ ЗАЯВКУ", use_container_width=True)
@@ -189,22 +185,31 @@ def create_modal(table_key):
             return
 
         # 1. Генерация уникального ID
-        import uuid
         order_id = f"ORD-{str(uuid.uuid4())[:6].upper()}"
         
         # Расчет КПД
         efficiency = (total_vol / v_max_vol) * 100 if v_max_vol > 0 else 0
 
-        # Конвертация таблицы товаров в JSON для базы данных
-        # Конвертация таблицы товаров в JSON для базы данных
+        # Загрузка фото в Bucket "order-photos" (СИНХРОНИЗАЦИЯ С STORAGE)
+        final_photo_url = None
+        if uploaded_photo:
+            try:
+                file_ext = uploaded_photo.name.split('.')[-1]
+                file_name = f"{order_id}_{int(time.time())}.{file_ext}"
+                # Загружаем в правильный бакет
+                supabase.storage.from_("order-photos").upload(file_name, uploaded_photo.getvalue())
+                # Получаем публичную ссылку
+                final_photo_url = supabase.storage.from_("order-photos").get_public_url(file_name)
+            except Exception as e:
+                st.warning(f"⚠️ Фото не загружено в хранилище: {e}")
+
+        # Конвертация таблицы товаров в JSON
         items_json = []
         if not parsed_items_df.empty:
-    # Очистка: заменяем NaN на None, чтобы JSON не ругался
             clean_df = parsed_items_df.replace({np.nan: None})
             items_json = clean_df.to_dict(orient='records')
 
-        # 2. ФОРМИРОВАНИЕ PAYLOAD ДЛЯ SUPABASE (СТРОГО ПО SQL)
-        # Мы не передаем created_at и created_time, база подставит их сама (DEFAULT CURRENT_DATE)
+        # 2. ФОРМИРОВАНИЕ PAYLOAD (СИНХРОНИЗАЦИЯ КЛЮЧЕЙ С EDIT_ORDER_MODAL)
         supabase_data = {
             "id": order_id,
             "status": selected_status,
@@ -213,37 +218,27 @@ def create_modal(table_key):
             "total_volume": float(total_vol),
             "total_sum": float(total_sum),
             "loading_efficiency": float(efficiency),
-            "client_address": input_address,
+            "delivery_address": input_address,  # СИНХРОНИЗИРОВАНО
             "phone": input_phone,
-            "loading_address": input_loading_addr,
-            "certificate": has_certificate,
-            "driver_info": selected_driver,
-            "vehicle_info": selected_ts,
+            "load_address": input_loading_addr, # СИНХРОНИЗИРОВАНО (load_address вместо loading_address)
+            "has_certificate": has_certificate, # СИНХРОНИЗИРОВАНО (как в temp_row)
+            "driver": input_driver,             # СИНХРОНИЗИРОВАНО (driver вместо driver_info)
+            "vehicle": input_ts,               # СИНХРОНИЗИРОВАНО (vehicle вместо vehicle_info)
             "description": input_desc,
-            "access_type": input_dopusk,
-            "items_data": items_json,  # Отправляем JSONB!
-            "photo_url": photo_status, # Позже заменим на URL картинки из Storage
+            "approval_by": input_dopusk,        # СИНХРОНИЗИРОВАНО
+            "items_data": items_json,
+            "photo_url": final_photo_url,       # ТЕПЕРЬ ССЫЛКА, А НЕ ТЕКСТ
             "print_flag": False
         }
 
         # 3. ОТПРАВКА В БАЗУ ДАННЫХ
         try:
-            # Предполагается, что объект supabase уже инициализирован в главном файле
-            # и доступен здесь (или импортирован).
-            from database import supabase # <-- Убедись, что путь импорта верный
-            
             response = supabase.table("orders").insert(supabase_data).execute()
-            
-            # Если ошибки нет, идем дальше
         except Exception as e:
             st.error(f"🚨 Ошибка при сохранении в облако: {e}")
-            return # Прерываем выполнение, если в базу не записалось
-
-        
+            return 
 
         # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО ИНТЕРФЕЙСА (Session State)
-        # Оставляем этот блок, чтобы таблица в интерфейсе обновилась моментально,
-        # без необходимости делать полный `SELECT * FROM orders` прямо сейчас.
         current_date = datetime.now().strftime("%Y-%m-%d")
         current_time = datetime.now().strftime("%H:%M:%S")
 
@@ -261,12 +256,12 @@ def create_modal(table_key):
             "Телефон": input_phone, 
             "Адрес загрузки": input_loading_addr, 
             "Сертификат": has_certificate,
-            "Водитель": selected_driver,
-            "ТС": selected_ts, 
+            "Водитель": input_driver,
+            "ТС": input_ts, 
             "Дата создания": current_date, 
             "Время создания": current_time,
             "Последнее изменение": f"{operator_name} ({current_time})",
-            "Фото": photo_status,
+            "Фото": "✅ Прикреплено" if final_photo_url else "Нет",
             "Описание": input_desc,
             "Допуск": input_dopusk,
             "🖨️ Печать": False
@@ -275,7 +270,10 @@ def create_modal(table_key):
         new_row_df = pd.DataFrame([ui_data])
         
         if table_key not in st.session_state:
-            st.session_state[table_key] = pd.DataFrame(columns=ORDER_COLUMNS)
+            try:
+                st.session_state[table_key] = pd.DataFrame(columns=ORDER_COLUMNS)
+            except:
+                st.session_state[table_key] = pd.DataFrame()
             
         current_df = st.session_state[table_key]
         if current_df.empty:
@@ -283,8 +281,7 @@ def create_modal(table_key):
         else:
             st.session_state[table_key] = pd.concat([current_df, new_row_df], ignore_index=True)
 
-        # Main обновлять не нужно, если ты потом будешь скачивать его из VIEW main_registry.
-        # Но чтобы интерфейс не моргал, тоже добавим:
+        # Синхронизация с главной таблицей
         if "main" in st.session_state:
             main_row_df = new_row_df.copy()
             main_row_df["Тип документа"] = "ЗАЯВКА"
@@ -292,9 +289,8 @@ def create_modal(table_key):
             st.session_state["main"] = pd.concat([st.session_state["main"], main_row_df], ignore_index=True)
 
         st.session_state.active_modal = None
-        st.success(f"✅ Документ {order_id} для клиента {input_client} успешно создан и сохранен в базе!")
+        st.success(f"✅ Документ {order_id} создан и фото загружено!")
         
-        import time
         time.sleep(1.5)
         st.rerun()
 
@@ -993,6 +989,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
