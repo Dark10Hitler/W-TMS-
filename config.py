@@ -31,15 +31,6 @@ now = get_moldova_time()
 current_date = now.strftime("%Y-%m-%d")
 current_time = now.strftime("%H:%M:%S")
 
-if uploaded_photo:
-    file_ext = uploaded_photo.name.split('.')[-1]
-    file_name = f"{order_id}_{int(time.time())}.{file_ext}"
-    # Загружаем в бакет 'order-photos'
-    supabase.storage.from_("order-photos").upload(file_name, uploaded_photo.getvalue())
-    # Получаем ссылку
-    photo_url = supabase.storage.from_("order-photos").get_public_url(file_name)
-else:
-    photo_url = None
 
 def get_cell_occupancy():
     # Забираем данные из нашего VIEW
@@ -1663,6 +1654,7 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
+
 
 
 
