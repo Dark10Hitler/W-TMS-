@@ -124,6 +124,14 @@ def get_moldova_time():
     tz = pytz.timezone('Europe/Chisinau')
     return datetime.now(tz)
 
+import streamlit as st
+import pandas as pd
+import numpy as np
+import time
+import folium
+from streamlit_folium import st_folium
+import datetime
+
 @st.dialog("⚙️ Редактирование данных", width="large")
 def edit_order_modal(entry_id, table_key="orders"):
     from database import supabase  # Гарантируем импорт клиента Supabase
@@ -152,16 +160,16 @@ def edit_order_modal(entry_id, table_key="orders"):
                     'id': db_row.get('id'),
                     'Клиент': db_row.get('client_name', ''),
                     'Телефон': db_row.get('phone', ''),
-                    'Адрес клиента': db_row.get('delivery_address', ''), # Синхронизировано с create_modal
+                    'Адрес клиента': db_row.get('delivery_address', ''), 
                     'Координаты': db_row.get('coordinates', ''),
                     'Статус': db_row.get('status', 'ОЖИДАНИЕ'),
-                    'Водитель': db_row.get('driver', ''),               # Синхронизировано с create_modal
-                    'ТС': db_row.get('vehicle', ''),                  # Синхронизировано с create_modal
+                    'Водитель': db_row.get('driver', ''),               
+                    'ТС': db_row.get('vehicle', ''),                  
                     'Адрес загрузки': db_row.get('load_address', 'Центральный склад'),
                     'Сумма заявки': float(db_row.get('total_sum', 0.0) or 0.0),
                     'Общий объем (м3)': float(db_row.get('total_volume', 0.0) or 0.0),
-                    'Допуск': db_row.get('approval_by', ''),
-                    'Сертификат': db_row.get('has_certificate', 'Нет'),
+                    'Допуск': db_row.get('approval_by', ''),            # КТО ОДОБРИЛ (approval_by)
+                    'Сертификат': db_row.get('has_certificate', 'Нет'), # СЕРТИФИКАЦИЯ (has_certificate)
                     'Описание': db_row.get('description', ''),
                     'photo_url': valid_photo
                 }
@@ -208,12 +216,29 @@ def edit_order_modal(entry_id, table_key="orders"):
         st_idx = status_list.index(row['Статус']) if row['Статус'] in status_list else 0
         row['Статус'] = r2_1.selectbox("📍 Статус", status_list, index=st_idx, key=f"e_st_{entry_id}")
 
-        # ВОДИТЕЛЬ (Исправлено: теперь это текстовое поле для синхронизации)
+        # ВОДИТЕЛЬ
         row['Водитель'] = r2_2.text_input("👤 Водитель (ФИО)", value=row['Водитель'], key=f"e_dr_i_{entry_id}")
 
-        # ТС И АДРЕС ЗАГРУЗКИ
+        # ТС
         row['ТС'] = r2_3.text_input("🚛 ТС (Госномер)", value=row['ТС'], key=f"e_ts_{entry_id}")
+        
+        # АДРЕС ЗАГРУЗКИ
         row['Адрес загрузки'] = r2_4.text_input("🏗️ Адрес загрузки", value=row['Адрес загрузки'], key=f"e_adr_z_{entry_id}")
+
+        # --- НОВАЯ СТРОКА: ДОПУСК И СЕРТИФИКАТ ---
+        st.markdown("---")
+        r3_1, r3_2, r3_3 = st.columns([2, 1, 1])
+        
+        # КТО ОДОБРИЛ
+        row['Допуск'] = r3_1.text_input("👤 Допуск (Кто одобрил отправку)", value=row['Допуск'], key=f"e_dop_{entry_id}")
+        
+        # СЕРТИФИКАЦИЯ
+        cert_list = ["Нет", "Да"]
+        cert_idx = cert_list.index(row['Сертификат']) if row['Сертификат'] in cert_list else 0
+        row['Сертификат'] = r3_2.selectbox("📜 Сертификат", cert_list, index=cert_idx, key=f"e_cert_{entry_id}")
+        
+        # Описание (Опционально в эту же строку)
+        row['Описание'] = r3_3.text_input("📝 Короткая заметка", value=row['Описание'], key=f"e_desc_{entry_id}")
 
         # РАБОТА С ФОТО
         st.markdown("---")
@@ -280,7 +305,6 @@ def edit_order_modal(entry_id, table_key="orders"):
                     if new_photo:
                         file_ext = new_photo.name.split('.')[-1]
                         file_name = f"{entry_id}_{int(time.time())}.{file_ext}"
-                        # ИСПРАВЛЕНО: Правильный бакет 'order-photos'
                         supabase.storage.from_("order-photos").upload(file_name, new_photo.getvalue())
                         final_photo_url = supabase.storage.from_("order-photos").get_public_url(file_name)
 
@@ -289,12 +313,15 @@ def edit_order_modal(entry_id, table_key="orders"):
                     db_payload = {
                         "client_name": row['Клиент'],
                         "phone": row['Телефон'],
-                        "delivery_address": row['Адрес клиента'], # Синхронно
+                        "delivery_address": row['Адрес клиента'],
                         "coordinates": row['Координаты'],
                         "status": row['Статус'],
-                        "driver": row['Водитель'],             # Синхронно
-                        "vehicle": row['ТС'],                # Синхронно
+                        "driver": row['Водитель'],
+                        "vehicle": row['ТС'],
                         "load_address": row['Адрес загрузки'],
+                        "approval_by": row['Допуск'],           # СОХРАНЕНИЕ: Кто одобрил
+                        "has_certificate": row['Сертификат'],   # СОХРАНЕНИЕ: Сертификация
+                        "description": row['Описание'],         # СОХРАНЕНИЕ: Заметка
                         "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
                         "photo_url": final_photo_url,
                         "updated_at": now_md.isoformat()
@@ -309,7 +336,10 @@ def edit_order_modal(entry_id, table_key="orders"):
                         st.session_state[table_key].at[idx, 'Статус'] = row['Статус']
                         st.session_state[table_key].at[idx, 'Водитель'] = row['Водитель']
                         st.session_state[table_key].at[idx, 'ТС'] = row['ТС']
-                        # Обновляем адрес клиента в локальной таблице, если такая колонка есть
+                        if 'Допуск' in st.session_state[table_key].columns:
+                            st.session_state[table_key].at[idx, 'Допуск'] = row['Допуск']
+                        if 'Сертификат' in st.session_state[table_key].columns:
+                            st.session_state[table_key].at[idx, 'Сертификат'] = row['Сертификат']
                         if 'Адрес клиента' in st.session_state[table_key].columns:
                              st.session_state[table_key].at[idx, 'Адрес клиента'] = row['Адрес клиента']
 
@@ -1652,6 +1682,7 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
+
 
 
 
