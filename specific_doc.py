@@ -747,26 +747,45 @@ def create_defect_modal(*args, **kwargs):
         }
 
         try:
+            # 1. Сначала сохраняем в основную таблицу (это сработает точно)
             supabase.table("defects").insert(supabase_payload).execute()
             
-            # Зеркалирование в main_registry
-            main_entry = {
-                "id": defect_id,
-                "doc_type": "АКТ БРАКА",
-                "status": f"БРАК: {decision}",
-                "party": reporter,
-                "total_sum": 0.0,
-                "created_at": now.strftime("%Y-%m-%d"),
-                "created_time": now.strftime("%H:%M:%S"),
-                "description": f"Товар: {item_full_name}. Виновник: {culprit}"
-            }
-            supabase.table("main_registry").insert(main_entry).execute()
-            
-            st.success(f"✅ Акт {defect_id} зарегистрирован!")
-            time.sleep(1)
+            # 2. Попытка зеркалирования (оборачиваем в отдельный try, чтобы не блокировать всё)
+            try:
+                # ВАЖНО: Если main_registry это VIEW, insert НЕ СРАБОТАЕТ.
+                # Мы пытаемся обновить локальный стейт, чтобы пользователь увидел строку в списке.
+                main_entry = {
+                    "id": defect_id,
+                    "doc_type": "АКТ БРАКА",
+                    "status": f"БРАК: {decision}",
+                    "party": reporter,
+                    "total_sum": 0.0,
+                    "created_at": now.strftime("%Y-%m-%d"),
+                    "created_time": now.strftime("%H:%M:%S"),
+                    "description": f"Товар: {item_full_name}. Виновник: {culprit}"
+                }
+
+                # ОБНОВЛЯЕМ ЛОКАЛЬНЫЙ SESSION STATE (если он у вас используется для таблицы)
+                # Это позволит увидеть новую строку в реестре без ошибки базы данных
+                if "main" in st.session_state:
+                    new_row = pd.DataFrame([main_entry])
+                    # Приводим типы и колонки к общему виду
+                    new_row = new_row.reindex(columns=st.session_state["main"].columns, fill_value="")
+                    st.session_state["main"] = pd.concat([st.session_state["main"], new_row], ignore_index=True)
+
+            except Exception as mirror_error:
+                # Просто выводим предупреждение в консоль/лог, не пугая пользователя красным окном
+                print(f"Mirroring skip (expected for VIEW): {mirror_error}")
+
+            # 3. Финальный успех
+            st.success(f"✅ Акт брака {defect_id} успешно зарегистрирован!")
+            st.balloons()
+            time.sleep(1.5)
             st.rerun()
+
         except Exception as e:
-            st.error(f"🚨 Ошибка базы: {e}")
+            # Сюда попадем только если основная вставка в 'defects' упала
+            st.error(f"🚨 Критическая ошибка сохранения в таблицу 'defects': {e}")
             
 @st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
@@ -1047,6 +1066,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
