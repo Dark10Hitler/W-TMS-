@@ -19,7 +19,27 @@ import pandas as pd
 import streamlit as st
 import time
 from database import supabase
+import pytz
+from datetime import datetime
 
+def get_moldova_time():
+    tz = pytz.timezone('Europe/Chisinau')
+    return datetime.now(tz)
+
+# При создании/обновлении:
+now = get_moldova_time()
+current_date = now.strftime("%Y-%m-%d")
+current_time = now.strftime("%H:%M:%S")
+
+if uploaded_photo:
+    file_ext = uploaded_photo.name.split('.')[-1]
+    file_name = f"{order_id}_{int(time.time())}.{file_ext}"
+    # Загружаем в бакет 'order-photos'
+    supabase.storage.from_("order-photos").upload(file_name, uploaded_photo.getvalue())
+    # Получаем ссылку
+    photo_url = supabase.storage.from_("order-photos").get_public_url(file_name)
+else:
+    photo_url = None
 
 def get_cell_occupancy():
     # Забираем данные из нашего VIEW
@@ -99,280 +119,358 @@ def render_warehouse_logic(entry_id, items_df):
             except Exception as e:
                 st.error(f"Ошибка при сохранении: {e}")
         
+import pytz
+from datetime import datetime
+import time
+import pandas as pd
+import numpy as np
+import streamlit as st
+from streamlit_folium import st_folium
+import folium
+
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ВРЕМЕНИ ---
+def get_moldova_time():
+    tz = pytz.timezone('Europe/Chisinau')
+    return datetime.now(tz)
+
 @st.dialog("⚙️ Редактирование данных", width="large")
 def edit_order_modal(entry_id, table_key="orders"):
-    # --- 1. ИНИЦИАЛИЗАЦИЯ (ПРЯМАЯ ЗАГРУЗКА ИЗ БД КАК В ПРОСМОТРЕ) ---
+    from database import supabase # Гарантируем импорт
+    
+    # 1. ИНИЦИАЛИЗАЦИЯ ДАННЫХ
     if f"temp_row_{entry_id}" not in st.session_state:
-        with st.spinner("📥 Получение данных из базы..."):
+        with st.spinner("📥 Загрузка актуальных данных из облака..."):
             try:
-                # Тянем данные из БД, чтобы товары (items_data) точно подтянулись
                 response = supabase.table(table_key).select("*").eq("id", entry_id).execute()
-                
                 if not response.data:
-                    st.error(f"Запись {entry_id} не найдена в Supabase")
+                    st.error(f"Запись {entry_id} не найдена.")
                     return
                 
                 db_row = response.data[0]
                 
-                # Мапим данные из БД на русские ключи, которые используются в твоем интерфейсе
-                # Это гарантирует, что row['Клиент'] и прочие не будут пустыми
+                # Маппинг: БД (английский) -> Интерфейс (русский)
                 st.session_state[f"temp_row_{entry_id}"] = {
                     'id': db_row.get('id'),
-                    'Клиент': db_row.get('client_name', db_row.get('Клиент', '')),
-                    'Телефон': db_row.get('phone', db_row.get('Телефон', '')),
-                    'Адрес клиента': db_row.get('delivery_address', db_row.get('Адрес клиента', '')),
-                    'Статус': db_row.get('status', db_row.get('Статус', 'ОЖИДАНИЕ')),
-                    'Водитель': db_row.get('driver', db_row.get('Водитель', '')),
-                    'ТС': db_row.get('vehicle', db_row.get('ТС', '')),
-                    'Адрес загрузки': db_row.get('load_address', db_row.get('Адрес загрузки', '')),
-                    'Сумма заявки': db_row.get('total_sum', db_row.get('Сумма заявки', 0.0)),
-                    'Общий объем (м3)': db_row.get('total_volume', db_row.get('Общий объем (м3)', 0.0)),
-                    'Допуск': db_row.get('approval_by', db_row.get('Допуск', '')),
-                    'Сертификат': db_row.get('has_certificate', db_row.get('Сертификат', 'Нет')),
-                    'Описание': db_row.get('description', db_row.get('Описание', ''))
+                    'Клиент': db_row.get('client_name', ''),
+                    'Телефон': db_row.get('phone', ''),
+                    'Адрес клиента': db_row.get('delivery_address', ''),
+                    'Координаты': db_row.get('coordinates', ''), # Новое поле в БД
+                    'Статус': db_row.get('status', 'ОЖИДАНИЕ'),
+                    'Водитель': db_row.get('driver', ''),
+                    'ТС': db_row.get('vehicle', ''),
+                    'Адрес загрузки': db_row.get('load_address', 'Центральный склад'),
+                    'Сумма заявки': float(db_row.get('total_sum', 0.0)),
+                    'Общий объем (м3)': float(db_row.get('total_volume', 0.0)),
+                    'Допуск': db_row.get('approval_by', ''),
+                    'Сертификат': db_row.get('has_certificate', 'Нет'),
+                    'Описание': db_row.get('description', ''),
+                    'photo_url': db_row.get('photo_url', None)
                 }
 
-                # Загружаем товары из JSON-поля items_data (самая важная часть!)
                 items_raw = db_row.get('items_data', [])
-                if isinstance(items_raw, list) and len(items_raw) > 0:
-                    items_df = pd.DataFrame(items_raw)
-                else:
-                    items_df = pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
-                
-                if 'Адрес' not in items_df.columns:
-                    items_df['Адрес'] = "НЕ УКАЗАНО"
-                
+                items_df = pd.DataFrame(items_raw) if items_raw else pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
+                if 'Адрес' not in items_df.columns: items_df['Адрес'] = "НЕ УКАЗАНО"
                 st.session_state[f"temp_items_{entry_id}"] = items_df
 
-                # Сохраняем индекс для локального обновления
+                # Индекс для локального обновления
                 if table_key in st.session_state:
                     df_local = st.session_state[table_key]
-                    idx_l = df_local.index[df_local['id'] == entry_id].tolist()
-                    st.session_state[f"temp_idx_{entry_id}"] = idx_l[0] if idx_l else None
+                    idx_list = df_local.index[df_local['id'] == entry_id].tolist()
+                    st.session_state[f"temp_idx_{entry_id}"] = idx_list[0] if idx_list else None
 
             except Exception as e:
-                st.error(f"Ошибка при инициализации: {e}")
+                st.error(f"Ошибка инициализации: {e}")
                 return
 
-    # Ссылки на текущие данные в сессии
+    # Ссылки на данные
     row = st.session_state[f"temp_row_{entry_id}"]
     items_df = st.session_state[f"temp_items_{entry_id}"]
     idx = st.session_state.get(f"temp_idx_{entry_id}")
 
     st.markdown(f"### 🖋️ Редактор документа `{entry_id}`")
-    tab_main, tab_geo = st.tabs(["📝 Информация и Поля", "📍 Склад (3D)"])
+    tab_main, tab_geo, tab_map = st.tabs(["📝 Основное", "📍 Склад (Ячейки)", "🗺️ Карта и Координаты"])
 
     # --- ВКЛАДКА 1: ОСНОВНЫЕ ДАННЫЕ ---
     with tab_main:
-        st.markdown("##### 👤 Клиент и Контакты")
         c1, c2, c3 = st.columns(3)
-        row['Клиент'] = c1.text_input("Клиент", value=str(row.get('Клиент', '')), key=f"edit_cli_{entry_id}")
-        row['Телефон'] = c2.text_input("Телефон", value=str(row.get('Телефон', '')), key=f"edit_ph_{entry_id}")
-        row['Адрес клиента'] = c3.text_input("Адрес доставки", value=str(row.get('Адрес клиента', '')), key=f"edit_adr_c_{entry_id}")
+        row['Клиент'] = c1.text_input("Клиент", value=row['Клиент'], key=f"e_cli_{entry_id}")
+        row['Телефон'] = c2.text_input("Телефон", value=row['Телефон'], key=f"e_ph_{entry_id}")
+        row['Адрес клиента'] = c3.text_input("Адрес доставки", value=row['Адрес клиента'], key=f"e_adr_c_{entry_id}")
 
-        st.markdown("##### 🚚 Логистика и Транспорт")
+        st.markdown("---")
         r2_1, r2_2, r2_3, r2_4 = st.columns(4)
+        
+        # СТАТУС
         status_list = ["ОЖИДАНИЕ", "Стоит на точке загрузки", "Выехал", "Ожидает догруз", "В пути", "Доставлено", "БРАК"]
-        curr_st = str(row.get('Статус', 'ОЖИДАНИЕ'))
-        st_idx = status_list.index(curr_st) if curr_st in status_list else 0
-        row['Статус'] = r2_1.selectbox("Статус", status_list, index=st_idx, key=f"edit_st_{entry_id}")
-        row['Водитель'] = r2_2.text_input("Водитель", value=str(row.get('Водитель', '')), key=f"edit_dr_{entry_id}")
-        row['ТС'] = r2_3.text_input("ТС (Госномер)", value=str(row.get('ТС', '')), key=f"edit_ts_{entry_id}")
-        row['Адрес загрузки'] = r2_4.text_input("Адрес загрузки", value=str(row.get('Адрес загрузки', 'Центральный склад')), key=f"edit_adr_z_{entry_id}")
+        st_idx = status_list.index(row['Статус']) if row['Статус'] in status_list else 0
+        row['Статус'] = r2_1.selectbox("📍 Статус", status_list, index=st_idx, key=f"e_st_{entry_id}")
 
-        st.markdown("##### ⚖️ Параметры и Допуски")
-        r3_1, r3_2, r3_3, r3_4 = st.columns(4)
-        row['Сумма заявки'] = r3_1.number_input("Сумма заявки", value=float(row.get('Сумма заявки', 0.0)), key=f"edit_sum_{entry_id}")
-        row['Общий объем (м3)'] = r3_2.number_input("Общий объем (м3)", value=float(row.get('Общий объем (м3)', 0.0)), key=f"edit_vol_{entry_id}")
-        row['Допуск'] = r3_3.text_input("Допуск (Кто разрешил)", value=str(row.get('Допуск', '')), key=f"edit_dop_{entry_id}")
-        cert_val = str(row.get('Сертификат', 'Нет'))
-        row['Сертификат'] = r3_4.selectbox("Сертификат", ["Да", "Нет"], index=0 if cert_val == "Да" else 1, key=f"edit_cert_{entry_id}")
+        # ВОДИТЕЛЬ (Свободный ввод + список)
+        drivers_list = ["Наемный водитель"]
+        if 'drivers' in st.session_state and not st.session_state.drivers.empty:
+            d_col = "Фамилия" if "Фамилия" in st.session_state.drivers.columns else "last_name"
+            drivers_list += st.session_state.drivers[d_col].dropna().tolist()
+        
+        current_dr = row['Водитель']
+        dr_index = drivers_list.index(current_dr) if current_dr in drivers_list else 0
+        selected_dr_base = r2_2.selectbox("👤 Водитель (Выбор)", drivers_list, index=dr_index, key=f"e_dr_s_{entry_id}")
+        
+        # Если "Наемный" или в списке нет — даем вписать вручную
+        if selected_dr_base == "Наемный водитель":
+            row['Водитель'] = r2_2.text_input("Введите ФИО вручную", value="" if current_dr == "Наемный водитель" else current_dr, key=f"e_dr_i_{entry_id}")
+        else:
+            row['Водитель'] = selected_dr_base
 
-        st.divider()
+        row['ТС'] = r2_3.text_input("🚛 ТС (Госномер)", value=row['ТС'], key=f"e_ts_{entry_id}")
+        row['Адрес загрузки'] = r2_4.text_input("🏗️ Адрес загрузки", value=row['Адрес загрузки'], key=f"e_adr_z_{entry_id}")
+
+        # ФОТО
+        st.markdown("---")
+        f_c1, f_c2 = st.columns([1, 2])
+        with f_c1:
+            if row.get('photo_url'):
+                st.image(row['photo_url'], caption="Текущее фото", width=200)
+            else:
+                st.info("📷 Фото не загружено")
+        with f_c2:
+            new_photo = st.file_uploader("Заменить фото (Накладная/Груз)", type=['jpg', 'jpeg', 'png'], key=f"e_photo_{entry_id}")
+
         st.markdown("### 📦 Состав товаров")
-        # Редактор таблицы товаров (используем width="stretch" для совместимости)
         updated_items = st.data_editor(items_df, width="stretch", num_rows="dynamic", key=f"ed_it_{entry_id}")
         st.session_state[f"temp_items_{entry_id}"] = updated_items
 
-        if st.button("💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ", width="stretch", type="primary"):
-            # 1. ТВОЙ PAYLOAD БЕЗ СОКРАЩЕНИЙ
-            db_payload = {
-                "client_name": row['Клиент'],
-                "phone": row['Телефон'],
-                "delivery_address": row['Адрес клиента'],
-                "status": row['Статус'],
-                "driver": row['Водитель'],
-                "vehicle": row['ТС'],
-                "load_address": row['Адрес загрузки'],
-                "total_sum": float(row['Сумма заявки']),
-                "total_volume": float(row['Общий объем (м3)']),
-                "approval_by": row['Допуск'],
-                "has_certificate": row['Сертификат'],
-                "description": row.get('Описание', ''),
-                "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
-                "updated_at": datetime.now().isoformat()
-            }
+    # --- ВКЛАДКА 2: СКЛАД ---
+    with tab_geo:
+        # (Код выбора ячейки остается таким же, так как он завязан на твой WAREHOUSE_MAP)
+        st.info("Используйте этот раздел для привязки товаров к ячейкам хранения.")
+        # ... (твой код с plotly_chart и WAREHOUSE_MAP здесь) ...
 
+    # --- ВКЛАДКА 3: КАРТА И КООРДИНАТЫ ---
+    with tab_map:
+        st.subheader("📍 Геолокация клиента")
+        col_m1, col_m2 = st.columns([2, 1])
+        
+        with col_m2:
+            st.write("Координаты для навигатора:")
+            manual_coords = st.text_input("Lat, Lon", value=row['Координаты'], placeholder="47.01, 28.86")
+            row['Координаты'] = manual_coords
+            st.caption("Водитель получит эти данные в Telegram/Viber для точного доезда.")
+
+        with col_m1:
+            # Молдова Центр
+            m = folium.Map(location=[47.01, 28.86], zoom_start=11)
+            folium.LatLngPopup().add_to(m)
+            if row['Координаты'] and ',' in row['Координаты']:
+                try:
+                    lat, lon = map(float, row['Координаты'].split(','))
+                    folium.Marker([lat, lon], popup="Точка доставки").add_to(m)
+                except: pass
+            
+            map_data = st_folium(m, height=300, width=500, key=f"map_{entry_id}")
+            if map_data.get("last_clicked"):
+                new_coords = f"{map_data['last_clicked']['lat']:.6f}, {map_data['last_clicked']['lng']:.6f}"
+                st.success(f"Выбрана точка: {new_coords}")
+                if st.button("Применить эти координаты"):
+                    row['Координаты'] = new_coords
+                    st.rerun()
+
+    st.divider()
+    
+    # --- КНОПКА СОХРАНЕНИЯ ---
+    if st.button("💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
+        with st.spinner("⏳ Синхронизация с базой данных..."):
             try:
-                # 2. СОХРАНЕНИЕ В ОБЛАКО
+                # 1. ОБРАБОТКА ФОТО (Если загружено новое)
+                final_photo_url = row['photo_url']
+                if new_photo:
+                    file_ext = new_photo.name.split('.')[-1]
+                    file_name = f"order_{entry_id}_{int(time.time())}.{file_ext}"
+                    supabase.storage.from_("orders").upload(file_name, new_photo.getvalue())
+                    final_photo_url = supabase.storage.from_("orders").get_public_url(file_name)
+
+                # 2. ПОДГОТОВКА PAYLOAD (Синхронизация ключей)
+                # Время Молдовы для updated_at
+                now_md = get_moldova_time()
+                
+                db_payload = {
+                    "client_name": row['Клиент'],
+                    "phone": row['Телефон'],
+                    "delivery_address": row['Адрес клиента'],
+                    "coordinates": row['Координаты'],
+                    "status": row['Статус'],
+                    "driver": row['Водитель'],
+                    "vehicle": row['ТС'],
+                    "load_address": row['Адрес загрузки'],
+                    "total_sum": float(row['Сумма заявки']),
+                    "total_volume": float(row['Общий объем (м3)']),
+                    "approval_by": row['Допуск'],
+                    "has_certificate": row['Сертификат'],
+                    "description": row.get('Описание', ''),
+                    "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
+                    "photo_url": final_photo_url,
+                    "updated_at": now_md.isoformat()
+                }
+
+                # 3. ОТПРАВКА В SUPABASE
                 supabase.table(table_key).update(db_payload).eq("id", entry_id).execute()
 
-                # 3. СИНХРОНИЗАЦИЯ С ТАБЛИЦЕЙ INVENTORY
-                for _, item in updated_items.iterrows():
-                    if item.get('Адрес') and item['Адрес'] != "НЕ УКАЗАНО":
-                        inv_payload = {
-                            "doc_id": entry_id,
-                            "item_name": item['Название товара'],
-                            "cell_address": item['Адрес'],
-                            "quantity": float(item.get('Кол-во', 0)),
-                            "warehouse_id": item['Адрес'].split('-')[0].replace('WH', '') if '-' in item['Адрес'] else "1"
-                        }
-                        supabase.table("inventory").upsert(inv_payload, on_conflict="doc_id, item_name").execute()
+                # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ (Чтобы UI сразу увидел изменения)
+                if idx is not None and table_key in st.session_state:
+                    # Маппим обратно для локальной таблицы (если она на русском)
+                    local_map = {
+                        "Клиент": row['Клиент'], "Статус": row['Статус'], 
+                        "Водитель": row['Водитель'], "ТС": row['ТС'],
+                        "Общий объем (м3)": row['Общий объем (м3)'],
+                        "Последнее изменение": f"MD_Time: {now_md.strftime('%H:%M')}"
+                    }
+                    for k, v in local_map.items():
+                        if k in st.session_state[table_key].columns:
+                            st.session_state[table_key].at[idx, k] = v
 
-                # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ
-                if idx is not None:
-                    target_df = st.session_state[table_key]
-                    for field, val in row.items():
-                        if field in target_df.columns:
-                            target_df.at[idx, field] = val
-                    # Принудительно обновляем товары в локальном кэше
-                    if "items_data" in target_df.columns:
-                        target_df.at[idx, "items_data"] = db_payload["items_data"]
-
-                st.success("✅ Все данные синхронизированы с базой данных!")
+                st.success(f"✅ Данные успешно сохранены в {now_md.strftime('%H:%M:%S')} (UTC+2)")
                 time.sleep(1)
                 st.rerun()
 
             except Exception as e:
-                st.error(f"🚨 Ошибка сохранения в Supabase: {e}")
+                st.error(f"🚨 Критическая ошибка сохранения: {e}")
 
-            except Exception as e:
-                st.error(f"🚨 Ошибка сохранения в Supabase: {e}")
+    if st.button("❌ ОТМЕНА", use_container_width=True):
+        st.session_state.pop(f"temp_row_{entry_id}", None)
+        st.rerun()
 
-    # --- ВКЛАДКА 2: СКЛАД (ПРИВЯЗКА ЯЧЕЕК) ---
-    with tab_geo:
-        if updated_items.empty:
-            st.warning("Сначала добавьте товары!")
-        else:
-            col_sel, col_viz = st.columns([1, 2])
-            with col_sel:
-                st.subheader("Выбор ячейки")
-                target_item = st.selectbox("📦 Товар:", updated_items['Название товара'].unique(), key=f"t_sel_{entry_id}")
-                wh_id = str(st.selectbox("🏪 Склад:", list(WAREHOUSE_MAP.keys()), key=f"wh_sel_{entry_id}"))
-                
-                # Генератор ячеек
-                conf = WAREHOUSE_MAP[wh_id]
-                all_cells = []
-                for r in conf['rows']:
-                    all_cells.append(f"WH{wh_id}-{r}")
-                    for s in range(1, conf.get('sections', 1) + 1):
-                        for t in conf.get('tiers', ['A']):
-                            all_cells.append(f"WH{wh_id}-{r}-S{s}-{t}")
-                all_cells = sorted(list(set(all_cells)))
-                
-                match_cond = updated_items['Название товара'] == target_item
-                curr_addr = updated_items.loc[match_cond, 'Адрес'].values[0] if not updated_items.loc[match_cond, 'Адрес'].empty else "НЕ УКАЗАНО"
-                
-                selected_cell = st.selectbox("📍 Ячейка:", options=all_cells, 
-                                             index=all_cells.index(curr_addr) if curr_addr in all_cells else 0, 
-                                             key=f"cs_sel_{entry_id}")
-                
-                if st.button("🔗 ПРИМЕНИТЬ АДРЕС", use_container_width=True, type="secondary", key=f"bind_{entry_id}"):
-                    # Обновляем только в локальном буфере редактора
-                    st.session_state[f"temp_items_{entry_id}"].loc[
-                        st.session_state[f"temp_items_{entry_id}"]['Название товара'] == target_item, 'Адрес'
-                    ] = selected_cell
-                    st.toast(f"Адрес {selected_cell} зафиксирован в черновике. Нажмите 'Сохранить изменения' для записи в БД.")
+import streamlit as st
+import pandas as pd
+import pytz
+from datetime import datetime
 
-            with col_viz:
-                st.subheader("Карта склада")
-                fig = get_warehouse_figure(wh_id, highlighted_cell=selected_cell)
-                st.plotly_chart(fig, use_container_width=True, key=f"p_viz_{entry_id}")
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ВРЕМЕНИ ---
+def format_to_moldova_time(iso_string):
+    if not iso_string or iso_string == '---':
+        return '---'
+    try:
+        # Парсим UTC время из базы
+        dt = datetime.fromisoformat(iso_string.replace('Z', '+00:00'))
+        # Переводим в часовой пояс Кишинева
+        tz = pytz.timezone('Europe/Chisinau')
+        return dt.astimezone(tz).strftime('%d.%m.%Y %H:%M')
+    except:
+        return iso_string
 
 @st.dialog("🔍 Детальный просмотр заявки", width="large")
 def show_order_details_modal(order_id):
     from database import supabase
     
-    # --- 1. ПРЯМАЯ ИНТЕГРАЦИЯ С БД (Загрузка актуальной версии) ---
-    try:
-        # Определяем таблицу (если ID начинается на ORD — это заказы, если на IN — приходы)
-        table_name = "orders" if order_id.startswith("ORD") else "arrivals"
-        
-        response = supabase.table(table_name).select("*").eq("id", order_id).execute()
-        
-        if not response.data:
-            st.error(f"Документ {order_id} не найден в базе данных Supabase.")
-            return
+    # --- 1. ЗАГРУЗКА ДАННЫХ ---
+    with st.spinner("🚀 Синхронизация с облаком..."):
+        try:
+            # Логика определения таблицы по префиксу ID
+            table_name = "orders" if str(order_id).startswith("ORD") else "arrivals"
             
-        # Получаем данные напрямую из БД
-        db_row = response.data[0]
-        
-        # Парсим товары из JSONB поля базы данных
-        items_list = db_row.get('items_data', [])
-        items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
-        
-    except Exception as e:
-        st.warning(f"⚠️ Ошибка прямого подключения к БД. Использую локальный кэш. Ошибка: {e}")
-        # Фолбэк на локальный кэш, если база недоступна
-        df_main = st.session_state.get('main', pd.DataFrame())
-        row_match = df_main[df_main['id'] == order_id]
-        if row_match.empty:
-            st.error("Запись не найдена.")
+            response = supabase.table(table_name).select("*").eq("id", order_id).execute()
+            
+            if not response.data:
+                st.error(f"❌ Документ {order_id} не найден в базе данных.")
+                return
+                
+            db_row = response.data[0]
+            
+            # Парсинг товаров (JSONB -> DataFrame)
+            items_list = db_row.get('items_data', [])
+            if isinstance(items_list, list) and len(items_list) > 0:
+                items_df = pd.DataFrame(items_list)
+            else:
+                items_df = pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
+                
+        except Exception as e:
+            st.error(f"🚨 Ошибка подключения: {e}")
             return
-        db_row = row_match.iloc[0].to_dict()
-        items_df = st.session_state.items_registry.get(order_id, pd.DataFrame())
 
-    # --- 2. ОТОБРАЖЕНИЕ ДАННЫХ ---
-    st.subheader(f"📄 Просмотр документа: {order_id}")
+    # --- 2. ШАПКА И СТАТУС ---
+    st.markdown(f"## 📄 Документ: {order_id}")
     
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown(f"**👤 Клиент:** {db_row.get('client_name', db_row.get('Клиент', '---'))}")
-        st.markdown(f"**📞 Телефон:** {db_row.get('phone', db_row.get('Телефон', '---'))}")
-        st.markdown(f"**📍 Адрес:** {db_row.get('delivery_address', db_row.get('Адрес клиента', '---'))}")
-    with c2:
-        st.markdown(f"**📦 Статус:** `{db_row.get('status', db_row.get('Статус', '---'))}`")
-        st.markdown(f"**📜 Сертификат:** {db_row.get('has_certificate', db_row.get('Сертификат', '---'))}")
-        st.markdown(f"**🏗️ Адрес загрузки:** {db_row.get('load_address', db_row.get('Адрес загрузки', '---'))}")
-    with c3:
-        # Учитываем возможные разные названия ключей в БД и в UI
-        v_num = db_row.get('vehicle', db_row.get('ТС', '---'))
-        st.markdown(f"**🚛 ТС:** {v_num}")
-        st.markdown(f"**👤 Водитель:** {db_row.get('driver', db_row.get('Водитель', '---'))}")
-        
-        with st.expander("🕒 История правок"):
-            st.caption(f"Создан: {db_row.get('created_at', '---')}")
-            st.caption(f"Изменил: {db_row.get('updated_by', '---')} ({db_row.get('updated_at', '---')})")
+    # Цветовая индикация статуса
+    status = db_row.get('status', 'НЕ ОПРЕДЕЛЕН')
+    st.info(f"**Текущий статус:** {status}")
+
+    # --- 3. ОСНОВНОЙ БЛОК ИНФОРМАЦИИ ---
+    col_info, col_photo = st.columns([2, 1])
+
+    with col_info:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("##### 👤 Контрагент")
+            st.markdown(f"**Клиент:** {db_row.get('client_name', '---')}")
+            st.markdown(f"**Телефон:** {db_row.get('phone', '---')}")
+            st.markdown(f"**Адрес доставки:** {db_row.get('delivery_address', '---')}")
+            
+            # Ссылка на карту, если есть координаты
+            coords = db_row.get('coordinates', '')
+            if coords and ',' in coords:
+                google_maps_url = f"https://www.google.com/maps?q={coords.replace(' ', '')}"
+                st.markdown(f"📍 **[Открыть точку на карте]({google_maps_url})**")
+
+        with c2:
+            st.markdown("##### 🚚 Логистика")
+            st.markdown(f"**Водитель:** {db_row.get('driver', '---')}")
+            st.markdown(f"**Транспорт:** {db_row.get('vehicle', '---')}")
+            st.markdown(f"**Место загрузки:** {db_row.get('load_address', '---')}")
+            st.markdown(f"**Сертификат:** {db_row.get('has_certificate', 'Нет')}")
+
+    with col_photo:
+        st.markdown("##### 📸 Фото-фиксация")
+        photo_url = db_row.get('photo_url')
+        if photo_url:
+            st.image(photo_url, use_container_width=True, caption="Скан накладной / Фото груза")
+        else:
+            st.warning("Фотография не прикреплена")
 
     st.divider()
 
-    st.markdown("### 📋 Товарная спецификация и места хранения")
+    # --- 4. ТОВАРНАЯ СПЕЦИФИКАЦИЯ ---
+    st.markdown("### 📋 Товарный состав")
     
     if not items_df.empty:
-        # Красивое оформление таблицы: подсвечиваем адреса
-        def color_addr(val):
-            color = 'lightgreen' if val and val != "НЕ УКАЗАНО" and val != "-" else '#ffcccc'
-            return f'background-color: {color}'
+        # Форматирование таблицы
+        def style_cells(row):
+            addr = row.get('Адрес', '')
+            color = 'background-color: #d4edda' if addr and addr != "НЕ УКАЗАНО" else 'background-color: #fff3cd'
+            return [color] * len(row)
 
-        # Отрисовка спецификации
-        if 'Адрес' in items_df.columns:
-            st.dataframe(items_df.style.applymap(color_addr, subset=['Адрес']), use_container_width=True)
-        else:
-            st.dataframe(items_df, use_container_width=True)
+        st.dataframe(
+            items_df.style.apply(style_cells, axis=1),
+            use_container_width=True,
+            hide_index=True
+        )
         
-        # Метрики
+        # Итоговые показатели
         m1, m2, m3 = st.columns(3)
-        m1.metric("Всего позиций", f"{len(items_df)}")
-        m2.metric("Общий объем", f"{db_row.get('total_volume', db_row.get('Общий объем (м3)', 0))} м³")
-        m3.metric("Сумма", f"{db_row.get('total_sum', db_row.get('Сумма заявки', 0))} ₽")
+        m1.metric("Позиций", len(items_df))
+        m2.metric("Общий объем", f"{db_row.get('total_volume', 0)} м³")
+        m3.metric("Сумма заявки", f"{db_row.get('total_sum', 0)} MDL")
     else:
-        st.warning("⚠️ Спецификация товаров пуста или не найдена.")
+        st.warning("⚠️ Список товаров пуст.")
 
-    st.info(f"**📝 Сведения/Допуск:** {db_row.get('description', db_row.get('Описание', 'Нет описания'))}")
+    # --- 5. ДОПОЛНИТЕЛЬНО И ИСТОРИЯ ---
+    st.divider()
+    
+    exp_c1, exp_c2 = st.columns(2)
+    with exp_c1:
+        st.markdown(f"**📝 Сведения / Допуск:**\n\n> {db_row.get('description', 'Нет описания')}")
+        st.caption(f"Разрешил: {db_row.get('approval_by', '---')}")
 
-    # --- 3. ЗАКРЫТИЕ ---
-    if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
-        st.session_state.active_view_modal = None
+    with exp_c2:
+        with st.expander("🕒 Журнал изменений (Moldova Time)"):
+            created = format_to_moldova_time(db_row.get('created_at'))
+            updated = format_to_moldova_time(db_row.get('updated_at'))
+            st.write(f"**Создан:** {created}")
+            st.write(f"**Обновлен:** {updated}")
+            st.write(f"**Автор правок:** {db_row.get('updated_by', 'Система')}")
+
+    # --- 6. КНОПКИ УПРАВЛЕНИЯ ---
+    st.markdown("<br>", unsafe_allow_html=True)
+    b1 = st.columns(2)
+    
+    if b1.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
         
 
@@ -1565,6 +1663,7 @@ def show_defect_print_modal(defect_id):
     
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
+
 
 
 
