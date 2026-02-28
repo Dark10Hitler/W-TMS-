@@ -1580,9 +1580,20 @@ elif selected == "Аналитика":
                 st.rerun()
 
         # --- 3. ИНЖЕНЕРНЫЙ ВЕРДИКТ: ГЛУБОКАЯ СИНХРОНИЗАЦИЯ ---
-    if st.session_state.audit_results:
-        res = st.session_state.audit_results
-        df = res['df']
+    # 1. Используем .get(), который вернет None вместо ошибки, если ключа нет
+    audit_data = st.session_state.get('audit_results')
+
+    if audit_data is not None:
+    # 2. Безопасно извлекаем DataFrame
+        df = audit_data.get('df')
+    
+        if df is not None:
+        # Здесь идет твой код обработки таблицы аудита
+            st.write("### 📋 Результаты аудита")
+            st.dataframe(df, use_container_width=True)
+    else:
+    # 3. Опционально: что показать, если аудита еще не было
+        st.info("🔍 Данные аудита еще не сформированы. Запустите проверку.")
     
     # 1. ДАННЫЕ ОДОМЕТРИИ (СИНХРОНИЗАЦИЯ С TRACCAR)
         total_dist_end = df['total_dist_km'].iloc[-1] 
@@ -2350,6 +2361,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
