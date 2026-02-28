@@ -1580,71 +1580,72 @@ elif selected == "Аналитика":
                 st.rerun()
 
         # --- 3. ИНЖЕНЕРНЫЙ ВЕРДИКТ: ГЛУБОКАЯ СИНХРОНИЗАЦИЯ ---
-    # 1. Используем .get(), который вернет None вместо ошибки, если ключа нет
-    audit_data = st.session_state.get('audit_results')
+    # 1. Безопасно получаем данные из сессии
+audit_data = st.session_state.get('audit_results')
 
-    if audit_data is not None:
-    # 2. Безопасно извлекаем DataFrame
-        df = audit_data.get('df')
+if audit_data is not None:
+    df = audit_data.get('df')
     
-        if df is not None:
-        # Здесь идет твой код обработки таблицы аудита
-            st.write("### 📋 Результаты аудита")
-            st.dataframe(df, use_container_width=True)
-    else:
-    # 3. Опционально: что показать, если аудита еще не было
-        st.info("🔍 Данные аудита еще не сформированы. Запустите проверку.")
-    
-    # 1. ДАННЫЕ ОДОМЕТРИИ (СИНХРОНИЗАЦИЯ С TRACCAR)
+    if df is not None and not df.empty:
+        st.header("🛠️ Технический аудит систем")
+        
+        # --- ВСЕ РАСЧЕТЫ ДОЛЖНЫ БЫТЬ ЗДЕСЬ (ВНУТРИ IF DF) ---
+        
+        # 1. ДАННЫЕ ОДОМЕТРИИ
         total_dist_end = df['total_dist_km'].iloc[-1] 
         total_dist_start = df['total_dist_km'].iloc[0]
         actual_period_km = max(0, total_dist_end - total_dist_start)
-    
-    # Защита: если totalDistance не изменился, считаем по дельтам точек
+        
+        # Защита: если totalDistance не изменился, считаем по дельтам точек
         if actual_period_km <= 0:
             actual_period_km = df['attributes'].apply(lambda x: x.get('distance', 0)).sum() / 1000.0
-    
-    # Физический одометр (текущее значение на приборе)
+        
+        # Физический одометр
         device_odo_current = df['attributes'].apply(lambda x: x.get('odometer', 0) / 1000.0).iloc[-1]
 
-    # 2. СКОРОСТНЫЕ ПОКАЗАТЕЛИ И НАРУШЕНИЯ
+        # 2. СКОРОСТНЫЕ ПОКАЗАТЕЛИ
         moving_df = df[df['speed_kmh'] > 2]
         avg_speed = moving_df['speed_kmh'].mean() if not moving_df.empty else 0
         max_speed = df['speed_kmh'].max()
-    
-    # Считаем количество нарушений (определяем переменную ДО использования)
+        
         overspeeds_df = df[df['speed_kmh'] > 90]
         overspeeds_count = len(overspeeds_df)
-    
-    # 3. АНАЛИЗ АГРЕССИИ (м/с²)
+        
+        # 3. АНАЛИЗ АГРЕССИИ (ускорение)
         df['accel_ms2'] = df['speed_kmh'].diff().fillna(0) / 3.6
         hard_maneuvers = len(df[df['accel_ms2'].abs() > 3.0]) 
 
-    # 4. ИНЖЕНЕРНЫЙ РАСЧЕТ РАСХОДА (МЕТОД LCV)
-        base_rate = 9.0  # Базовая норма
-    
-    # А. Фактор аэродинамики (>90 км/ч)
+        # 4. ИНЖЕНЕРНЫЙ РАСЧЕТ РАСХОДА
+        base_rate = 9.0  
+        
+        # А. Фактор аэродинамики
         if not overspeeds_df.empty:
             avg_over_speed = overspeeds_df['speed_kmh'].mean() - 90
             speed_factor = 1 + (avg_over_speed / 10) * 0.15
         else:
             speed_factor = 1.0
 
-    # Б. Фактор динамики (Среднее ускорение)
+        # Б. Фактор динамики
         positive_accel = df[df['accel_ms2'] > 0.5]['accel_ms2']
         accel_factor = 1 + (max(0, positive_accel.mean() - 0.8) * 0.2) if not positive_accel.empty else 1.0
 
-    # Итоговый коэффициент нагрузки (ограничен 1.4)
         load_factor = min(1.4, speed_factor * accel_factor)
-    
         fuel_total = (actual_period_km / 100) * base_rate * load_factor
         cost_mdl = fuel_total * 21.0
-    
-    # Расчет чистого перерасхода в литрах
-        extra_fuel = max(0, fuel_total - (actual_period_km / 100 * base_rate))
+        
+        # --- ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ---
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Пробег (период)", f"{actual_period_km:.1f} км")
+        col2.metric("Расход топлива", f"{fuel_total:.1f} л")
+        col3.metric("Затраты", f"{cost_mdl:.0f} MDL")
+        col4.metric("Нарушения", overspeeds_count, delta=hard_maneuvers, delta_color="inverse")
 
-    # --- ВИЗУАЛИЗАЦИЯ (ИНТЕРФЕЙС) ---
-        st.header("🛠️ Технический аудит систем")
+        st.write("### 📋 Таблица сырых данных")
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("⚠️ Таблица данных аудита пуста.")
+else:
+    st.info("🔍 Данные аудита еще не сформированы. Пожалуйста, запустите проверку в соответствующем разделе.")
     
     # Ряд 1: Пробеги
         c1, c2, c3, c4 = st.columns(4)
@@ -2361,6 +2362,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
