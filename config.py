@@ -791,64 +791,48 @@ def show_arrival_details_modal(arrival_id):
 
     # --- 1. ЗАГРУЗКА АКТУАЛЬНЫХ ДАННЫХ ИЗ БД ---
     try:
-        # Тянем данные напрямую из таблицы arrivals
         response = supabase.table("arrivals").select("*").eq("id", arrival_id).execute()
-        
         if not response.data:
-            st.error(f"Документ {arrival_id} не найден в базе данных.")
+            st.error(f"Документ {arrival_id} не найден.")
             return
             
         db_row = response.data[0]
-        
-        # Извлекаем список товаров из JSONB колонки
         items_list = db_row.get('items_data', [])
         items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
         
     except Exception as e:
-        st.warning(f"⚠️ Ошибка связи с БД. Показываю данные из локального кэша. {e}")
-        # Фолбэк на локальный стейт, если база недоступна
-        df = st.session_state.arrivals
-        row_match = df[df['id'] == arrival_id]
-        if row_match.empty:
-            st.error("Документ не найден.")
-            return
-        db_row = row_match.iloc[0].to_dict()
-        items_df = st.session_state.items_registry.get(arrival_id, pd.DataFrame())
+        st.warning(f"⚠️ Ошибка связи с БД. {e}")
+        return
 
-    # --- 2. ОТОБРАЖЕНИЕ ДАННЫХ ---
+    # --- 2. ОТОБРАЖЕНИЕ ОСНОВНЫХ ДАННЫХ ---
     st.subheader(f"📥 Детальный обзор прихода: {arrival_id}")
     
     c1, c2, c3 = st.columns(3)
     with c1:
-        # Используем .get() с проверкой на английские и русские ключи (для надежности)
-        st.markdown(f"**🏢 Поставщик:** {db_row.get('client_name', db_row.get('Клиент', '---'))}")
-        st.markdown(f"**📞 Контакт:** {db_row.get('phone', db_row.get('Телефон', '---'))}")
+        st.markdown(f"**🏢 Поставщик:** {db_row.get('client_name', '---')}")
+        st.markdown(f"**📞 Контакт:** {db_row.get('phone', '---')}")
     with c2:
-        st.markdown(f"**📦 Статус:** `{db_row.get('status', db_row.get('Статус', '---'))}`")
-        st.markdown(f"**🏗️ Склад приемки:** {db_row.get('load_address', db_row.get('Адрес загрузки', '---'))}")
+        st.markdown(f"**📦 Статус:** `{db_row.get('status', '---')}`")
+        st.markdown(f"**🏗️ Склад приемки:** {db_row.get('load_address', '---')}")
     with c3:
-        st.markdown(f"**🚛 Транспорт:** {db_row.get('vehicle', db_row.get('ТС (Госномер)', '---'))}")
-        st.markdown(f"**👤 Водитель:** {db_row.get('driver', db_row.get('Водитель', '---'))}")
+        st.markdown(f"**🚛 Транспорт:** {db_row.get('vehicle', '---')}")
+        st.markdown(f"**👤 Водитель:** {db_row.get('driver', '---')}")
 
     st.divider()
     
     # --- 3. ТАБЛИЦА ТОВАРОВ ---
     st.markdown("### 📋 Принятые позиции")
     if not items_df.empty:
-        # Стилизация: подсвечиваем наличие адреса хранения
-        def color_stock(val):
-            return 'background-color: #e6ffed' if val and val != "НЕ УКАЗАНО" else ''
-
+        # Стилизация адреса
         if 'Адрес' in items_df.columns:
-            st.dataframe(items_df.style.applymap(color_stock, subset=['Адрес']), use_container_width=True)
+            st.dataframe(items_df, use_container_width=True)
         else:
             st.dataframe(items_df, use_container_width=True)
             
         m1, m2, m3 = st.columns(3)
         m1.metric("Принято строк", f"{len(items_df)}")
-        m2.metric("Общий объем", f"{db_row.get('total_volume', db_row.get('Общий объем (м3)', 0))} м³")
+        m2.metric("Общий объем", f"{db_row.get('total_volume', 0)} м³")
         
-        # Добавляем индикатор инвентаризации
         if db_row.get('status') == "ПРИНЯТО":
              m3.success("✅ Размещено на складе")
         else:
@@ -856,6 +840,25 @@ def show_arrival_details_modal(arrival_id):
     else:
         st.warning("⚠️ Спецификация товаров пуста.")
 
+    # --- 4. ДОБАВЛЕНИЕ ЖУРНАЛА ИЗМЕНЕНИЙ (МОЛДОВА) ---
+    st.write("") # Отступ
+    exp_c1, exp_c2 = st.columns([1, 1]) # Можно сделать в колонке или на всю ширину
+    
+    with exp_c1:
+        # Дополнительная информация (если есть)
+        st.caption(f"ID записи: {db_row.get('id')}")
+
+    with exp_c2:
+        with st.expander("🕒 Журнал изменений (Moldova Time)"):
+            # Берем системные колонки created_at и updated_at из Supabase
+            created = format_to_moldova_time(db_row.get('created_at'))
+            updated = format_to_moldova_time(db_row.get('updated_at'))
+            
+            st.write(f"**📅 Создан:** {created}")
+            st.write(f"**🔄 Обновлен:** {updated}")
+            st.write(f"**👤 Автор правок:** {db_row.get('updated_by', 'Система')}")
+
+    # --- 5. КНОПКА ЗАКРЫТИЯ ---
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
         
@@ -1814,6 +1817,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
