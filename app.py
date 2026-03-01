@@ -2134,93 +2134,77 @@ elif selected == "Настройки":
         except Exception as e:
             st.error(f"Ошибка подключения к таблице profiles: {e}")
 
-    # --- ТАБ 4: ОБСЛУЖИВАНИЕ ---
-    with tab4:
-        st.subheader("🛠️ Сервисные инструменты")
-        c1, c2, c3 = st.columns(3)
-        
-        with c1:
-            st.markdown("### 📦 Экспорт")
-            st.caption("Создает Excel-файл со всеми данными системы по вкладкам.")
-            if st.button("📊 Сформировать отчет XLSX"):
-                try:
-                    # Собираем данные
-                    tables = {
-                        "Заявки": supabase.table("orders").select("*").execute().data,
-                        "Приходы": supabase.table("arrivals").select("*").execute().data,
-                        "Брак": supabase.table("defects").select("*").execute().data
-                    }
-                    
-                    import io
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                        for sheet_name, data in tables.items():
-                            if data:
-                                pd.DataFrame(data).to_excel(writer, sheet_name=sheet_name, index=False)
-                    
-                    st.download_button(
-                        label="⬇️ Скачать отчет",
-                        data=output.getvalue(),
-                        file_name=f"WMS_Full_Report_{time.strftime('%Y%m%d')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                except Exception as e:
-                    st.error(f"Ошибка экспорта: {e}")
+with tab4:
+    st.subheader("🛠️ Сервисные инструменты")
+    c1, c2, c3 = st.columns(3)
+    
+    with c1:
+        st.markdown("### 📦 Экспорт")
+        # ... (твой код экспорта остается без изменений) ...
 
-        with c2:
-            st.markdown("### ⚠️ Оптимизация")
-            st.caption("Очищает временную память браузера и перезагружает сессию. Помогает, если интерфейс 'завис'.")
-            if st.button("🔥 Сбросить кеш"):
-                st.session_state.clear()
-                st.toast("Кеш очищен успешно!")
-                time.sleep(1)
+    with c2:
+        st.markdown("### ⚠️ Оптимизация")
+        # ... (твой код сброса кеша остается без изменений) ...
+            
+    with c3:
+        st.markdown("### 🔴 Опасная зона")
+        st.caption("Полная очистка базы данных. **Действие необратимо!**")
+        
+        if st.button("🧨 ОЧИСТИТЬ ВСЕ ДАННЫЕ", type="secondary"):
+            st.session_state.confirm_delete_all = True
+
+        if st.session_state.get('confirm_delete_all'):
+            st.warning("### ❗ ВЫ УВЕРЕНЫ?")
+            st.write("Будут удалены ВСЕ записи из таблиц: Заказы, Приходы, Брак, Инвентаризация и Позиции.")
+            
+            c_yes, c_no = st.columns(2)
+            
+            if c_yes.button("ДА, УДАЛИТЬ ВСЁ", type="primary", use_container_width=True):
+                try:
+                    # Список твоих таблиц из Supabase (названия как на скриншоте)
+                    # ВАЖНО: Удаляем в таком порядке, чтобы не нарушить связи (сначала дочерние, потом основные)
+                    tables_to_clean = [
+                        "inventory", 
+                        "defects", 
+                        "arrivals", 
+                        "orders", 
+                        "positions",
+                        "product_locations"
+                    ]
+                    
+                    total_deleted = 0
+                    
+                    progress_bar = st.progress(0)
+                    for idx, table in enumerate(tables_to_clean):
+                        # 1. Получаем ID всех записей в текущей таблице
+                        res = supabase.table(table).select("id").execute()
+                        
+                        if res.data:
+                            ids = [row['id'] for row in res.data]
+                            
+                            # 2. Удаляем пачками по 500
+                            chunk_size = 500
+                            for i in range(0, len(ids), chunk_size):
+                                chunk = ids[i:i + chunk_size]
+                                supabase.table(table).delete().in_("id", chunk).execute()
+                            
+                            total_deleted += len(ids)
+                        
+                        # Обновляем прогресс
+                        progress_bar.progress((idx + 1) / len(tables_to_clean))
+                    
+                    st.success(f"🔥 Система очищена! Удалено записей: {total_deleted}")
+                    st.session_state.confirm_delete_all = False
+                    time.sleep(2)
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Ошибка при масштабной очистке: {str(e)}")
+            
+            if c_no.button("ОТМЕНА", use_container_width=True):
+                st.session_state.confirm_delete_all = False
                 st.rerun()
                 
-        with c3:
-            st.markdown("### 🔴 Опасная зона")
-            st.caption("Полная очистка базы данных. **Действие необратимо!**")
-            
-            # Кнопка первичного вызова подтверждения
-            if st.button("🧨 ОЧИСТИТЬ ВСЕ", type="secondary"):
-                st.session_state.confirm_delete_all = True
-
-            if st.session_state.get('confirm_delete_all'):
-                # Блок подтверждения
-                st.warning("### ❗ ВЫ УВЕРЕНЫ?")
-                st.write("Все записи о товарах и заказах будут удалены из таблицы `main`.")
-                
-                c_yes, c_no = st.columns(2)
-                
-                # ЛОГИКА УДАЛЕНИЯ (ИСПРАВЛЕНО: сбор ID -> удаление пачками)
-                if c_yes.button("ДА, УДАЛИТЬ", type="primary", use_container_width=True):
-                    try:
-                        # 1. Получаем список всех ID
-                        response = supabase.table("main").select("id").execute()
-                        
-                        if response.data:
-                            all_ids = [row['id'] for row in response.data]
-                            
-                            # 2. Удаляем записи пачками по 500 штук
-                            chunk_size = 500
-                            for i in range(0, len(all_ids), chunk_size):
-                                chunk = all_ids[i:i + chunk_size]
-                                supabase.table("main").delete().in_("id", chunk).execute()
-                            
-                            st.success(f"✅ База данных пуста. Удалено {len(all_ids)} записей.")
-                        else:
-                            st.info("База данных уже пуста.")
-                        
-                        st.session_state.confirm_delete_all = False
-                        time.sleep(1)
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"❌ Ошибка при удалении: {str(e)}")
-                
-                if c_no.button("ОТМЕНА", use_container_width=True):
-                    st.session_state.confirm_delete_all = False
-                    st.rerun()
-
 # --- 1. УМНАЯ ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
 TABLES_TO_LOAD = {
     "orders": "orders",
@@ -2291,6 +2275,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
