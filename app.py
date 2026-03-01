@@ -1836,34 +1836,28 @@ elif selected == "База Данных":
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
     with st.spinner("Синхронизация товарных позиций..."):
-        # 1. Получаем основной список товаров
+        # 1. Получаем основной список товаров через твою функцию
         inventory_df = get_full_inventory_df() 
         
-        # 2. ПОЛУЧАЕМ АКТУАЛЬНЫЕ АДРЕСА ИЗ БД (Чтобы статус обновился!)
+        # 2. Актуализируем адреса из product_locations (твоя логика мерджа)
         locations_res = supabase.table("product_locations").select("doc_id, product, address").execute()
         if locations_res.data:
             loc_df = pd.DataFrame(locations_res.data)
-            
-            # Соединяем: если в product_locations есть адрес для doc_id + product, заменяем 'НЕ НАЗНАЧЕНО'
             inventory_df = inventory_df.merge(
                 loc_df, 
                 left_on=['ID Документа', 'Название товара'], 
                 right_on=['doc_id', 'product'], 
                 how='left'
             )
-            
-            # Если адрес найден в БД, записываем его в колонку 'Адрес'
             if 'address' in inventory_df.columns:
                 inventory_df['Адрес'] = inventory_df['address'].fillna(inventory_df['Адрес'])
                 inventory_df.drop(columns=['doc_id', 'product', 'address'], inplace=True)
-    
-    # Проверка на пустой DataFrame
-    if inventory_df is None or (isinstance(inventory_df, pd.DataFrame) and inventory_df.empty):
-        st.info("📦 В документах (Приходы/Заказы) пока нет товаров. Сначала создайте приход в разделе 'Приемка'.")
+
+    if inventory_df is None or inventory_df.empty:
+        st.info("📦 В документах пока нет товаров.")
     else:
-        # Панель аналитики
+        # --- ПАНЕЛЬ АНАЛИТИКИ ---
         c1, c2, c3 = st.columns(3)
-        
         total_in = inventory_df[inventory_df['Тип'] == "📦 ПРИХОД"]['Количество'].sum() if 'Количество' in inventory_df.columns else 0
         unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО']) if 'Адрес' in inventory_df.columns else 0
         
@@ -1871,12 +1865,11 @@ elif selected == "База Данных":
         c2.metric("Требуют размещения", unassigned, delta=f"{unassigned} поз.", delta_color="inverse")
         c3.metric("Уникальных строк", len(inventory_df))
 
-        # Настройка таблицы Ag-Grid
+        # --- ТАБЛИЦА AG-GRID ---
         gb = GridOptionsBuilder.from_dataframe(inventory_df)
         gb.configure_default_column(resizable=True, filterable=True, sortable=True, floatingFilter=True)
         gb.configure_selection(selection_mode="single", use_checkbox=True)
         
-        # Стилизация ячеек (Адрес)
         cellsytle_jscode = JsCode("""
         function(params) {
             if (params.value === 'НЕ НАЗНАЧЕНО') {
@@ -1890,7 +1883,6 @@ elif selected == "База Данных":
         """)
         gb.configure_column("Адрес", cellStyle=cellsytle_jscode, pinned='left', width=180)
         
-        # Отображение таблицы
         grid_res = AgGrid(
             inventory_df,
             gridOptions=gb.build(),
@@ -1901,21 +1893,22 @@ elif selected == "База Данных":
             key="global_inventory_grid"
         )
 
-        # Обработка выбора строки
         sel_row = grid_res.get('selected_rows')
         
         if sel_row is not None and len(sel_row) > 0:
             item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
             
-            # --- ПОДГОТОВКА ДАННЫХ ДЛЯ ВЫБОРА (РЕШАЕМ NameError) ---
+            # Подготовка данных
             doc_id = str(item.get('ID Документа', item.get('id')))
             item_name = item.get('Название товара')
             
-            # Определяем список складов заранее
-            from config_topology import WAREHOUSE_MAP
+            # --- ИМПОРТЫ ИЗ ТВОИХ ФАЙЛОВ ---
+            from constants import WAREHOUSE_MAP
+            from config_topology import get_warehouse_figure, get_actual_cells
+            
             warehouse_list = list(WAREHOUSE_MAP.keys())
             
-            # Проверяем БД на наличие уже сохраненного места
+            # Проверка текущего места в БД
             try:
                 db_data = supabase.table("product_locations").select("*").eq("doc_id", doc_id).eq("product", item_name).execute()
                 if db_data.data:
@@ -1928,26 +1921,6 @@ elif selected == "База Данных":
                 current_addr = "НЕ НАЗНАЧЕНО"
                 saved_zone = warehouse_list[0]
 
-            # Считаем индекс склада для селектбокса
-            try:
-                wh_index = warehouse_list.index(saved_zone)
-            except:
-                wh_index = 0
-
-            st.divider()
-            
-            # Метрики
-            col1, col2, col3, col4 = st.columns(4)
-            with col1: st.metric("Количество", f"{item.get('Количество', 0)} шт")
-            with col2: st.metric("Тип", item.get('Тип', 'Н/Д'))
-            with col3: st.metric("Контрагент", str(item.get('Контрагент', 'Н/Д'))[:15])
-            with col4:
-                try:
-                    date_str = str(item.get('Дата', 'Н/Д'))
-                    formatted_time = datetime.fromisoformat(date_str.replace('Z', '+00:00')).strftime("%d.%m.%Y %H:%M:%S") if 'T' in date_str else date_str[:10]
-                except: formatted_time = date_str[:10]
-                st.metric("Дата и время", formatted_time)
-            
             st.divider()
             
             col_info, col_location = st.columns([1, 1.2])
@@ -1962,66 +1935,41 @@ elif selected == "База Данных":
                 </div>
                 """, unsafe_allow_html=True)
                 
-                st.info("💡 Если адрес уже назначен, вы увидите его на карте ниже. Вы можете изменить его, выбрав новую ячейку.")
-            
+                # Метрики внутри инфо-блока
+                st.write("")
+                m1, m2 = st.columns(2)
+                m1.metric("Количество", f"{item.get('Количество', 0)} шт")
+                m2.metric("Тип", item.get('Тип', 'Н/Д'))
+                
+                st.info("💡 Выберите склад и ячейку справа. Карта Plotly обновится автоматически.")
+
             with col_location:
-                st.markdown("""
-                <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #2ecc71;">
-                    <b>🏪 Управление локацией:</b>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown("""<div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #2ecc71;"><b>🏪 Управление локацией:</b></div>""", unsafe_allow_html=True)
 
-                # 1. Выбор склада
-                wh_id = st.selectbox(
-                    "🏪 Выберите склад:",
-                    warehouse_list,
-                    index=wh_index,
-                    key=f"wh_sel_{doc_id}"
-                )
+                # Выбор склада
+                wh_id = st.selectbox("🏪 Выберите склад:", warehouse_list, index=warehouse_list.index(saved_zone) if saved_zone in warehouse_list else 0, key=f"wh_db_{doc_id}")
 
-                # Используем новую функцию из топологии
-                try:
-                    from config_topology import get_actual_cells, get_warehouse_figure
-                    all_cells = get_actual_cells(wh_id)
-                except Exception as e:
-                    st.error(f"Ошибка импорта: {e}")
-                    all_cells = []
+                # Получение ячеек через твою функцию
+                all_cells = get_actual_cells(wh_id)
+                if not all_cells: all_cells = [current_addr] if current_addr != "НЕ НАЗНАЧЕНО" else ["Список пуст"]
 
-                if not all_cells:
-                    all_cells = [current_addr] if current_addr != "НЕ НАЗНАЧЕНО" else ["Список пуст"]
+                # Выбор ячейки
+                selected_cell = st.selectbox("📍 Выберите ячейку:", options=all_cells, index=all_cells.index(current_addr) if current_addr in all_cells else 0, key=f"cell_db_{doc_id}")
 
-                # 2. Синхронизация индекса
-                try:
-                    c_idx = all_cells.index(current_addr) if current_addr in all_cells else 0
-                except:
-                    c_idx = 0
-
-                selected_cell = st.selectbox(
-                    "📍 Выберите ячейку:",
-                    options=all_cells,
-                    index=c_idx,
-                    key=f"cell_sel_{doc_id}"
-                )
-
-                # 3. Отрисовка
+                # --- ТВОЯ ВИЗУАЛИЗАЦИЯ PLOTLY ---
                 try:
                     fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
-                    fig.update_layout(margin=dict(l=0, r=0, b=0, t=30))
-                    st.plotly_chart(fig, use_container_width=True, height=450)
+                    fig.update_layout(margin=dict(l=0, r=0, b=0, t=30), height=400)
+                    st.plotly_chart(fig, use_container_width=True)
                 except Exception as e:
-                    st.warning("Ожидание отрисовки карты...")
+                    st.warning(f"Карта Plotly временно недоступна: {e}")
 
-                # ЛОГИКА КНОПКИ: Сохранить или Изменить
-                if current_addr == "НЕ НАЗНАЧЕНО":
-                    btn_label = "💾 НАЗНАЧИТЬ МЕСТО"
-                else:
-                    btn_label = "🔄 ИЗМЕНИТЬ ПОЗИЦИЮ"
-
-                if st.button(btn_label, use_container_width=True, type="primary", key=f"btn_{doc_id}_{item_name}"):
+                # Кнопка сохранения
+                btn_label = "💾 НАЗНАЧИТЬ МЕСТО" if current_addr == "НЕ НАЗНАЧЕНО" else "🔄 ИЗМЕНИТЬ ПОЗИЦИЮ"
+                
+                if st.button(btn_label, use_container_width=True, type="primary", key=f"save_db_{doc_id}"):
                     try:
                         from datetime import datetime
-                        
-                        # Принудительно приводим всё к строкам
                         payload = {
                             "doc_id": str(doc_id),
                             "product": str(item_name),
@@ -2029,20 +1977,14 @@ elif selected == "База Данных":
                             "zone": str(wh_id),
                             "last_updated": datetime.now().isoformat()
                         }
-                        
-                        supabase.table("product_locations").upsert(
-                            payload, 
-                            on_conflict="doc_id,product" 
-                        ).execute()
-                        
+                        supabase.table("product_locations").upsert(payload, on_conflict="doc_id,product").execute()
                         st.cache_data.clear()
-                        st.success(f"✅ Позиция обновлена: {selected_cell}")
+                        st.success(f"✅ Успешно: {selected_cell}")
                         st.balloons()
                         time.sleep(1)
                         st.rerun()
-                        
                     except Exception as e:
-                        st.error(f"❌ Ошибка при сохранении: {e}")
+                        st.error(f"Ошибка сохранения: {e}")
                         
 elif selected == "Карта": show_map()
 elif selected == "Личный кабинет": show_profile()
@@ -2252,6 +2194,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
