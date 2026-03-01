@@ -632,25 +632,6 @@ def render_aggrid_table(table_key, title):
     Универсальный компонент для отображения данных из Supabase с использованием AgGrid.
     Исправлена ошибка передачи аргумента table_key в функции создания.
     """
-    
-    # --- 1. ПРЯМОЕ НАЗНАЧЕНИЕ ПУТЕЙ (ИМПОРТЫ) ---
-    try:
-        # Из config.py (Редактирование, Просмотр, Печать)
-        from config import (
-            edit_order_modal, edit_arrival_modal, edit_extra_modal, edit_defect_modal,
-            show_order_details_modal, show_arrival_details_modal, show_defect_details_modal, show_extra_details_modal,
-            show_print_modal, show_arrival_print_modal, show_defect_print_modal, show_extra_print_modal
-        )
-        # Из specific_doc.py (Создание и спец. редактирование ТС/Водителей)
-        from specific_doc import (
-            create_modal, create_extras_modal, create_arrival_modal, create_defect_modal, 
-            create_driver_modal, create_vehicle_modal,
-            edit_vehicle_modal, edit_driver_modal
-        )
-    except ImportError as e:
-        st.error(f"❌ Ошибка импорта: {e}. Проверьте файлы config.py и specific_doc.py")
-        return
-
     # --- 2. ПРОВЕРКА И ЗАГРУЗКА ДАННЫХ ---
     if table_key not in st.session_state or st.session_state[table_key] is None:
         with st.spinner(f"📡 Синхронизация {title}..."):
@@ -2419,6 +2400,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
