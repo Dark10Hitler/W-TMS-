@@ -276,120 +276,80 @@ def edit_order_modal(entry_id, table_key="orders"):
         updated_items = st.data_editor(items_df, width="stretch", num_rows="dynamic", key=f"ed_it_{entry_id}")
         st.session_state[f"temp_items_{entry_id}"] = updated_items
 
-    # --- ВКЛАДКА 2: КАРТА (Геолокация) ---
-    import requests  # Добавь в начало файла, если нет
+    import math
+    import requests
 
 # --- ВКЛАДКА 2: КАРТА (Геолокация) ---
     with tab_map:
-        st.subheader("📍 Маршрут доставки")
+        st.subheader("📍 Быстрая настройка адреса")
     
-    # Твоя база из конфига
+    # Твоя база
         BASE_LAT, BASE_LON = 47.776654, 27.913643
+
+    # Функция мгновенного расчета (Гаверсинус) - работает без интернета и за 0.001 сек
+        def fast_dist(lat1, lon1, lat2, lon2):
+            R = 6371.0
+            phi1, phi2 = math.radians(lat1), math.radians(lat2)
+            dphi = math.radians(lat2 - lat1)
+            dlambda = math.radians(lon2 - lon1)
+            a = math.sin(dphi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2)**2
+            return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
         col_m1, col_m2 = st.columns([2, 1])
     
-    # Переменные для хранения данных маршрута
-        route_distance_km = 0.0
-        route_coords = []
-
-    # Функция для получения реального дорожного маршрута через OSRM
-        def get_route(start_lat, start_lon, end_lat, end_lon):
-            try:
-                url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full&geometries=geojson"
-                r = requests.get(url, timeout=5)
-                res = r.json()
-                if res['code'] == 'Ok':
-                # Дистанция в метрах -> в километры
-                    distance = res['routes'][0]['distance'] / 1000
-                # Геометрия линии маршрута
-                    geometry = res['routes'][0]['geometry']['coordinates']
-                # OSRM возвращает [Lon, Lat], для folium нужно [Lat, Lon]
-                    reversed_geometry = [[coord[1], coord[0]] for coord in geometry]
-                    return distance, reversed_geometry
-            except:
-                pass
-            return None, None
-
         with col_m2:
-            manual_coords = st.text_input(
-                "Координаты точки (Lat, Lon)", 
-                value=row['Координаты'], 
-                placeholder="Напр: 47.7812, 27.9250", 
-                key=f"coord_inp_{entry_id}"
-            )
-            row['Координаты'] = manual_coords
+        # Поле ввода (сразу показывает текущие координаты)
+            manual_coords = st.text_input("Lat, Lon", value=row['Координаты'], key=f"inp_{entry_id}")
         
-        # Если координаты введены, считаем дорожный маршрут
-            if row['Координаты'] and ',' in row['Координаты']:
+            if manual_coords and ',' in manual_coords:
                 try:
-                    parts = row['Координаты'].split(',')
-                    target_lat, target_lon = float(parts[0].strip()), float(parts[1].strip())
+                    p = manual_coords.split(',')
+                    t_lat, t_lon = float(p[0]), float(p[1])
                 
-                # Запрос к навигатору
-                    dist, path = get_route(BASE_LAT, BASE_LON, target_lat, target_lon)
+                # МГНОВЕННЫЙ КМ (Прямой)
+                    direct_km = fast_dist(BASE_LAT, BASE_LON, t_lat, t_lon)
+                # Коэффициент дорожности (обычно +20-30% к прямой линии для примерного понимания)
+                    est_road_km = direct_km * 1.25 
                 
-                    if dist:
-                        route_distance_km = dist
-                        route_coords = path
-                        st.metric("Дистанция по дорогам", f"{route_distance_km:.2f} км")
-                        st.success(f"Маршрут построен успешно")
-                    else:
-                        st.warning("⚠️ Не удалось проложить путь по дорогам. Проверьте координаты.")
-                except Exception as e:
-                    st.error(f"Ошибка данных: {e}")
-
-            st.info("Кликните на карту, чтобы выбрать точку назначения.")
+                    st.metric("Примерное расстояние", f"~{est_road_km:.2f} км", help="Расчет с учетом дорожного коэффициента 1.25")
+                    st.caption(f"📏 По прямой: {direct_km:.2f} км")
+                except: pass
+        
+            st.warning("Кликни на карту и нажми кнопку 'Применить' под ней.")
 
         with col_m1:
-        # Центрируем карту
-            view_lat, view_lon = BASE_LAT, BASE_LON
+        # Настройка фокуса карты
+            curr_lat, curr_lon = BASE_LAT, BASE_LON
             if row['Координаты'] and ',' in row['Координаты']:
                 try:
                     parts = row['Координаты'].split(',')
-                    view_lat, view_lon = float(parts[0].strip()), float(parts[1].strip())
+                    curr_lat, curr_lon = float(parts[0]), float(parts[1])
                 except: pass
 
-            m = folium.Map(location=[view_lat, view_lon], zoom_start=13)
+            m = folium.Map(location=[curr_lat, curr_lon], zoom_start=13, control_scale=True)
             folium.LatLngPopup().add_to(m)
         
-        # Маркер БАЗЫ (Склад)
-            folium.Marker(
-                [BASE_LAT, BASE_LON], 
-                popup="БАЗА (СКЛАД)", 
-                icon=folium.Icon(color='blue', icon='home')
-            ).add_to(m)
+        # Маркер Базы
+            folium.Marker([BASE_LAT, BASE_LON], icon=folium.Icon(color='blue', icon='home')).add_to(m)
         
-        # Если маршрут найден — рисуем его красивой живой линией
-            if route_coords:
-            # Маркер Точки Доставки
-                folium.Marker(
-                    [route_coords[-1][0], route_coords[-1][1]], 
-                    popup=f"Доставка: {route_distance_km:.2f} км", 
-                    icon=folium.Icon(color='red', icon='truck')
-                ).add_to(m)
-            
-            # Рисуем сам путь по дорогам
-                folium.PolyLine(
-                    locations=route_coords,
-                    color="#2E86C1",
-                    weight=5,
-                    opacity=0.8,
-                    tooltip=f"Маршрут: {route_distance_km:.2f} км"
-                ).add_to(m)
-        
-        # Вывод карты
-            map_data = st_folium(m, height=450, width=550, key=f"map_{entry_id}")
-        
-        # Обработка клика
+        # Маркер текущей цели
+            if row['Координаты'] and ',' in row['Координаты']:
+                folium.Marker([curr_lat, curr_lon], icon=folium.Icon(color='red')).add_to(m)
+            # Рисуем прямую линию для скорости (не ждем маршрут)
+                folium.PolyLine([[BASE_LAT, BASE_LON], [curr_lat, curr_lon]], color="red", weight=2, dash_array='5').add_to(m)
+
+        # Вывод Folium (быстрый режим)
+            map_data = st_folium(m, height=400, width=500, key=f"fast_map_{entry_id}")
+
+        # ОБРАБОТКА КЛИКА (Супер-быстро)
             if map_data.get("last_clicked"):
                 click_lat = map_data['last_clicked']['lat']
                 click_lng = map_data['last_clicked']['lng']
             
-            # Считаем примерный км для кнопки через тот же OSRM
-                d_click, _ = get_route(BASE_LAT, BASE_LON, click_lat, click_lng)
-                d_label = f"{d_click:.2f} км" if d_click else "выбрано"
+            # Считаем км для кнопки мгновенно
+                quick_km = fast_dist(BASE_LAT, BASE_LON, click_lat, click_lng) * 1.25
             
-                if st.button(f"📍 Выбрать эту точку ({d_label})", key=f"btn_set_coord_{entry_id}"):
+                if st.button(f"✅ ПРИМЕНИТЬ: {quick_km:.2f} км", key=f"save_loc_{entry_id}", use_container_width=True, type="primary"):
                     row['Координаты'] = f"{click_lat:.6f}, {click_lng:.6f}"
                     st.rerun()
 
@@ -1924,6 +1884,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
