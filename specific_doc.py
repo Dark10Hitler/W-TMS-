@@ -624,13 +624,16 @@ def create_extras_modal(*args, **kwargs):
         st.rerun()
         
 @st.dialog("⚠️ Регистрация Брака / Повреждений", width="large")
-def create_defect_modal(*args, **kwargs):
+def create_defect_modal(table_key="defects", *args, **kwargs):
+    """
+    Создание нового акта о дефекте с загрузкой фото.
+    table_key: ключ таблицы для работы с сессией
+    """
     from database import supabase
     import pandas as pd
     from datetime import datetime
     import time
     import uuid
-    import json
 
     with st.form("defect_form_final"):
         st.subheader("🚨 Новый акт о дефекте")
@@ -647,39 +650,47 @@ def create_defect_modal(*args, **kwargs):
         input_desc = st.text_area("Детальное описание повреждений")
         uploaded_photo = st.file_uploader("📸 Прикрепить фото", type=['png', 'jpg', 'jpeg'])
         
-        submitted = st.form_submit_button("🚀 ЗАРЕГИС��РИРОВАТЬ АКТ", use_container_width=True)
+        submitted = st.form_submit_button("🚀 ЗАРЕГИСТРИРОВАТЬ АКТ", use_container_width=True)
 
     if submitted:
+        # === ВАЛИДАЦИЯ ===
         if not reporter or not item_name or not uploaded_photo:
             st.error("❌ Обязательны: ФИО, Товар и Фото!")
             return
 
-        with st.spinner("Сохранение акта и фото..."):
+        with st.spinner("💾 Сохранение акта и фото..."):
             try:
+                # === 1. ГЕНЕРАЦИЯ ID ===
                 defect_id = f"DEF-{str(uuid.uuid4())[:6].upper()}"
+                now_iso = datetime.now().isoformat()
                 
-                # === ЗАГРУЗКА ФОТО В BUCKET defects_photos ===
+                # === 2. ЗАГРУЗКА ФОТО В BUCKET defects_photos ===
                 final_photo_url = None
+                file_name = None
+                
                 try:
                     file_ext = uploaded_photo.name.split('.')[-1].lower()
+                    if file_ext not in ['png', 'jpg', 'jpeg']:
+                        file_ext = 'jpg'
+                    
                     file_name = f"{defect_id}_{int(time.time())}.{file_ext}"
                     
+                    # Загружаем в bucket
                     supabase.storage.from_("defects_photos").upload(
                         file_name, 
                         uploaded_photo.getvalue()
                     )
                     
+                    # Получаем публичную ссылку
                     final_photo_url = supabase.storage.from_("defects_photos").get_public_url(file_name)
                     st.success(f"✅ Фото загружено: {file_name}")
                     
                 except Exception as photo_error:
-                    st.warning(f"⚠️ Фото не загружено: {photo_error}")
-                    final_photo_url = ""
+                    st.warning(f"⚠️ Фото не загружено, но процесс продолжается: {photo_error}")
+                    final_photo_url = None
                 
-                # === ПОДГОТОВКА ДАННЫХ ===
-                now_iso = datetime.now().isoformat()
-                
-                # 🔥 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: items_data как ОБЪЕКТ, а не строка!
+                # === 3. ПОДГОТОВКА ДАННЫХ ===
+                # ВАЖНО: items_data передаём как DICT (Supabase сам конвертирует в jsonb)
                 items_data = {
                     "items": [
                         {
@@ -690,7 +701,7 @@ def create_defect_modal(*args, **kwargs):
                     ]
                 }
                 
-                # === PAYLOAD ДЛЯ ТАБЛИЦЫ defects ===
+                # === 4. PAYLOAD ДЛЯ ТАБЛИЦЫ defects ===
                 supabase_payload = {
                     "id": defect_id,
                     "created_at": now_iso,
@@ -707,55 +718,60 @@ def create_defect_modal(*args, **kwargs):
                     "reported_by": reporter,
                     "decision": "На проверку",
                     "status": "ОБНАРУЖЕНО",
-                    "photo_url": final_photo_url if final_photo_url else None,
+                    "photo_url": final_photo_url,  # Может быть None
                     "culprit": "Не установлен",
-                    "items_data": items_data  # ✅ Передаём как dict, не как JSON string!
+                    "items_data": items_data  # ✅ Dict, не string!
                 }
                 
-                # === ВСТАВКА В TABLE defects ===
+                # === 5. ВСТАВКА В ТАБЛИЦУ defects ===
                 response = supabase.table("defects").insert(supabase_payload).execute()
                 
-                st.success(f"✅ Акт {defect_id} успешно создан!")
+                st.success(f"✅ Акт **{defect_id}** успешно создан и сохранён!")
                 st.balloons()
                 
-                # Обновляем локальное состояние
-                if "defects_local" not in st.session_state:
-                    st.session_state["defects_local"] = pd.DataFrame()
+                # === 6. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ ===
+                # Загружаем обновлённые данные
+                if table_key not in st.session_state:
+                    st.session_state[table_key] = pd.DataFrame()
                 
-                new_row = pd.DataFrame([{
-                    "id": defect_id,
-                    "Товар": item_name,
-                    "Кол-во": defect_qty,
-                    "Тип дефекта": d_type,
-                    "Выявил": reporter,
-                    "Статус": "ОБНАРУЖЕНО",
-                    "Фото": "✅ Загружено" if final_photo_url else "❌ Нет",
-                    "Создано": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }])
+                # Перезагружаем данные из Supabase
+                from utils.database import load_data_from_supabase  # Убедись что функция существует
+                st.session_state[table_key] = load_data_from_supabase(table_key)
                 
-                st.session_state["defects_local"] = pd.concat(
-                    [st.session_state["defects_local"], new_row],
-                    ignore_index=True
-                )
-                
-                time.sleep(1.5)
+                time.sleep(1)
                 st.rerun()
                 
             except Exception as db_error:
                 error_msg = str(db_error)
-                st.error(f"🚨 Ошибка БД: {error_msg}")
+                st.error(f"🚨 Ошибка при сохранении: {error_msg}")
                 
-                # Отладка
+                # === ДИАГНОСТИКА ===
                 if "main_registry" in error_msg:
-                    st.error("❌ Всё ещё редирект на VIEW! Проверь триггеры:")
-                    st.code("""
+                    st.error("❌ **ОШИБКА АРХИТЕКТУРЫ:** Запрос перенаправляется на VIEW `main_registry`!")
+                    with st.expander("🔧 Как исправить"):
+                        st.code("""
+# Выполни в Supabase SQL Editor:
 SELECT trigger_name, action_statement
 FROM information_schema.triggers
 WHERE event_object_table = 'defects';
-                    """)
-                    
-                if "items_data" in error_msg or "jsonb" in error_msg:
-                    st.error("❌ Ошибка типа jsonb! Передавай как dict, не как JSON string")
+
+-- Если есть триггеры, удали их:
+DROP TRIGGER IF EXISTS tr_defects_insert ON defects;
+                        """, language="sql")
+                
+                elif "permission" in error_msg.lower():
+                    st.error("❌ **ОШИБКА ПРАВ:** Нет доступа на insert в таблицу defects")
+                    with st.expander("🔧 Как исправить"):
+                        st.code("""
+ALTER TABLE defects DISABLE ROW LEVEL SECURITY;
+-- или создай RLS политику:
+CREATE POLICY "Enable insert for authenticated" ON defects
+    FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+                        """, language="sql")
+                
+                elif "items_data" in error_msg or "jsonb" in error_msg:
+                    st.error("❌ **ОШИБКА ТИПА:** Проблема с полем `items_data` (jsonb)")
+                    st.info("💡 Убедись что передаёшь dict, а не JSON string!")
             
 @st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
@@ -1036,6 +1052,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
