@@ -2178,24 +2178,48 @@ elif selected == "Настройки":
                 st.rerun()
                 
         with c3:
-            st.markdown("### 🔴 Опасная зона")
-            st.caption("Полная очистка базы данных. **Действие необратимо!**")
-            if st.button("🧨 ОЧИСТИТЬ ВСЕ", type="secondary"):
-                st.session_state.confirm_delete_all = True
+    st.markdown("### 🔴 Опасная зона")
+    st.caption("Полная очистка базы данных. **Действие необратимо!**")
+    
+    # Кнопка первичного вызова подтверждения
+    if st.button("🧨 ОЧИСТИТЬ ВСЕ", type="secondary"):
+        st.session_state.confirm_delete_all = True
 
-            if st.session_state.get('confirm_delete_all'):
-                # Всплывающее окно-предупреждение
-                st.warning("### ❗ ВЫ УВЕРЕНЫ?")
-                st.write("Все записи о товарах и заказах будут удалены.")
-                c_yes, c_no = st.columns(2)
-                if c_yes.button("ДА, УДАЛИТЬ", type="primary"):
-                    supabase.table("main").delete().neq("id", 0).execute()
-                    st.session_state.confirm_delete_all = False
-                    st.success("База данных пуста.")
-                    st.rerun()
-                if c_no.button("ОТМЕНА"):
-                    st.session_state.confirm_delete_all = False
-                    st.rerun()
+    if st.session_state.get('confirm_delete_all'):
+        # Блок подтверждения
+        st.warning("### ❗ ВЫ УВЕРЕНЫ?")
+        st.write("Все записи о товарах и заказах будут удалены из таблицы `main`.")
+        
+        c_yes, c_no = st.columns(2)
+        
+        if c_yes.button("ДА, УДАЛИТЬ", type="primary", use_container_width=True):
+            try:
+                # 1. Получаем список всех ID, чтобы обойти блокировку "Safe Delete"
+                response = supabase.table("main").select("id").execute()
+                
+                if response.data:
+                    all_ids = [row['id'] for row in response.data]
+                    
+                    # 2. Удаляем записи пачками по 500 штук (чтобы не было таймаута API)
+                    chunk_size = 500
+                    for i in range(0, len(all_ids), chunk_size):
+                        chunk = all_ids[i:i + chunk_size]
+                        supabase.table("main").delete().in_("id", chunk).execute()
+                    
+                    st.success(f"✅ База данных пуста. Удалено {len(all_ids)} записей.")
+                else:
+                    st.info("База данных уже пуста.")
+                
+                # Сбрасываем флаг подтверждения и обновляем приложение
+                st.session_state.confirm_delete_all = False
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ Ошибка при удалении: {str(e)}")
+        
+        if c_no.button("ОТМЕНА", use_container_width=True):
+            st.session_state.confirm_delete_all = False
+            st.rerun()
 
 # --- 1. УМНАЯ ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
 TABLES_TO_LOAD = {
@@ -2267,6 +2291,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
