@@ -626,7 +626,7 @@ def create_extras_modal(*args, **kwargs):
 @st.dialog("⚠️ Регистрация Брака / Повреждений", width="large")
 def create_defect_modal(table_key="defects", *args, **kwargs):
     """
-    Создание нового акта о дефекте с загрузкой фото.
+    Создание нового акта о дефекте с загрузкой фото и выбором товара из main_registry.
     table_key: ключ таблицы для работы с сессией
     """
     from database import supabase
@@ -635,19 +635,92 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
     import time
     import uuid
 
+    # === ЗАГРУЗКА ВСЕХ ТОВАРОВ ИЗ main_registry ===
+    @st.cache_data(ttl=300)  # Кэшируем на 5 минут
+    def load_items_from_main_registry():
+        try:
+            response = supabase.table("main_registry").select("id, item_name, doc_type, status, party, total_sum, description, items_data").execute()
+            df = pd.DataFrame(response.data)
+            if df.empty:
+                return pd.DataFrame()
+            # Создаём колонку для выбора (id - name)
+            df['display_name'] = df['id'] + " | " + df['item_name'].fillna("Без названия")
+            return df
+        except Exception as e:
+            st.warning(f"⚠️ Ошибка загрузки товаров: {e}")
+            return pd.DataFrame()
+
+    # Загружаем товары
+    items_df = load_items_from_main_registry()
+
     with st.form("defect_form_final"):
         st.subheader("🚨 Новый акт о дефекте")
         
+        # === ВЫБОР ТОВАРА ИЗ main_registry ===
+        st.markdown("### 📦 Выбери товар из документов")
+        
+        if items_df.empty:
+            st.warning("⚠️ Нет товаров в системе. Сначала создай документы (Заявку, Приход и т.д.)")
+            return
+        
+        col_select, col_refresh = st.columns([4, 1])
+        
+        with col_select:
+            selected_item_display = st.selectbox(
+                "Товар для регистрации брака",
+                options=items_df['display_name'].values,
+                key="item_selector"
+            )
+        
+        with col_refresh:
+            if st.button("🔄", help="Перезагрузить товары", key="refresh_items"):
+                st.cache_data.clear()
+                st.rerun()
+        
+        # Получаем выбранный товар
+        selected_item = items_df[items_df['display_name'] == selected_item_display].iloc[0].to_dict()
+        
+        st.divider()
+        
+        # === ОТОБРАЖЕНИЕ ИНФОРМАЦИИ О ТОВАРЕ ===
+        with st.expander("📋 Информация о выбранном товаре", expanded=True):
+            item_col1, item_col2, item_col3 = st.columns(3)
+            
+            with item_col1:
+                st.metric("ID Документа", selected_item.get('id', 'N/A'))
+                st.metric("Тип Документа", selected_item.get('doc_type', 'N/A'))
+            
+            with item_col2:
+                st.metric("Статус", selected_item.get('status', 'N/A'))
+                st.metric("Сумма", f"${selected_item.get('total_sum', 0):.2f}")
+            
+            with item_col3:
+                st.metric("Товар", selected_item.get('item_name', 'N/A'))
+                st.metric("Партия", selected_item.get('party', 'N/A'))
+            
+            if selected_item.get('description'):
+                st.write(f"**Описание:** {selected_item.get('description')}")
+        
+        st.divider()
+        
+        # === ДЕТАЛИ БРАКА ===
+        st.markdown("### ⚠️ Детали брака/повреждения")
+        
         col1, col2 = st.columns(2)
         reporter = col1.text_input("Кто выявил (ФИО)", placeholder="Иванов И.И.")
-        item_name = col2.text_input("Название товара / Артикул")
+        # Автозаполнение названия товара из выбора
+        item_name = col2.text_input(
+            "Название товара / Артикул",
+            value=selected_item.get('item_name', ''),
+            placeholder="Автозаполнено"
+        )
         
         col3, col4, col5 = st.columns(3)
-        defect_qty = col3.number_input("Кол-во (ед)", min_value=1, value=1)
-        d_type = col4.selectbox("Тип дефекта", ["Бой", "Порча", "Брак производителя", "Некомплект"])
+        defect_qty = col3.number_input("Кол-во дефектных (ед)", min_value=1, value=1)
+        d_type = col4.selectbox("Тип дефекта", ["Бой", "Порча", "Брак производителя", "Некомплект", "Другое"])
         addr = col5.text_input("Зона/Ячейка", value="ZONE-BRAK")
         
-        input_desc = st.text_area("Детальное описание повреждений")
+        input_desc = st.text_area("Детальное описание повреждений", height=100)
         uploaded_photo = st.file_uploader("📸 Прикрепить фото", type=['png', 'jpg', 'jpeg'])
         
         submitted = st.form_submit_button("🚀 ЗАРЕГИСТРИРОВАТЬ АКТ", use_container_width=True)
@@ -690,13 +763,17 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
                     final_photo_url = None
                 
                 # === 3. ПОДГОТОВКА ДАННЫХ ===
-                # ВАЖНО: items_data передаём как DICT (Supabase сам конвертирует в jsonb)
+                # Сохраняем полную информацию о товаре
                 items_data = {
                     "items": [
                         {
                             "item_name": item_name,
                             "quantity": int(defect_qty),
-                            "defect_type": d_type
+                            "defect_type": d_type,
+                            "original_doc_id": selected_item.get('id'),  # ← ЗАПОМИНАЕМ ИСТОЧНИК
+                            "original_doc_type": selected_item.get('doc_type'),
+                            "original_status": selected_item.get('status'),
+                            "original_party": selected_item.get('party')
                         }
                     ]
                 }
@@ -718,24 +795,24 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
                     "reported_by": reporter,
                     "decision": "На проверку",
                     "status": "ОБНАРУЖЕНО",
-                    "photo_url": final_photo_url,  # Может быть None
+                    "photo_url": final_photo_url,
                     "culprit": "Не установлен",
+                    "linked_doc_id": selected_item.get('id'),  # ← СВЯЗЬ С ИСХОДНЫМ ДОКУМЕНТОМ
                     "items_data": items_data  # ✅ Dict, не string!
                 }
                 
                 # === 5. ВСТАВКА В ТАБЛИЦУ defects ===
                 response = supabase.table("defects").insert(supabase_payload).execute()
                 
-                st.success(f"✅ Акт **{defect_id}** успешно создан и сохранён!")
+                st.success(f"✅ Акт **{defect_id}** успешно создан и привязан к **{selected_item.get('id')}**!")
                 st.balloons()
                 
                 # === 6. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ ===
-                # Загружаем обновлённые данные
                 if table_key not in st.session_state:
                     st.session_state[table_key] = pd.DataFrame()
                 
                 # Перезагружаем данные из Supabase
-                from utils.database import load_data_from_supabase  # Убедись что функция существует
+                from utils.database import load_data_from_supabase
                 st.session_state[table_key] = load_data_from_supabase(table_key)
                 
                 time.sleep(1)
@@ -750,24 +827,15 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
                     st.error("❌ **ОШИБКА АРХИТЕКТУРЫ:** Запрос перенаправляется на VIEW `main_registry`!")
                     with st.expander("🔧 Как исправить"):
                         st.code("""
-# Выполни в Supabase SQL Editor:
 SELECT trigger_name, action_statement
 FROM information_schema.triggers
 WHERE event_object_table = 'defects';
 
--- Если есть триггеры, удали их:
 DROP TRIGGER IF EXISTS tr_defects_insert ON defects;
                         """, language="sql")
                 
                 elif "permission" in error_msg.lower():
                     st.error("❌ **ОШИБКА ПРАВ:** Нет доступа на insert в таблицу defects")
-                    with st.expander("🔧 Как исправить"):
-                        st.code("""
-ALTER TABLE defects DISABLE ROW LEVEL SECURITY;
--- или создай RLS политику:
-CREATE POLICY "Enable insert for authenticated" ON defects
-    FOR INSERT WITH CHECK (auth.role() = 'authenticated');
-                        """, language="sql")
                 
                 elif "items_data" in error_msg or "jsonb" in error_msg:
                     st.error("❌ **ОШИБКА ТИПА:** Проблема с полем `items_data` (jsonb)")
@@ -1052,6 +1120,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
