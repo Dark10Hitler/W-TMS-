@@ -1548,7 +1548,7 @@ elif selected == "ТС":
 elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence & Tech Audit")
     
-    # --- 1. ФУНКЦИЯ СИНХРОНИЗАЦИИ ---
+    # --- 1. ФУНКЦИЯ СИНХРОНИЗАЦИИ (Автоматический период: последние 24 часа) ---
     def get_traccar_reports_sync(v_id):
         # Автоматический расчет интервала: от (сейчас - 24ч) до (сейчас)
         now = datetime.now()
@@ -1580,20 +1580,28 @@ elif selected == "Аналитика":
         except Exception as e:
             return None, f"Ошибка соединения: {str(e)}"
 
-    # --- 2. ПАНЕЛЬ УПРАВЛЕНИЯ ---
-    devices_dict, _ = get_detailed_traccar_data()
-    
-    # Оставляем только выбор ТС
-    v_name = st.selectbox("🎯 Выберите ТС для мгновенного аудита", 
-                          options=[d['name'] for d in devices_dict.values()])
-    v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
+    # --- 2. МАТЕМАТИЧЕСКИЕ ФУНКЦИИ (Гео-калькулятор) ---
+    def calculate_haversine_distance(lat1, lon1, lat2, lon2):
+        import math
+        R = 6371.0  # Радиус Земли в километрах
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        return R * c
 
-    # Вспомогательная функция для безопасного извлечения атрибутов
     def get_attr(attr, keys, default=0):
         if not isinstance(attr, dict): return default
         for key in keys:
             if key in attr: return attr[key]
         return default
+
+    # --- 3. ПАНЕЛЬ УПРАВЛЕНИЯ ---
+    devices_dict, _ = get_detailed_traccar_data()
+    
+    v_name = st.selectbox("🎯 Выберите ТС для мгновенного аудита", 
+                          options=[d['name'] for d in devices_dict.values()])
+    v_id = next((id for id, d in devices_dict.items() if d['name'] == v_name), None)
 
     # Единая кнопка запуска полной синхронизации
     if st.button("🚀 ЗАПУСТИТЬ ПОЛНУЮ СИНХРОНИЗАЦИЮ (24ч)", type="primary", use_container_width=True):
@@ -1610,16 +1618,25 @@ elif selected == "Аналитика":
                 df_raw['dt'] = pd.to_datetime(df_raw['deviceTime'])
                 df_raw = df_raw.sort_values('dt')
 
-                # МАТЕМАТИКА АТРИБУТОВ
+                # РАСЧЕТ ПРОБЕГА ПО КООРДИНАТАМ (Точный метод)
+                coords_dist = [0.0]
+                for i in range(1, len(df_raw)):
+                    d = calculate_haversine_distance(
+                        df_raw.iloc[i-1]['latitude'], df_raw.iloc[i-1]['longitude'],
+                        df_raw.iloc[i]['latitude'], df_raw.iloc[i]['longitude']
+                    )
+                    # Фильтрация GPS выбросов (прыжок > 5км между точками игнорируем)
+                    coords_dist.append(d if d < 5.0 else 0.0)
+                
+                df_raw['step_dist_km'] = coords_dist
                 df_raw['speed_kmh'] = round(df_raw['speed'] * 1.852, 1)
-                df_raw['total_dist_km'] = df_raw['attributes'].apply(
+                
+                # Одометр только для отображения общего пробега ТС
+                df_raw['total_odo_sensor'] = df_raw['attributes'].apply(
                     lambda x: get_attr(x, ['totalDistance', 'odometer']) / 1000.0
                 )
-                df_raw['step_dist_km'] = df_raw['attributes'].apply(
-                    lambda x: get_attr(x, ['distance']) / 1000.0
-                )
-                
-                # Сохраняем результат в сессию, чтобы он не пропадал при перезагрузке
+
+                # Сохраняем результат в сессию
                 st.session_state.audit_results = {
                     'df': df_raw,
                     'v_name': v_name,
@@ -1629,25 +1646,18 @@ elif selected == "Аналитика":
                 st.success(f"✅ Синхронизация завершена. Обработано {len(df_raw)} точек телеметрии.")
                 st.rerun()
 
-    # --- 3. ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ (Вне условия кнопки) ---
+    # --- 4. ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ (ГЛУБОКИЙ АУДИТ) ---
     audit_data = st.session_state.get('audit_results')
 
     if audit_data is not None:
         df = audit_data.get('df')
-        res_v_name = audit_data.get('v_name')
 
         if df is not None and not df.empty:
-            st.header(f"🛠️ Технический аудит системы: {res_v_name}")
+            st.header(f"🛠️ Технический аудит систем: {audit_data['v_name']}")
             
-            # --- РАСЧЕТЫ ---
-            total_dist_end = df['total_dist_km'].iloc[-1] 
-            total_dist_start = df['total_dist_km'].iloc[0]
-            actual_period_km = max(0, total_dist_end - total_dist_start)
-            
-            if actual_period_km <= 0:
-                actual_period_km = df['step_dist_km'].sum()
-            
-            device_odo_current = df['total_dist_km'].iloc[-1]
+            # --- РАСЧЕТЫ ДЛЯ МЕТРИК ---
+            actual_period_km = df['step_dist_km'].sum() # СУММА ВСЕХ ШАГОВ ПО ГЕОМЕТРИИ
+            total_dist_end = df['total_odo_sensor'].iloc[-1] # ПОСЛЕДНЕЕ ЗНАЧЕНИЕ ОДОМЕТРА
 
             moving_df = df[df['speed_kmh'] > 2]
             avg_speed = moving_df['speed_kmh'].mean() if not moving_df.empty else 0
@@ -1675,12 +1685,11 @@ elif selected == "Аналитика":
             cost_mdl = fuel_total * 21.0
             extra_fuel = max(0, fuel_total - (actual_period_km / 100 * base_rate))
 
-            # --- ВИЗУАЛИЗАЦИЯ (МЕТРИКИ) ---
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("🏁 Пробег (Период)", f"{actual_period_km:.2f} км")
-            c2.metric("📟 Total Distance", f"{total_dist_end:.2f} км")
-            c3.metric("🔌 Датчик Odometer", f"{device_odo_current:.2f} км")
-            c4.metric("⏱️ Ср. Скорость", f"{avg_speed:.1f} км/ч", delta=f"Max: {max_speed}")
+            # --- ВИЗУАЛИЗАЦИЯ (МЕТРИКИ ИСПРАВЛЕННЫЕ) ---
+            c1, c2, c3 = st.columns(3)
+            c1.metric("🏁 Пробег (Период/GPS)", f"{actual_period_km:.2f} км")
+            c2.metric("📟 Total Odometer (ТС)", f"{total_dist_end:.2f} км")
+            c3.metric("⏱️ Ср. Скорость", f"{avg_speed:.1f} км/ч", delta=f"Max: {max_speed}")
 
             st.markdown("---")
             
@@ -1692,9 +1701,10 @@ elif selected == "Аналитика":
                       delta="Критично" if overspeeds_count > 10 else "Норма", delta_color="inverse")
             e4.metric("💢 Резкие маневры", hard_maneuvers)
 
+            # Инженерное заключение
             st.info(f"""
             **Инженерное заключение:**
-            * На дистанции **{actual_period_km:.2f} км** зафиксировано **{hard_maneuvers}** резких маневров и **{overspeeds_count}** превышений.
+            * На дистанции **{actual_period_km:.2f} км** (расчет по GPS) зафиксировано **{hard_maneuvers}** резких маневров и **{overspeeds_count}** превышений.
             * Это привело к работе двигателя с коэффициентом нагрузки **{load_factor:.2f}x**.
             * Фактический перерасход составил **{extra_fuel:.2f} л** топлива.
             * Ресурс моторного масла снижается на **{min(25, 0.1 * (hard_maneuvers + overspeeds_count/10)):.1f}%** быстрее стандартного цикла.
@@ -1716,7 +1726,7 @@ elif selected == "Аналитика":
 
             marker_cluster = MarkerCluster(name="Группы нарушений", control=True).add_to(m)
 
-            # Нарушения скорости
+            # Превышения скорости
             for _, row in overspeeds_df.iterrows():
                 folium.Marker(
                     location=[row['latitude'], row['longitude']],
@@ -1724,19 +1734,23 @@ elif selected == "Аналитика":
                     popup=f"Скорость: {row['speed_kmh']} км/ч",
                 ).add_to(marker_cluster)
 
-            # Резкие маневры
+            # Резкое торможение
             df['speed_delta'] = df['speed_kmh'].diff().fillna(0)
             brakes = df[df['speed_delta'] < -18]
             for _, row in brakes.iterrows():
                 folium.Marker(
                     location=[row['latitude'], row['longitude']],
                     icon=folium.Icon(color='red', icon='triangle-exclamation', prefix='fa'),
-                    popup=f"Резкое торможение: {row['speed_delta']:.1f} км/ч",
+                    popup=f"Торможение: {row['speed_delta']:.1f} км/ч",
                 ).add_to(marker_cluster)
+
+            # Старт и Финиш
+            folium.Marker(path_points[0], icon=folium.Icon(color='green', icon='play', prefix='fa'), tooltip="Старт").add_to(m)
+            folium.Marker(path_points[-1], icon=folium.Icon(color='black', icon='flag-checkered', prefix='fa'), tooltip="Финиш").add_to(m)
 
             st_folium(m, width=1300, height=600, key="audit_premium_map")
 
-            # --- АНАЛИТИКА ИЗНОСА ---
+            # --- ПРЕДИКТИВНЫЙ ИЗНОС ---
             st.divider()
             st.subheader("🔧 Предиктивный износ систем (Digital Twin)")
             t1, t2, t3 = st.columns(3)
@@ -1754,7 +1768,6 @@ elif selected == "Аналитика":
             t3.progress(safety_score / 100)
 
             # --- ГРАФИК ТЕЛЕМЕТРИИ ---
-            st.markdown("### 📈 Детализированная телеметрия скорости")
             import altair as alt
             chart = alt.Chart(df).mark_area(
                 line={'color':'#29b5e8'},
@@ -1765,28 +1778,27 @@ elif selected == "Аналитика":
                     x1=1, x2=1, y1=1, y2=0
                 )
             ).encode(
-                x=alt.X('dt:T', title='Время'),
+                x=alt.X('dt:T', title='Временная шкала'),
                 y=alt.Y('speed_kmh:Q', title='Скорость (км/ч)'),
                 tooltip=['dt', 'speed_kmh']
             ).properties(height=400).interactive()
             
             st.altair_chart(chart, use_container_width=True)
 
-            # Кнопки управления
+            # Управление данными
             st.divider()
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
                 csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 СКАЧАТЬ ОТЧЕТ В CSV", csv, f"audit_{res_v_name}.csv", "text/csv", use_container_width=True)
+                st.download_button("📥 СКАЧАТЬ ОТЧЕТ В CSV", csv, f"audit_{audit_data['v_name']}.csv", "text/csv", use_container_width=True)
             with col_btn2:
                 if st.button("🗑️ ОЧИСТИТЬ АУДИТ", type="secondary", use_container_width=True):
                     st.session_state.audit_results = None
                     st.rerun()
-
         else:
             st.warning("⚠️ Таблица данных аудита пуста.")
     else:
-        st.info("🔍 Данные аудита еще не сформированы. Выберите ТС и запустите синхронизацию.")
+        st.info("🔍 Данные аудита еще не сформированы. Запустите проверку.")
             
             
 elif selected == "База Данных":
@@ -2255,6 +2267,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
