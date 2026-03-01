@@ -631,18 +631,16 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
     import time
     import uuid
 
-    # === 1. ЗАГРУЗКА ДАННЫХ ИЗ INVENTORY (ТВОЙ ИСТОЧНИК) ===
-    @st.cache_data(ttl=60)
+    # === 1. ЗАГРУЗКА ДАННЫХ ИЗ INVENTORY ===
+    @st.cache_data(ttl=10) # Уменьшил кэш для актуальности
     def load_inventory_data():
         try:
-            # Выбираем только нужные колонки из таблицы inventory
-            response = supabase.table("inventory").select("id, doc_id, item_name, quantity, cell_address").execute()
+            # Берем только те товары, где количество больше 0
+            response = supabase.table("inventory").select("id, doc_id, item_name, quantity, cell_address").gt("quantity", 0).execute()
             df = pd.DataFrame(response.data)
             if df.empty:
                 return pd.DataFrame()
             
-            # Создаем красивое название для выпадающего списка
-            # "Товар | Док: ID | Склад: Кол-во"
             df['display_label'] = (
                 df['item_name'].fillna("Без названия") + 
                 " | Док: " + df['doc_id'].fillna("?") + 
@@ -656,9 +654,8 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
 
     inv_df = load_inventory_data()
 
-    # Проверка наличия товаров ПЕРЕД формой (чтобы не было ошибки Missing Submit Button)
     if inv_df.empty:
-        st.warning("⚠️ В таблице Inventory пусто. Сначала оприходуйте товар!")
+        st.warning("⚠️ В наличии нет товаров с остатком больше 0. Регистрация брака невозможна.")
         if st.button("🔄 Обновить список"):
             st.cache_data.clear()
             st.rerun()
@@ -666,113 +663,92 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
 
     # === 2. ФОРМА РЕГИСТРАЦИИ ===
     with st.form("defect_registration_form", clear_on_submit=True):
-        st.subheader("🚨 Новый акт о дефекте (на базе Inventory)")
+        st.subheader("🚨 Регистрация дефекта")
         
-        # Выбор товара
-        selected_label = st.selectbox(
-            "📦 Выберите поврежденный товар из наличия", 
-            options=inv_df['display_label'].values
-        )
-        
-        # Извлекаем данные выбранной строки
+        selected_label = st.selectbox("📦 Выберите товар", options=inv_df['display_label'].values)
         selected_row = inv_df[inv_df['display_label'] == selected_label].iloc[0]
         
         st.divider()
         
         col1, col2 = st.columns(2)
         with col1:
-            reporter = st.text_input("👤 Кто выявил (ФИО)", placeholder="Иванов И.И.")
+            reporter = st.text_input("👤 Кто выявил (ФИО)")
             defect_type = st.selectbox("📝 Тип дефекта", ["Бой", "Порча", "Брак производителя", "Некомплект"])
         
         with col2:
-            # Название подтягивается автоматически, но можно уточнить
-            final_item_name = st.text_input("🏷️ Уточненное название товара", value=selected_row['item_name'])
-            quarantine_zone = st.text_input("📍 Куда перемещен (Ячейка)", value="ZONE-BRAK")
+            final_item_name = st.text_input("🏷️ Товар", value=selected_row['item_name'])
+            quarantine_zone = st.text_input("📍 Зона брака", value="ZONE-BRAK")
 
         col3, col4 = st.columns(2)
         with col3:
-            # Ограничиваем количество тем, что реально есть в инвентаре
+            # ИСПРАВЛЕНИЕ ОШИБКИ: min_value теперь 0.0, а начальное значение минимум 0.1
             max_qty = float(selected_row['quantity'])
-            defect_qty = st.number_input(f"🔢 Кол-во (доступно {max_qty})", min_value=0.1, max_value=max_qty if max_qty > 0 else 1.0, value=1.0 if max_qty >= 1 else max_qty)
+            defect_qty = st.number_input(
+                f"🔢 Кол-во (доступно {max_qty})", 
+                min_value=0.0, 
+                max_value=max_qty, 
+                value=min(1.0, max_qty), # Если на остатке 0.5, поставит 0.5, если 10 — поставит 1.0
+                step=1.0
+            )
         
         with col4:
-            decision = st.selectbox("⚖️ Решение", ["На проверку", "Списание", "Уценка", "Возврат поставщику"])
+            decision = st.selectbox("⚖️ Решение", ["На проверку", "Списание", "Уценка", "Возврат"])
 
-        description = st.text_area("🗒️ Детальное описание повреждений (царапины, сколы, трещины...)")
-        
-        # Загрузка фото (Твоя логика из Заявок)
-        uploaded_photo = st.file_uploader("📸 Фото повреждения (Обязательно)", type=['png', 'jpg', 'jpeg'])
+        description = st.text_area("🗒️ Описание повреждений")
+        uploaded_photo = st.file_uploader("📸 Фото (Обязательно)", type=['png', 'jpg', 'jpeg'])
 
-        submitted = st.form_submit_button("🚀 ЗАРЕГИСТРИРОВАТЬ И ПЕРЕМЕСТИТЬ В БРАК", use_container_width=True)
+        # Кнопка всегда должна быть в конце блока 'with st.form'
+        submitted = st.form_submit_button("🚀 ЗАРЕГИСТРИРОВАТЬ", use_container_width=True)
 
-    # === 3. ОБРАБОТКА И СОХРАНЕНИЕ ===
+    # === 3. ОБРАБОТКА ===
     if submitted:
+        if defect_qty <= 0:
+            st.error("❌ Количество брака должно быть больше 0!")
+            return
+            
         if not reporter or not uploaded_photo:
-            st.error("❌ Ошибка: Заполните ФИО и прикрепите фото!")
+            st.error("❌ Заполните ФИО и добавьте фото!")
             return
 
-        with st.spinner("💾 Обработка: загрузка фото и создание записи..."):
+        with st.spinner("💾 Сохранение..."):
             defect_id = f"DEF-{uuid.uuid4().hex[:6].upper()}"
-            now = datetime.now().isoformat()
             
-            # --- ЗАГРУЗКА ФОТО (ТВОЯ ЛОГИКА) ---
+            # Загрузка фото
             final_photo_url = None
             try:
                 file_ext = uploaded_photo.name.split('.')[-1]
                 file_name = f"{defect_id}_{int(time.time())}.{file_ext}"
-                
-                # Загружаем в бакет "defects_photos" (он у тебя PUBLIC, всё ок)
                 supabase.storage.from_("defects_photos").upload(file_name, uploaded_photo.getvalue())
-                
-                # Получаем ссылку
                 final_photo_url = supabase.storage.from_("defects_photos").get_public_url(file_name)
             except Exception as e:
-                st.warning(f"⚠️ Фото не удалось загрузить: {e}")
+                st.warning(f"⚠️ Ошибка фото: {e}")
 
-            # --- ФОРМИРОВАНИЕ ПАКЕТА ДАННЫХ (ПО ТВОИМ КОЛОНКАМ DEFECTS) ---
-            # Заполняем все колонки из твоего скриншота, чтобы не было NULL
+            # Данные для вставки
             payload = {
                 "id": defect_id,
-                "created_at": now,
-                "updated_at": now,
                 "item_name": final_item_name,
-                "main_item": final_item_name,
                 "quantity": float(defect_qty),
-                "total_defective": float(defect_qty),
                 "storage_address": quarantine_zone,
-                "quarantine_address": quarantine_zone,
                 "defect_type": defect_type,
                 "description": description,
                 "responsible_party": reporter,
-                "reported_by": reporter,
                 "decision": decision,
                 "status": "ОБНАРУЖЕНО",
                 "photo_url": final_photo_url,
-                "linked_doc_id": selected_row['doc_id'], # Привязка к приходу/заказу
-                "culprit": "Не установлен",
-                "items_data": {
-                    "source_inventory_id": str(selected_row['id']),
-                    "original_cell": selected_row['cell_address'],
-                    "item": final_item_name
-                }
+                "linked_doc_id": selected_row['doc_id'],
+                "items_data": {"source_id": str(selected_row['id'])}
             }
 
-            # --- СОХРАНЕНИЕ ---
             try:
-                # ПИШЕМ ТОЛЬКО В ТАБЛИЦУ DEFECTS
+                # Вставка в Physical Table
                 supabase.table("defects").insert(payload).execute()
-                
-                st.success(f"✅ Акт {defect_id} создан! Данные взяты из Inventory.")
-                st.balloons()
-                
-                # Очистка кэша, чтобы данные обновились
+                st.success("✅ Акт создан!")
                 st.cache_data.clear()
-                
-                time.sleep(1.5)
+                time.sleep(1)
                 st.rerun()
             except Exception as e:
-                st.error(f"🚨 Ошибка Supabase: {e}")
-            
+                st.error(f"🚨 Ошибка базы: {e}")
+                
 @st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
     from database import supabase
@@ -1052,6 +1028,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
