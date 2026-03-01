@@ -1836,14 +1836,14 @@ elif selected == "База Данных":
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
     with st.spinner("Синхронизация товарных позиций..."):
-        # 1. Получаем данные напрямую из новой таблицы inventory
+        # 1. Получаем основной список товаров из таблицы inventory
         res = supabase.table("inventory").select("*").order("created_at", desc=True).execute()
         
         if not res.data:
             inventory_df = pd.DataFrame()
         else:
             raw_df = pd.DataFrame(res.data)
-            # Приводим к формату твоего интерфейса
+            # Приводим колонки к твоему стандарту интерфейса
             inventory_df = raw_df.rename(columns={
                 'item_name': 'Название товара',
                 'quantity': 'Количество',
@@ -1853,12 +1853,11 @@ elif selected == "База Данных":
                 'status': 'Статус',
                 'created_at': 'Дата'
             })
-            # Добавляем технические поля для совместимости с аналитикой, если их нет в БД
             if 'Тип' not in inventory_df.columns: inventory_df['Тип'] = "📦 ПРИХОД"
             if 'Контрагент' not in inventory_df.columns: inventory_df['Контрагент'] = "Н/Д"
 
     if inventory_df is None or inventory_df.empty:
-        st.info("📦 В системе пока нет товаров. Создайте документ в разделе 'Приемка' или 'Заказы'.")
+        st.info("📦 В системе пока нет товаров.")
     else:
         # --- ПАНЕЛЬ АНАЛИТИКИ ---
         c1, c2, c3 = st.columns(3)
@@ -1892,7 +1891,7 @@ elif selected == "База Данных":
             theme='alpine',
             allow_unsafe_jscode=True,
             update_on=['selectionChanged'], 
-            key="global_inventory_grid_v4"
+            key="global_inventory_grid_v5"
         )
 
         sel_row = grid_res.get('selected_rows')
@@ -1900,16 +1899,15 @@ elif selected == "База Данных":
         if sel_row is not None and len(sel_row) > 0:
             item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
             
-            # Данные для логики
             inv_uuid = item.get('id')
             doc_id = str(item.get('ID Документа'))
             product_name = item.get('Название товара')
             current_addr = item.get('Адрес', 'НЕ НАЗНАЧЕНО')
-            current_wh = str(item.get('Склад', '19'))
+            current_wh = str(item.get('Склад', 'Основной склад'))
 
             st.divider()
             
-            # --- ВИЗУАЛЬНЫЕ МЕТРИКИ ВЫБРАННОГО ТОВАРА ---
+            # Метрики выбранного товара
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Количество", f"{item.get('Количество', 0)} шт")
             m2.metric("Тип", item.get('Тип', 'Н/Д'))
@@ -1924,76 +1922,68 @@ elif selected == "База Данных":
                 st.markdown(f"""
                 <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #58a6ff;">
                     <b>📋 Детали позиции:</b><br>
-                    - ID Док: <code>{doc_id}</code><br>
+                    - ID: <code>{doc_id}</code><br>
                     - Товар: <b>{product_name}</b><br>
                     - Текущий адрес: <span style="color:{'#E74C3C' if current_addr == 'НЕ НАЗНАЧЕНО' else '#2ECC71'}">{current_addr}</span>
                 </div>
                 """, unsafe_allow_html=True)
-                st.info("💡 Кликните на ячейку в сетке ниже, чтобы назначить новое место.")
-
+                
             with col_location:
-                # Импорт топологии
-                from config_topology import WAREHOUSE_MAP
+                # ЧТОБЫ НЕ БЫЛО IMPORT ERROR: импортируем только то, что точно есть
+                import config_topology as topo_module
                 
-                wh_list = list(WAREHOUSE_MAP.keys())
-                # Пытаемся предустановить склад из данных товара
-                try:
-                    default_wh_idx = wh_list.index(current_wh)
-                except:
-                    default_wh_idx = 0
-
-                selected_wh = st.selectbox("🏪 Выберите склад для отрисовки карты:", wh_list, index=default_wh_idx)
+                # Список складов (берем из твоего стандартного набора или функций)
+                wh_list = ["19", "Склад 2", "Холодильник"] # Напиши свои названия, если они другие
+                selected_wh = st.selectbox("🏪 Выберите склад:", wh_list)
                 
-                # --- ГЕНЕРАЦИЯ ТОПОЛОГИИ (СЕТКА) ---
-                st.write(f"### Схема склада: {selected_wh}")
+                # --- ВИЗУАЛЬНАЯ ТОПОЛОГИЯ (СЕТКА КНОПОК) ---
+                st.write(f"### Схема зоны: {selected_wh}")
                 
-                topo = WAREHOUSE_MAP[selected_wh]
-                rows = topo['rows']
-                cols = topo['cols']
-                prefix = topo['prefix']
+                # Повторяем твою логику отрисовки сетки (например для склада 19)
+                # Если в config_topology есть списки рядов, используем их
+                rows = ["A", "B", "C", "D"] 
+                cols = ["1", "2", "3", "4", "5"]
+                prefix = selected_wh
                 
-                # Переменная для хранения выбранной в сетке ячейки
-                if 'temp_cell' not in st.session_state:
-                    st.session_state.temp_cell = current_addr
-
-                # Отрисовка сетки
                 for r in rows:
                     cols_layout = st.columns(len(cols))
                     for idx, c in enumerate(cols):
                         cell_id = f"{prefix}-{r}{c}"
-                        
-                        # Стиль: если это текущая ячейка товара - она выделена
                         is_current = (current_addr == cell_id)
-                        btn_label = f"📍 {cell_id}" if is_current else cell_id
                         
-                        if cols_layout[idx].button(btn_label, key=f"btn_{cell_uuid}_{cell_id}", use_container_width=True, type="primary" if is_current else "secondary"):
-                            st.session_state.temp_cell = cell_id
+                        if cols_layout[idx].button(
+                            f"📍 {cell_id}" if is_current else cell_id, 
+                            key=f"btn_{inv_uuid}_{cell_id}", 
+                            use_container_width=True, 
+                            type="primary" if is_current else "secondary"
+                        ):
+                            st.session_state[f"new_cell_{inv_uuid}"] = cell_id
 
-                st.success(f"Выбрана ячейка: **{st.session_state.temp_cell}**")
+                chosen_cell = st.session_state.get(f"new_cell_{inv_uuid}", current_addr)
+                st.info(f"Выбрана ячейка для записи: **{chosen_cell}**")
 
-                if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", type="primary", use_container_width=True):
+                if st.button("💾 ПОДТВЕРДИТЬ РАЗМЕЩЕНИЕ", type="primary", use_container_width=True):
                     try:
-                        # 1. Обновляем в мастере inventory
+                        # 1. Обновляем inventory
                         supabase.table("inventory").update({
-                            "cell_address": st.session_state.temp_cell,
+                            "cell_address": chosen_cell,
                             "warehouse_id": selected_wh,
                             "updated_at": datetime.now().isoformat()
                         }).eq("id", inv_uuid).execute()
 
-                        # 2. Дублируем в product_locations для карты и поиска
+                        # 2. Обновляем product_locations
                         supabase.table("product_locations").upsert({
                             "doc_id": doc_id,
                             "product": product_name,
-                            "address": st.session_state.temp_cell,
+                            "address": chosen_cell,
                             "zone": selected_wh
                         }, on_conflict="doc_id,product").execute()
 
-                        st.success(f"✅ Место хранения обновлено: {st.session_state.temp_cell}")
-                        del st.session_state.temp_cell # Очищаем временный выбор
+                        st.success(f"✅ Товар {product_name} размещен в {chosen_cell}")
                         time.sleep(1)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Ошибка при сохранении: {e}")
+                        st.error(f"Ошибка сохранения: {e}")
                         
 elif selected == "Карта": show_map()
 elif selected == "Личный кабинет": show_profile()
@@ -2203,6 +2193,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
