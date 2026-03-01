@@ -1101,7 +1101,6 @@ def show_extra_details_modal(extra_id):
 
     # --- 1. ЗАГРУЗКА АКТУАЛЬНЫХ ДАННЫХ ИЗ БД (SUPABASE) ---
     try:
-        # Прямой запрос к таблице extras
         response = supabase.table("extras").select("*").eq("id", extra_id).execute()
         
         if not response.data:
@@ -1115,18 +1114,8 @@ def show_extra_details_modal(extra_id):
         items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame(columns=['Название товара', 'Кол-во', 'Адрес'])
         
     except Exception as e:
-        st.warning(f"⚠️ Ошибка подключения к БД. Использую локальный кэш. {e}")
-        # Фолбэк на session_state
-        if "extras" not in st.session_state:
-            st.error("Данные недоступны.")
-            return
-        df = st.session_state.extras
-        row_match = df[df['id'] == extra_id]
-        if row_match.empty:
-            st.error("Запись не найдена.")
-            return
-        db_row = row_match.iloc[0].to_dict()
-        items_df = st.session_state.items_registry.get(extra_id, pd.DataFrame())
+        st.warning(f"⚠️ Ошибка подключения к БД. {e}")
+        return
 
     # --- 2. ОТОБРАЖЕНИЕ ДАННЫХ ---
     st.subheader(f"📑 Детальный просмотр корректировки: {extra_id}")
@@ -1135,28 +1124,27 @@ def show_extra_details_modal(extra_id):
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        # Используем .get() с поддержкой имен колонок из БД (snake_case) и UI (Кириллица)
-        st.markdown(f"**👤 Кто одобрил:**\n{db_row.get('approved_by', db_row.get('Кто одобрил', '---'))}")
-        st.markdown(f"**🔗 Связь с ID:**\n`{db_row.get('parent_id', db_row.get('Связь с ID', 'НЕТ'))}`")
-        st.markdown(f"**📈 Статус:**\n`{db_row.get('status', db_row.get('Статус', '---'))}`")
+        st.markdown(f"**👤 Кто одобрил:**\n{db_row.get('approved_by', '---')}")
+        st.markdown(f"**🔗 Связь с ID:**\n`{db_row.get('parent_id', 'НЕТ')}`")
+        st.markdown(f"**📈 Статус:**\n`{db_row.get('status', '---')}`")
 
     with col2:
-        st.markdown(f"**🎯 Что именно:**\n{db_row.get('subject', db_row.get('Что именно', '---'))}")
-        st.markdown(f"**📅 Дата события:**\n{db_row.get('event_date', db_row.get('Когда', '---'))}")
-        st.markdown(f"**🕒 Время:**\n{db_row.get('event_time', db_row.get('Время', '---'))}")
+        st.markdown(f"**🎯 Что именно:**\n{db_row.get('subject', '---')}")
+        st.markdown(f"**📅 Дата события:**\n{db_row.get('event_date', '---')}")
+        st.markdown(f"**🕒 Время события:**\n{db_row.get('event_time', '---')}")
 
     with col3:
-        st.markdown(f"**🚚 На чем (Транспорт):**\n{db_row.get('transport', db_row.get('На чем', '---'))}")
-        st.markdown(f"**📍 Где (Локация):**\n{db_row.get('location', db_row.get('Где', '---'))}")
+        st.markdown(f"**🚚 Транспорт:**\n{db_row.get('transport', '---')}")
+        st.markdown(f"**📍 Локация:**\n{db_row.get('location', '---')}")
         
         try:
-            val_sum = float(db_row.get('amount', db_row.get('Сумма заявки', 0.0)))
+            val_sum = float(db_row.get('amount', 0.0))
         except:
             val_sum = 0.0
         st.markdown(f"**💰 Сумма заявки:**\n{val_sum:,.2f}")
 
-    # Причина выделена цветом
-    st.warning(f"**❓ Причина (Почему):** {db_row.get('reason', db_row.get('Почему (Причина)', 'Не указана'))}")
+    # Причина
+    st.warning(f"**❓ Причина (Почему):** {db_row.get('reason', 'Не указана')}")
 
     st.divider()
     
@@ -1169,9 +1157,26 @@ def show_extra_details_modal(extra_id):
     else:
         st.info("Спецификация товаров пуста.")
 
-    # Системные данные (даты из БД)
-    st.caption(f"Создано в системе: {db_row.get('created_at', '---')} | Последнее обновление: {db_row.get('updated_at', '---')}")
+    # --- 4. ЖУРНАЛ ИЗМЕНЕНИЙ (MOLDOVA TIME) ---
+    st.write("") # Небольшой отступ
+    exp_c1, exp_c2 = st.columns([1, 1])
     
+    with exp_c1:
+        st.caption(f"Системный ID: {db_row.get('id')}")
+
+    with exp_c2:
+        with st.expander("🕒 Журнал изменений (Moldova Time)"):
+            # Конвертируем технические даты Supabase
+            created = format_to_moldova_time(db_row.get('created_at'))
+            updated = format_to_moldova_time(db_row.get('updated_at'))
+            
+            st.write(f"**📅 Создано:** {created}")
+            st.write(f"**🔄 Обновлено:** {updated}")
+            st.write(f"**👤 Автор правок:** {db_row.get('updated_by', 'Система')}")
+
+    st.divider()
+
+    # --- 5. КНОПКА ЗАКРЫТИЯ ---
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
         
@@ -1817,6 +1822,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
