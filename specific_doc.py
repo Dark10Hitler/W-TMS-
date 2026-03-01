@@ -178,11 +178,19 @@ def create_modal(table_key):
         st.markdown("<br>", unsafe_allow_html=True)
         submitted = st.form_submit_button("🚀 СФОРМИРОВАТЬ И СОХРАНИТЬ ЗАЯВКУ", use_container_width=True)
 
-    # --- 3. ОБРАБОТКА И СОХРАНЕНИЕ В SUPABASE ---
+# --- 3. ОБРАБОТКА И СОХРАНЕНИЕ В SUPABASE ---
     if submitted:
         if not input_client:
             st.error("❌ Ошибка: Поле 'Название Клиента' обязательно для заполнения!")
             return
+
+        # --- НАСТРОЙКА ВРЕМЕНИ (МОЛДОВА) ---
+        import pytz
+        moldova_tz = pytz.timezone('Europe/Chisinau')
+        now_moldova = datetime.now(moldova_tz)
+        moldova_time_iso = now_moldova.isoformat()
+        current_date = now_moldova.strftime("%Y-%m-%d")
+        current_time = now_moldova.strftime("%H:%M:%S")
 
         # 1. Генерация уникального ID
         order_id = f"ORD-{str(uuid.uuid4())[:6].upper()}"
@@ -223,25 +231,54 @@ def create_modal(table_key):
             "load_address": input_loading_addr, # СИНХРОНИЗИРОВАНО (load_address вместо loading_address)
             "has_certificate": has_certificate, # СИНХРОНИЗИРОВАНО (как в temp_row)
             "driver": input_driver,             # СИНХРОНИЗИРОВАНО (driver вместо driver_info)
-            "vehicle": input_ts,               # СИНХРОНИЗИРОВАНО (vehicle вместо vehicle_info)
+            "vehicle": input_ts,                # СИНХРОНИЗИРОВАНО (vehicle вместо vehicle_info)
             "description": input_desc,
             "approval_by": input_dopusk,        # СИНХРОНИЗИРОВАНО
             "items_data": items_json,
             "photo_url": final_photo_url,       # ТЕПЕРЬ ССЫЛКА, А НЕ ТЕКСТ
-            "print_flag": False
+            "print_flag": False,
+            "created_at": moldova_time_iso      # МОЛДАВСКОЕ ВРЕМЯ СОЗДАНИЯ
         }
 
         # 3. ОТПРАВКА В БАЗУ ДАННЫХ
         try:
+            # СОХРАНЕНИЕ ОСНОВНОГО ДОКУМЕНТА (ORDERS)
             response = supabase.table("orders").insert(supabase_data).execute()
+
+            # --- СИНХРОНИЗАЦИЯ С ТАБЛИЦЕЙ INVENTORY (РАСПАКОВКА ТОВАРОВ) ---
+            if items_json:
+                inventory_payload = []
+                for item in items_json:
+                    # Определяем название товара (пробуем разные варианты ключей из файла)
+                    p_name = item.get('Название товара') or item.get('Наименование') or item.get('product')
+                    # Определяем количество
+                    p_qty = item.get('Количество') or item.get('Кол-во') or item.get('qty') or 0
+                    
+                    if p_name:
+                        inventory_payload.append({
+                            "doc_id": str(order_id),
+                            "item_name": str(p_name),
+                            "quantity": float(p_qty),
+                            "warehouse_id": str(input_loading_addr),
+                            "cell_address": "НЕ НАЗНАЧЕНО",
+                            "status": str(selected_status),
+                            "created_at": moldova_time_iso,
+                            "updated_at": moldova_time_iso
+                        })
+                
+                if inventory_payload:
+                    # Массовая вставка товаров в inventory через upsert
+                    supabase.table("inventory").upsert(
+                        inventory_payload, 
+                        on_conflict="doc_id,item_name"
+                    ).execute()
+            # -------------------------------------------------------------
+
         except Exception as e:
             st.error(f"🚨 Ошибка при сохранении в облако: {e}")
             return 
 
         # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО ИНТЕРФЕЙСА (Session State)
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        current_time = datetime.now().strftime("%H:%M:%S")
-
         ui_data = {
             "📝 Ред.": "⚙️", 
             "id": order_id, 
@@ -289,7 +326,8 @@ def create_modal(table_key):
             st.session_state["main"] = pd.concat([st.session_state["main"], main_row_df], ignore_index=True)
 
         st.session_state.active_modal = None
-        st.success(f"✅ Документ {order_id} создан и фото загружено!")
+        st.success(f"✅ Документ {order_id} создан, товары добавлены в inventory!")
+        st.balloons()
         
         time.sleep(1.5)
         st.rerun()
@@ -1032,6 +1070,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
