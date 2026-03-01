@@ -652,17 +652,16 @@ def render_aggrid_table(table_key, title):
         st.markdown(f"### 🚀 {title} <span style='font-size: 0.5em; color: #888;'>| Всего: {count}</span>", unsafe_allow_html=True)
     
     with c_act1:
-        # ИСПРАВЛЕНО: Теперь передаем table_key в функцию создания, чтобы избежать TypeError
         if table_key != "main":
             if st.button(f"➕ ДОБАВИТЬ", key=f"add_btn_{table_key}", use_container_width=True, type="primary"):
                 if table_key == "orders": 
-                    create_modal(table_key)  # Добавлен аргумент здесь
+                    create_modal(table_key)
                 elif table_key == "arrivals": 
                     create_arrival_modal(table_key)
                 elif table_key == "extras": 
                     create_extras_modal(table_key)
                 elif table_key == "defects": 
-                    create_defect_modal(table_key)
+                    create_defect_modal(table_key)  # ← БЕЗ ИЗМЕНЕНИЙ (уже правильно!)
                 elif table_key == "drivers": 
                     create_driver_modal(table_key)
                 elif table_key == "vehicles": 
@@ -760,12 +759,18 @@ def render_aggrid_table(table_key, title):
         
         with btn_col1:
             if st.button("⚙️ ИЗМЕНИТЬ", key=f"ed_btn_{entry_id}", use_container_width=True):
-                if target_table == "orders": edit_order_modal(entry_id)
-                elif target_table == "arrivals": edit_arrival_modal(entry_id)
-                elif target_table == "extras": edit_extra_modal(entry_id)
-                elif target_table == "defects": edit_defect_modal(entry_id)
-                elif target_table == "drivers": edit_driver_modal(entry_id)
-                elif target_table == "vehicles": edit_vehicle_modal(entry_id)
+                if target_table == "orders": 
+                    edit_order_modal(entry_id)
+                elif target_table == "arrivals": 
+                    edit_arrival_modal(entry_id)
+                elif target_table == "extras": 
+                    edit_extra_modal(entry_id)
+                elif target_table == "defects": 
+                    edit_defect_modal(entry_id)
+                elif target_table == "drivers": 
+                    edit_driver_modal(entry_id)
+                elif target_table == "vehicles": 
+                    edit_vehicle_modal(entry_id)
 
         with btn_col2:
             if st.button("🔍 ПРОСМОТР", key=f"vw_btn_{entry_id}", use_container_width=True):
@@ -2400,6 +2405,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
