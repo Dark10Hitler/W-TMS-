@@ -1836,47 +1836,53 @@ elif selected == "База Данных":
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
     with st.spinner("Синхронизация товарных позиций..."):
-        # 1. Получаем основной список товаров из таблицы inventory
-        res = supabase.table("inventory").select("*").order("created_at", desc=True).execute()
+        # 1. Получаем основной список товаров
+        inventory_df = get_full_inventory_df() 
         
-        if not res.data:
-            inventory_df = pd.DataFrame()
-        else:
-            raw_df = pd.DataFrame(res.data)
-            # Приводим колонки к твоему стандарту интерфейса
-            inventory_df = raw_df.rename(columns={
-                'item_name': 'Название товара',
-                'quantity': 'Количество',
-                'doc_id': 'ID Документа',
-                'cell_address': 'Адрес',
-                'warehouse_id': 'Склад',
-                'status': 'Статус',
-                'created_at': 'Дата'
-            })
-            if 'Тип' not in inventory_df.columns: inventory_df['Тип'] = "📦 ПРИХОД"
-            if 'Контрагент' not in inventory_df.columns: inventory_df['Контрагент'] = "Н/Д"
-
-    if inventory_df is None or inventory_df.empty:
-        st.info("📦 В системе пока нет товаров.")
+        # 2. ПОЛУЧАЕМ АКТУАЛЬНЫЕ АДРЕСА ИЗ БД (Чтобы статус обновился!)
+        locations_res = supabase.table("product_locations").select("doc_id, product, address").execute()
+        if locations_res.data:
+            loc_df = pd.DataFrame(locations_res.data)
+            
+            # Соединяем: если в product_locations есть адрес для doc_id + product, заменяем 'НЕ НАЗНАЧЕНО'
+            inventory_df = inventory_df.merge(
+                loc_df, 
+                left_on=['ID Документа', 'Название товара'], 
+                right_on=['doc_id', 'product'], 
+                how='left'
+            )
+            
+            # Если адрес найден в БД, записываем его в колонку 'Адрес'
+            if 'address' in inventory_df.columns:
+                inventory_df['Адрес'] = inventory_df['address'].fillna(inventory_df['Адрес'])
+                inventory_df.drop(columns=['doc_id', 'product', 'address'], inplace=True)
+    
+    # Проверка на пустой DataFrame
+    if inventory_df is None or (isinstance(inventory_df, pd.DataFrame) and inventory_df.empty):
+        st.info("📦 В документах (Приходы/Заказы) пока нет товаров. Сначала создайте приход в разделе 'Приемка'.")
     else:
-        # --- ПАНЕЛЬ АНАЛИТИКИ ---
+        # Панель аналитики
         c1, c2, c3 = st.columns(3)
-        total_qty = inventory_df['Количество'].sum()
-        unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО'])
         
-        c1.metric("Всего на складе", f"{int(total_qty)} шт")
+        total_in = inventory_df[inventory_df['Тип'] == "📦 ПРИХОД"]['Количество'].sum() if 'Количество' in inventory_df.columns else 0
+        unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО']) if 'Адрес' in inventory_df.columns else 0
+        
+        c1.metric("Всего поступило (ед.)", f"{int(total_in)} шт")
         c2.metric("Требуют размещения", unassigned, delta=f"{unassigned} поз.", delta_color="inverse")
-        c3.metric("Уникальных позиций", len(inventory_df))
+        c3.metric("Уникальных строк", len(inventory_df))
 
-        # --- ТАБЛИЦА AG-GRID ---
+        # Настройка таблицы Ag-Grid
         gb = GridOptionsBuilder.from_dataframe(inventory_df)
         gb.configure_default_column(resizable=True, filterable=True, sortable=True, floatingFilter=True)
         gb.configure_selection(selection_mode="single", use_checkbox=True)
         
+        # Стилизация ячеек (Адрес)
         cellsytle_jscode = JsCode("""
         function(params) {
             if (params.value === 'НЕ НАЗНАЧЕНО') {
                 return {'color': 'white', 'backgroundColor': '#E74C3C', 'fontWeight': 'bold'};
+            } else if (params.value === '🚚 В ЗАКАЗЕ') {
+                return {'color': 'white', 'backgroundColor': '#3498DB'};
             } else {
                 return {'color': 'white', 'fontWeight': 'bold', 'backgroundColor': '#2ECC71'};
             }
@@ -1884,106 +1890,159 @@ elif selected == "База Данных":
         """)
         gb.configure_column("Адрес", cellStyle=cellsytle_jscode, pinned='left', width=180)
         
+        # Отображение таблицы
         grid_res = AgGrid(
             inventory_df,
             gridOptions=gb.build(),
-            height=400,
+            height=500,
             theme='alpine',
             allow_unsafe_jscode=True,
             update_on=['selectionChanged'], 
-            key="global_inventory_grid_v5"
+            key="global_inventory_grid"
         )
 
+        # Обработка выбора строки
         sel_row = grid_res.get('selected_rows')
         
         if sel_row is not None and len(sel_row) > 0:
             item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
             
-            inv_uuid = item.get('id')
-            doc_id = str(item.get('ID Документа'))
-            product_name = item.get('Название товара')
-            current_addr = item.get('Адрес', 'НЕ НАЗНАЧЕНО')
-            current_wh = str(item.get('Склад', 'Основной склад'))
+            # --- ПОДГОТОВКА ДАННЫХ ДЛЯ ВЫБОРА (РЕШАЕМ NameError) ---
+            doc_id = str(item.get('ID Документа', item.get('id')))
+            item_name = item.get('Название товара')
+            
+            # Определяем список складов заранее
+            from config_topology import WAREHOUSE_MAP
+            warehouse_list = list(WAREHOUSE_MAP.keys())
+            
+            # Проверяем БД на наличие уже сохраненного места
+            try:
+                db_data = supabase.table("product_locations").select("*").eq("doc_id", doc_id).eq("product", item_name).execute()
+                if db_data.data:
+                    current_addr = db_data.data[0].get('address', 'НЕ НАЗНАЧЕНО')
+                    saved_zone = str(db_data.data[0].get('zone', warehouse_list[0]))
+                else:
+                    current_addr = "НЕ НАЗНАЧЕНО"
+                    saved_zone = warehouse_list[0]
+            except:
+                current_addr = "НЕ НАЗНАЧЕНО"
+                saved_zone = warehouse_list[0]
+
+            # Считаем индекс склада для селектбокса
+            try:
+                wh_index = warehouse_list.index(saved_zone)
+            except:
+                wh_index = 0
 
             st.divider()
             
-            # Метрики выбранного товара
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Количество", f"{item.get('Количество', 0)} шт")
-            m2.metric("Тип", item.get('Тип', 'Н/Д'))
-            m3.metric("Контрагент", str(item.get('Контрагент', 'Н/Д'))[:15])
-            m4.metric("Дата", str(item.get('Дата'))[:10])
-
+            # Метрики
+            col1, col2, col3, col4 = st.columns(4)
+            with col1: st.metric("Количество", f"{item.get('Количество', 0)} шт")
+            with col2: st.metric("Тип", item.get('Тип', 'Н/Д'))
+            with col3: st.metric("Контрагент", str(item.get('Контрагент', 'Н/Д'))[:15])
+            with col4:
+                try:
+                    date_str = str(item.get('Дата', 'Н/Д'))
+                    formatted_time = datetime.fromisoformat(date_str.replace('Z', '+00:00')).strftime("%d.%m.%Y %H:%M:%S") if 'T' in date_str else date_str[:10]
+                except: formatted_time = date_str[:10]
+                st.metric("Дата и время", formatted_time)
+            
             st.divider()
-
+            
             col_info, col_location = st.columns([1, 1.2])
             
             with col_info:
                 st.markdown(f"""
                 <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #58a6ff;">
-                    <b>📋 Детали позиции:</b><br>
+                    <b>📋 Детали товара:</b><br>
                     - ID: <code>{doc_id}</code><br>
-                    - Товар: <b>{product_name}</b><br>
+                    - Товар: <b>{item_name}</b><br>
                     - Текущий адрес: <span style="color:{'#E74C3C' if current_addr == 'НЕ НАЗНАЧЕНО' else '#2ECC71'}">{current_addr}</span>
                 </div>
                 """, unsafe_allow_html=True)
                 
+                st.info("💡 Если адрес уже назначен, вы увидите его на карте ниже. Вы можете изменить его, выбрав новую ячейку.")
+            
             with col_location:
-                # ЧТОБЫ НЕ БЫЛО IMPORT ERROR: импортируем только то, что точно есть
-                import config_topology as topo_module
-                
-                # Список складов (берем из твоего стандартного набора или функций)
-                wh_list = ["19", "Склад 2", "Холодильник"] # Напиши свои названия, если они другие
-                selected_wh = st.selectbox("🏪 Выберите склад:", wh_list)
-                
-                # --- ВИЗУАЛЬНАЯ ТОПОЛОГИЯ (СЕТКА КНОПОК) ---
-                st.write(f"### Схема зоны: {selected_wh}")
-                
-                # Повторяем твою логику отрисовки сетки (например для склада 19)
-                # Если в config_topology есть списки рядов, используем их
-                rows = ["A", "B", "C", "D"] 
-                cols = ["1", "2", "3", "4", "5"]
-                prefix = selected_wh
-                
-                for r in rows:
-                    cols_layout = st.columns(len(cols))
-                    for idx, c in enumerate(cols):
-                        cell_id = f"{prefix}-{r}{c}"
-                        is_current = (current_addr == cell_id)
-                        
-                        if cols_layout[idx].button(
-                            f"📍 {cell_id}" if is_current else cell_id, 
-                            key=f"btn_{inv_uuid}_{cell_id}", 
-                            use_container_width=True, 
-                            type="primary" if is_current else "secondary"
-                        ):
-                            st.session_state[f"new_cell_{inv_uuid}"] = cell_id
+                st.markdown("""
+                <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #2ecc71;">
+                    <b>🏪 Управление локацией:</b>
+                </div>
+                """, unsafe_allow_html=True)
 
-                chosen_cell = st.session_state.get(f"new_cell_{inv_uuid}", current_addr)
-                st.info(f"Выбрана ячейка для записи: **{chosen_cell}**")
+                # 1. Выбор склада
+                wh_id = st.selectbox(
+                    "🏪 Выберите склад:",
+                    warehouse_list,
+                    index=wh_index,
+                    key=f"wh_sel_{doc_id}"
+                )
 
-                if st.button("💾 ПОДТВЕРДИТЬ РАЗМЕЩЕНИЕ", type="primary", use_container_width=True):
+                # Используем новую функцию из топологии
+                try:
+                    from config_topology import get_actual_cells, get_warehouse_figure
+                    all_cells = get_actual_cells(wh_id)
+                except Exception as e:
+                    st.error(f"Ошибка импорта: {e}")
+                    all_cells = []
+
+                if not all_cells:
+                    all_cells = [current_addr] if current_addr != "НЕ НАЗНАЧЕНО" else ["Список пуст"]
+
+                # 2. Синхронизация индекса
+                try:
+                    c_idx = all_cells.index(current_addr) if current_addr in all_cells else 0
+                except:
+                    c_idx = 0
+
+                selected_cell = st.selectbox(
+                    "📍 Выберите ячейку:",
+                    options=all_cells,
+                    index=c_idx,
+                    key=f"cell_sel_{doc_id}"
+                )
+
+                # 3. Отрисовка
+                try:
+                    fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
+                    fig.update_layout(margin=dict(l=0, r=0, b=0, t=30))
+                    st.plotly_chart(fig, use_container_width=True, height=450)
+                except Exception as e:
+                    st.warning("Ожидание отрисовки карты...")
+
+                # ЛОГИКА КНОПКИ: Сохранить или Изменить
+                if current_addr == "НЕ НАЗНАЧЕНО":
+                    btn_label = "💾 НАЗНАЧИТЬ МЕСТО"
+                else:
+                    btn_label = "🔄 ИЗМЕНИТЬ ПОЗИЦИЮ"
+
+                if st.button(btn_label, use_container_width=True, type="primary", key=f"btn_{doc_id}_{item_name}"):
                     try:
-                        # 1. Обновляем inventory
-                        supabase.table("inventory").update({
-                            "cell_address": chosen_cell,
-                            "warehouse_id": selected_wh,
-                            "updated_at": datetime.now().isoformat()
-                        }).eq("id", inv_uuid).execute()
-
-                        # 2. Обновляем product_locations
-                        supabase.table("product_locations").upsert({
-                            "doc_id": doc_id,
-                            "product": product_name,
-                            "address": chosen_cell,
-                            "zone": selected_wh
-                        }, on_conflict="doc_id,product").execute()
-
-                        st.success(f"✅ Товар {product_name} размещен в {chosen_cell}")
+                        from datetime import datetime
+                        
+                        # Принудительно приводим всё к строкам
+                        payload = {
+                            "doc_id": str(doc_id),
+                            "product": str(item_name),
+                            "address": str(selected_cell),
+                            "zone": str(wh_id),
+                            "last_updated": datetime.now().isoformat()
+                        }
+                        
+                        supabase.table("product_locations").upsert(
+                            payload, 
+                            on_conflict="doc_id,product" 
+                        ).execute()
+                        
+                        st.cache_data.clear()
+                        st.success(f"✅ Позиция обновлена: {selected_cell}")
+                        st.balloons()
                         time.sleep(1)
                         st.rerun()
+                        
                     except Exception as e:
-                        st.error(f"Ошибка сохранения: {e}")
+                        st.error(f"❌ Ошибка при сохранении: {e}")
                         
 elif selected == "Карта": show_map()
 elif selected == "Личный кабинет": show_profile()
@@ -2193,6 +2252,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
