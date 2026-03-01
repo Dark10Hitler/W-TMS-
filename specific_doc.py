@@ -630,7 +630,7 @@ def create_defect_modal(*args, **kwargs):
     from datetime import datetime
     import time
     import uuid
-    import numpy as np
+    import json
 
     # --- 1. ИНТЕРФЕЙС ФОРМЫ ---
     with st.form("defect_form_final"):
@@ -647,7 +647,7 @@ def create_defect_modal(*args, **kwargs):
         
         input_desc = st.text_area("Детальное описание повреждений")
         
-        # Поле для загрузки фото (как в твоем примере)
+        # Загрузка фото
         uploaded_photo = st.file_uploader("📸 Прикрепить фото (Обязательно)", type=['png', 'jpg', 'jpeg'])
         
         submitted = st.form_submit_button("🚀 ЗАРЕГИСТРИРОВАТЬ АКТ", use_container_width=True)
@@ -659,69 +659,101 @@ def create_defect_modal(*args, **kwargs):
             return
 
         with st.spinner("Сохранение акта и загрузка фото..."):
-            # Генерация ID (как в твоем примере)
-            defect_id = f"DEF-{str(uuid.uuid4())[:6].upper()}"
-            
-            # --- ЗАГРУЗКА ФОТО (ТВОЯ ЛОГИКА) ---
-            final_photo_url = None
             try:
-                file_ext = uploaded_photo.name.split('.')[-1]
-                file_name = f"{defect_id}_{int(time.time())}.{file_ext}"
+                # ===== ГЕНЕРАЦИЯ ID =====
+                defect_id = f"DEF-{str(uuid.uuid4())[:6].upper()}"
                 
-                # Загружаем в бакет "defects_photos" (убедись, что он создан в Supabase!)
-                supabase.storage.from_("defects_photos").upload(file_name, uploaded_photo.getvalue())
+                # ===== ЗАГРУЗКА ФОТО В BUCKET defects_photos =====
+                final_photo_url = None
+                try:
+                    file_ext = uploaded_photo.name.split('.')[-1].lower()
+                    if file_ext not in ['png', 'jpg', 'jpeg']:
+                        file_ext = 'jpg'
+                    
+                    file_name = f"{defect_id}_{int(time.time())}.{file_ext}"
+                    
+                    # Загружаем в бакет
+                    supabase.storage.from_("defects_photos").upload(
+                        file_name, 
+                        uploaded_photo.getvalue()
+                    )
+                    
+                    # Получаем публичную ссылку
+                    final_photo_url = supabase.storage.from_("defects_photos").get_public_url(file_name)
+                    st.info(f"✅ Фото загружено: {file_name}")
+                    
+                except Exception as photo_error:
+                    st.warning(f"⚠️ Ошибка при загрузке фото: {photo_error}")
+                    final_photo_url = None  # Продолжаем без фото, если ошибка
                 
-                # Получаем публичную ссылку
-                final_photo_url = supabase.storage.from_("defects_photos").get_public_url(file_name)
-            except Exception as e:
-                st.warning(f"⚠️ Фото не загружено: {e}")
-
-            # --- ФОРМИРОВАНИЕ ДАННЫХ (ПО ТВОИМ КОЛОНКАМ) ---
-            now_iso = datetime.now().isoformat()
-            
-            supabase_payload = {
-                "id": defect_id,
-                "created_at": now_iso,
-                "updated_at": now_iso,
+                # ===== ПОДГОТОВКА ДАННЫХ =====
+                now = datetime.now()
+                now_iso = now.isoformat()
                 
-                # Колонки товара
-                "item_name": item_name,
-                "main_item": item_name,
+                # Подготавливаем JSON для items_data
+                items_json = json.dumps([{
+                    "item_name": item_name,
+                    "quantity": int(defect_qty),
+                    "defect_type": d_type
+                }], ensure_ascii=False)
                 
-                # Колонки количества
-                "quantity": int(defect_qty),
-                "total_defective": int(defect_qty),
+                # ===== ФОРМИРОВАНИЕ PAYLOAD ДЛЯ ТАБЛИЦЫ defects =====
+                supabase_payload = {
+                    "id": defect_id,
+                    "created_at": now_iso,
+                    "updated_at": now_iso,
+                    "item_name": item_name,
+                    "main_item": item_name,
+                    "quantity": int(defect_qty),
+                    "total_defective": int(defect_qty),
+                    "storage_address": addr,
+                    "quarantine_address": addr,
+                    "defect_type": d_type,
+                    "description": input_desc,
+                    "responsible_party": reporter,
+                    "reported_by": reporter,
+                    "decision": "На проверку",
+                    "status": "ОБНАРУЖЕНО",
+                    "photo_url": final_photo_url if final_photo_url else "",
+                    "culprit": "Не установлен",
+                    "items_data": items_json
+                }
                 
-                # Адреса
-                "storage_address": addr,
-                "quarantine_address": addr,
+                # ===== ВСТАВКА В ТАБЛИЦУ defects =====
+                response = supabase.table("defects").insert(supabase_payload).execute()
                 
-                # Типы и описания
-                "defect_type": d_type,
-                "description": input_desc,
-                "responsible_party": reporter,
-                "reported_by": reporter,
-                
-                # Статусы и фото
-                "decision": "На проверку",
-                "status": "ОБНАРУЖЕНО",
-                "photo_url": final_photo_url,  # Ссылка из Storage
-                "culprit": "Не установлен",
-                "items_data": [{"Товар": item_name, "Кол-во": defect_qty}]
-            }
-
-            # --- 3. ОТПРАВКА ТОЛЬКО В ТАБЛИЦУ DEFECTS ---
-            try:
-                # ПИШЕМ ТОЛЬКО В DEFECTS (это решает ошибку 55000)
-                supabase.table("defects").insert(supabase_payload).execute()
-                
-                st.success(f"✅ Акт {defect_id} успешно создан!")
+                st.success(f"✅ Акт {defect_id} успешно создан и сохранён!")
                 st.balloons()
-                time.sleep(1.5)
-                st.rerun() # После рерана VIEW main_registry сама подтянет данные
                 
-            except Exception as e:
-                st.error(f"🚨 Ошибка базы данных: {e}")
+                # Обновляем локальную сессию (если нужна)
+                if "defects" not in st.session_state:
+                    st.session_state["defects"] = pd.DataFrame()
+                
+                # Добавляем в локальную таблицу для отображения
+                new_defect = pd.DataFrame([{
+                    "id": defect_id,
+                    "Товар": item_name,
+                    "Кол-во": defect_qty,
+                    "Тип дефекта": d_type,
+                    "Выявил": reporter,
+                    "Зона": addr,
+                    "Статус": "ОБНАРУЖЕНО",
+                    "Решение": "На проверку",
+                    "Фото": "✅ Загружено" if final_photo_url else "❌ Нет",
+                    "Создано": now.strftime("%Y-%m-%d %H:%M:%S")
+                }])
+                
+                st.session_state["defects"] = pd.concat(
+                    [st.session_state["defects"], new_defect], 
+                    ignore_index=True
+                )
+                
+                time.sleep(1.5)
+                st.rerun()
+                
+            except Exception as db_error:
+                st.error(f"🚨 Ошибка при сохранении в БД: {str(db_error)}")
+                st.info("💡 Проверь: Таблица 'defects' существует? Bucket 'defects_photos' создан?")
             
 @st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
@@ -1002,6 +1034,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
