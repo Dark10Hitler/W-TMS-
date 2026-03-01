@@ -26,6 +26,27 @@ def get_moldova_time():
     tz = pytz.timezone('Europe/Chisinau')
     return datetime.now(tz)
 
+def sync_to_inventory(doc_id, items_list, warehouse_id="Основной склад"):
+    """
+    items_list — это список словарей из твоего JSON (Название товара, Кол-во и т.д.)
+    """
+    inventory_records = []
+    for item in items_list:
+        # Приводим ключи к формату твоей таблицы inventory
+        record = {
+            "doc_id": str(doc_id),
+            "item_name": str(item.get('Название товара') or item.get('Товар')),
+            "quantity": float(item.get('Кол-во') or item.get('Количество') or 0),
+            "warehouse_id": warehouse_id,
+            "status": "НА СКЛАДЕ",
+            "cell_address": "НЕ НАЗНАЧЕНО" # Изначально адреса нет
+        }
+        inventory_records.append(record)
+    
+    if inventory_records:
+        # Сохраняем в inventory. Если товар с таким doc_id и item_name есть — обновит, если нет — создаст.
+        supabase.table("inventory").upsert(inventory_records, on_conflict="doc_id,item_name").execute()
+
 # При создании/обновлении:
 now = get_moldova_time()
 current_date = now.strftime("%Y-%m-%d")
@@ -1822,6 +1843,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
