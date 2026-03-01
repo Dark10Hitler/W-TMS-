@@ -277,121 +277,120 @@ def edit_order_modal(entry_id, table_key="orders"):
         st.session_state[f"temp_items_{entry_id}"] = updated_items
 
     # --- ВКЛАДКА 2: КАРТА (Геолокация) ---
+    import requests  # Добавь в начало файла, если нет
+
+# --- ВКЛАДКА 2: КАРТА (Геолокация) ---
     with tab_map:
-        st.subheader("📍 Координаты доставки")
+        st.subheader("📍 Маршрут доставки")
     
-    # Константа координат вашего центрального склада (измените на ваши точные данные)
-    # Например: 47.0100, 28.8600
-        WAREHOUSE_LAT = 47.0100 
-        WAREHOUSE_LON = 28.8600
+    # Твоя база из конфига
+        BASE_LAT, BASE_LON = 47.776654, 27.913643
 
         col_m1, col_m2 = st.columns([2, 1])
     
-    # Инициализация переменных для расчета
-        current_dist = 0.0
-    
+    # Переменные для хранения данных маршрута
+        route_distance_km = 0.0
+        route_coords = []
+
+    # Функция для получения реального дорожного маршрута через OSRM
+        def get_route(start_lat, start_lon, end_lat, end_lon):
+            try:
+                url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full&geometries=geojson"
+                r = requests.get(url, timeout=5)
+                res = r.json()
+                if res['code'] == 'Ok':
+                # Дистанция в метрах -> в километры
+                    distance = res['routes'][0]['distance'] / 1000
+                # Геометрия линии маршрута
+                    geometry = res['routes'][0]['geometry']['coordinates']
+                # OSRM возвращает [Lon, Lat], для folium нужно [Lat, Lon]
+                    reversed_geometry = [[coord[1], coord[0]] for coord in geometry]
+                    return distance, reversed_geometry
+            except:
+                pass
+            return None, None
+
         with col_m2:
             manual_coords = st.text_input(
-                "Координаты (Lat, Lon)", 
+                "Координаты точки (Lat, Lon)", 
                 value=row['Координаты'], 
-                placeholder="Напр: 47.0123, 28.8642", 
+                placeholder="Напр: 47.7812, 27.9250", 
                 key=f"coord_inp_{entry_id}"
             )
             row['Координаты'] = manual_coords
         
-        # РАСЧЕТ РАССТОЯНИЯ (Математическая формула гаверсинуса)
+        # Если координаты введены, считаем дорожный маршрут
             if row['Координаты'] and ',' in row['Координаты']:
                 try:
                     parts = row['Координаты'].split(',')
-                    target_lat = float(parts[0].strip())
-                    target_lon = float(parts[1].strip())
+                    target_lat, target_lon = float(parts[0].strip()), float(parts[1].strip())
                 
-                    import math
-                # Радиус Земли в километрах
-                    R = 6371.0 
+                # Запрос к навигатору
+                    dist, path = get_route(BASE_LAT, BASE_LON, target_lat, target_lon)
                 
-                    d_lat = math.radians(target_lat - WAREHOUSE_LAT)
-                    d_lon = math.radians(target_lon - WAREHOUSE_LON)
-                
-                    a = (math.sin(d_lat / 2) ** 2 + 
-                         math.cos(math.radians(WAREHOUSE_LAT)) * math.cos(math.radians(target_lat)) * math.sin(d_lon / 2) ** 2)
-                
-                    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-                    current_dist = R * c
-                
-                    st.metric("Расстояние до склада", f"{current_dist:.2f} км")
-                
-                    if current_dist > 50:
-                        st.warning("⚠️ Внимание: Точка находится далеко от склада!")
+                    if dist:
+                        route_distance_km = dist
+                        route_coords = path
+                        st.metric("Дистанция по дорогам", f"{route_distance_km:.2f} км")
+                        st.success(f"Маршрут построен успешно")
                     else:
-                        st.success("✅ Точка в пределах зоны обслуживания.")
-                    
+                        st.warning("⚠️ Не удалось проложить путь по дорогам. Проверьте координаты.")
                 except Exception as e:
-                    st.error(f"Ошибка расчета: {e}")
+                    st.error(f"Ошибка данных: {e}")
 
-            st.info("Кликните на карту слева, чтобы получить точные координаты точки.")
+            st.info("Кликните на карту, чтобы выбрать точку назначения.")
 
         with col_m1:
-        # Установка начальной точки обзора карты
-            start_lat, start_lon = WAREHOUSE_LAT, WAREHOUSE_LON
+        # Центрируем карту
+            view_lat, view_lon = BASE_LAT, BASE_LON
             if row['Координаты'] and ',' in row['Координаты']:
                 try:
                     parts = row['Координаты'].split(',')
-                    start_lat, start_lon = float(parts[0].strip()), float(parts[1].strip())
-                except: 
-                    pass
+                    view_lat, view_lon = float(parts[0].strip()), float(parts[1].strip())
+                except: pass
 
-        # Создание карты Folium
-            m = folium.Map(location=[start_lat, start_lon], zoom_start=12)
-        
-        # Добавляем всплывающее окно для получения координат при клике
+            m = folium.Map(location=[view_lat, view_lon], zoom_start=13)
             folium.LatLngPopup().add_to(m)
         
-        # Маркер склада (Синий)
+        # Маркер БАЗЫ (Склад)
             folium.Marker(
-                [WAREHOUSE_LAT, WAREHOUSE_LON], 
-                popup="Центральный склад", 
+                [BASE_LAT, BASE_LON], 
+                popup="БАЗА (СКЛАД)", 
                 icon=folium.Icon(color='blue', icon='home')
             ).add_to(m)
         
-        # Маркер точки доставки (Красный), если координаты заданы
-            if row['Координаты'] and ',' in row['Координаты']:
-                try:
-                    folium.Marker(
-                        [start_lat, start_lon], 
-                        popup=f"Точка доставки ({current_dist:.2f} км)", 
-                        icon=folium.Icon(color='red', icon='info-sign')
-                    ).add_to(m)
-                
-                # Рисуем линию от склада до точки
-                    folium.PolyLine(
-                        locations=[[WAREHOUSE_LAT, WAREHOUSE_LON], [start_lat, start_lon]],
-                        color="blue",
-                        weight=2,
-                        dash_array='10'
-                    ).add_to(m)
-                except: 
-                    pass
+        # Если маршрут найден — рисуем его красивой живой линией
+            if route_coords:
+            # Маркер Точки Доставки
+                folium.Marker(
+                    [route_coords[-1][0], route_coords[-1][1]], 
+                    popup=f"Доставка: {route_distance_km:.2f} км", 
+                    icon=folium.Icon(color='red', icon='truck')
+                ).add_to(m)
+            
+            # Рисуем сам путь по дорогам
+                folium.PolyLine(
+                    locations=route_coords,
+                    color="#2E86C1",
+                    weight=5,
+                    opacity=0.8,
+                    tooltip=f"Маршрут: {route_distance_km:.2f} км"
+                ).add_to(m)
         
-        # Отображение карты в Streamlit
-            map_data = st_folium(m, height=400, width=550, key=f"map_{entry_id}")
+        # Вывод карты
+            map_data = st_folium(m, height=450, width=550, key=f"map_{entry_id}")
         
-        # Обработка клика по карте
+        # Обработка клика
             if map_data.get("last_clicked"):
-                new_lat = map_data['last_clicked']['lat']
-                new_lng = map_data['last_clicked']['lng']
-                new_coords_str = f"{new_lat:.6f}, {new_lng:.6f}"
+                click_lat = map_data['last_clicked']['lat']
+                click_lng = map_data['last_clicked']['lng']
             
-            # Предварительный расчет дистанции клика для кнопки
-                d_lat_click = math.radians(new_lat - WAREHOUSE_LAT)
-                d_lon_click = math.radians(new_lng - WAREHOUSE_LON)
-                a_click = (math.sin(d_lat_click / 2) ** 2 + 
-                       math.cos(math.radians(WAREHOUSE_LAT)) * math.cos(math.radians(new_lat)) * math.sin(d_lon_click / 2) ** 2)
-                c_click = 2 * math.atan2(math.sqrt(a_click), math.sqrt(1 - a_click))
-                dist_click = R * c_click
+            # Считаем примерный км для кнопки через тот же OSRM
+                d_click, _ = get_route(BASE_LAT, BASE_LON, click_lat, click_lng)
+                d_label = f"{d_click:.2f} км" if d_click else "выбрано"
             
-                if st.button(f"📍 Установить: {new_coords_str} ({dist_click:.2f} км)", key=f"btn_set_coord_{entry_id}"):
-                    row['Координаты'] = new_coords_str
+                if st.button(f"📍 Выбрать эту точку ({d_label})", key=f"btn_set_coord_{entry_id}"):
+                    row['Координаты'] = f"{click_lat:.6f}, {click_lng:.6f}"
                     st.rerun()
 
     st.divider()
@@ -1925,6 +1924,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
