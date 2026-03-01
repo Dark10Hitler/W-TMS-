@@ -2134,76 +2134,106 @@ elif selected == "Настройки":
         except Exception as e:
             st.error(f"Ошибка подключения к таблице profiles: {e}")
 
-with tab4:
-    st.subheader("🛠️ Сервисные инструменты")
-    c1, c2, c3 = st.columns(3)
-    
-    with c1:
-        st.markdown("### 📦 Экспорт")
-        # ... (твой код экспорта остается без изменений) ...
-
-    with c2:
-        st.markdown("### ⚠️ Оптимизация")
-        # ... (твой код сброса кеша остается без изменений) ...
-            
-    with c3:
-        st.markdown("### 🔴 Опасная зона")
-        st.caption("Полная очистка базы данных. **Действие необратимо!**")
+    # --- ТАБ 4: ОБСЛУЖИВАНИЕ ---
+    with tab4:
+        st.subheader("🛠️ Сервисные инструменты")
+        c1, c2, c3 = st.columns(3)
         
-        if st.button("🧨 ОЧИСТИТЬ ВСЕ ДАННЫЕ", type="secondary"):
-            st.session_state.confirm_delete_all = True
-
-        if st.session_state.get('confirm_delete_all'):
-            st.warning("### ❗ ВЫ УВЕРЕНЫ?")
-            st.write("Будут удалены ВСЕ записи из таблиц: Заказы, Приходы, Брак, Инвентаризация и Позиции.")
-            
-            c_yes, c_no = st.columns(2)
-            
-            if c_yes.button("ДА, УДАЛИТЬ ВСЁ", type="primary", use_container_width=True):
+        with c1:
+            st.markdown("### 📦 Экспорт")
+            st.caption("Создает Excel-файл со всеми данными системы по вкладкам.")
+            if st.button("📊 Сформировать отчет XLSX"):
                 try:
-                    # Список твоих таблиц из Supabase (названия как на скриншоте)
-                    # ВАЖНО: Удаляем в таком порядке, чтобы не нарушить связи (сначала дочерние, потом основные)
-                    tables_to_clean = [
-                        "inventory", 
-                        "defects", 
-                        "arrivals", 
-                        "orders", 
-                        "positions",
-                        "product_locations"
-                    ]
+                    import io
+                    # Собираем данные
+                    tables_to_export = {
+                        "Заявки": "orders",
+                        "Приходы": "arrivals",
+                        "Брак": "defects",
+                        "Инвентаризация": "inventory"
+                    }
                     
-                    total_deleted = 0
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        for sheet_name, table_id in tables_to_export.items():
+                            data = supabase.table(table_id).select("*").execute().data
+                            if data:
+                                pd.DataFrame(data).to_excel(writer, sheet_name=sheet_name, index=False)
                     
-                    progress_bar = st.progress(0)
-                    for idx, table in enumerate(tables_to_clean):
-                        # 1. Получаем ID всех записей в текущей таблице
-                        res = supabase.table(table).select("id").execute()
-                        
-                        if res.data:
-                            ids = [row['id'] for row in res.data]
-                            
-                            # 2. Удаляем пачками по 500
-                            chunk_size = 500
-                            for i in range(0, len(ids), chunk_size):
-                                chunk = ids[i:i + chunk_size]
-                                supabase.table(table).delete().in_("id", chunk).execute()
-                            
-                            total_deleted += len(ids)
-                        
-                        # Обновляем прогресс
-                        progress_bar.progress((idx + 1) / len(tables_to_clean))
-                    
-                    st.success(f"🔥 Система очищена! Удалено записей: {total_deleted}")
-                    st.session_state.confirm_delete_all = False
-                    time.sleep(2)
-                    st.rerun()
-                    
+                    st.download_button(
+                        label="⬇️ Скачать отчет",
+                        data=output.getvalue(),
+                        file_name=f"WMS_Full_Report_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
                 except Exception as e:
-                    st.error(f"❌ Ошибка при масштабной очистке: {str(e)}")
-            
-            if c_no.button("ОТМЕНА", use_container_width=True):
-                st.session_state.confirm_delete_all = False
+                    st.error(f"Ошибка экспорта: {e}")
+
+        with c2:
+            st.markdown("### ⚠️ Оптимизация")
+            st.caption("Очищает временную память браузера и перезагружает сессию.")
+            if st.button("🔥 Сбросить кеш"):
+                st.session_state.clear()
+                st.toast("Кеш очищен!")
+                time.sleep(1)
                 st.rerun()
+                
+        with c3:
+            st.markdown("### 🔴 Опасная зона")
+            st.caption("Полная очистка базы данных. **Действие необратимо!**")
+            
+            if st.button("🧨 ОЧИСТИТЬ ВСЕ ДАННЫЕ", type="secondary"):
+                st.session_state.confirm_delete_all = True
+
+            if st.session_state.get('confirm_delete_all'):
+                st.warning("### ❗ ВЫ УВЕРЕНЫ?")
+                st.write("Будут удалены записи из всех основных таблиц (orders, arrivals, inventory и др.).")
+                
+                c_yes, c_no = st.columns(2)
+                
+                if c_yes.button("ДА, УДАЛИТЬ ВСЁ", type="primary", use_container_width=True):
+                    try:
+                        # Порядок важен для соблюдения ссылочной целостности
+                        tables_to_clean = [
+                            "inventory", 
+                            "defects", 
+                            "arrivals", 
+                            "orders", 
+                            "positions",
+                            "product_locations"
+                        ]
+                        
+                        total_deleted = 0
+                        progress_bar = st.progress(0)
+                        
+                        for idx, table in enumerate(tables_to_clean):
+                            # 1. Получаем ID записей
+                            res = supabase.table(table).select("id").execute()
+                            
+                            if res.data:
+                                ids = [row['id'] for row in res.data]
+                                
+                                # 2. Удаляем пачками по 500 (обход ограничений API)
+                                chunk_size = 500
+                                for i in range(0, len(ids), chunk_size):
+                                    chunk = ids[i:i + chunk_size]
+                                    supabase.table(table).delete().in_("id", chunk).execute()
+                                
+                                total_deleted += len(ids)
+                            
+                            progress_bar.progress((idx + 1) / len(tables_to_clean))
+                        
+                        st.success(f"🔥 Очистка завершена! Удалено записей: {total_deleted}")
+                        st.session_state.confirm_delete_all = False
+                        time.sleep(2)
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Критическая ошибка: {str(e)}")
+                
+                if c_no.button("ОТМЕНА", use_container_width=True):
+                    st.session_state.confirm_delete_all = False
+                    st.rerun()
                 
 # --- 1. УМНАЯ ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
 TABLES_TO_LOAD = {
@@ -2275,6 +2305,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
