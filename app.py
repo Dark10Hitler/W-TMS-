@@ -1836,14 +1836,14 @@ elif selected == "База Данных":
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
     
     with st.spinner("Синхронизация товарных позиций..."):
-        # 1. Получаем основной список товаров из НОВОЙ таблицы inventory
+        # 1. Получаем данные напрямую из новой таблицы inventory
         res = supabase.table("inventory").select("*").order("created_at", desc=True).execute()
         
         if not res.data:
             inventory_df = pd.DataFrame()
         else:
-            # Превращаем в DF и переименовываем колонки под твой интерфейс
             raw_df = pd.DataFrame(res.data)
+            # Приводим к формату твоего интерфейса
             inventory_df = raw_df.rename(columns={
                 'item_name': 'Название товара',
                 'quantity': 'Количество',
@@ -1851,40 +1851,33 @@ elif selected == "База Данных":
                 'cell_address': 'Адрес',
                 'warehouse_id': 'Склад',
                 'status': 'Статус',
-                'type': 'Тип',  # Если колонки 'type' нет, добавим ниже
                 'created_at': 'Дата'
             })
-            
-            # Если каких-то колонок не хватает для аналитики, создаем их
+            # Добавляем технические поля для совместимости с аналитикой, если их нет в БД
             if 'Тип' not in inventory_df.columns: inventory_df['Тип'] = "📦 ПРИХОД"
             if 'Контрагент' not in inventory_df.columns: inventory_df['Контрагент'] = "Н/Д"
 
-    # Проверка на пустой DataFrame
-    if inventory_df is None or (isinstance(inventory_df, pd.DataFrame) and inventory_df.empty):
-        st.info("📦 В системе пока нет товаров. Создайте Приход, Заказ или Дополнение.")
+    if inventory_df is None or inventory_df.empty:
+        st.info("📦 В системе пока нет товаров. Создайте документ в разделе 'Приемка' или 'Заказы'.")
     else:
-        # --- ПАНЕЛЬ АНАЛИТИКИ (Твоя оригинальная) ---
+        # --- ПАНЕЛЬ АНАЛИТИКИ ---
         c1, c2, c3 = st.columns(3)
-        
-        total_in = inventory_df[inventory_df['Тип'].str.contains("ПРИХОД", na=False)]['Количество'].sum()
+        total_qty = inventory_df['Количество'].sum()
         unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО'])
         
-        c1.metric("Всего поступило (ед.)", f"{int(total_in)} шт")
+        c1.metric("Всего на складе", f"{int(total_qty)} шт")
         c2.metric("Требуют размещения", unassigned, delta=f"{unassigned} поз.", delta_color="inverse")
-        c3.metric("Уникальных строк", len(inventory_df))
+        c3.metric("Уникальных позиций", len(inventory_df))
 
-        # --- НАСТРОЙКА ТАБЛИЦЫ AG-GRID ---
+        # --- ТАБЛИЦА AG-GRID ---
         gb = GridOptionsBuilder.from_dataframe(inventory_df)
         gb.configure_default_column(resizable=True, filterable=True, sortable=True, floatingFilter=True)
         gb.configure_selection(selection_mode="single", use_checkbox=True)
         
-        # Твоя стилизация ячеек
         cellsytle_jscode = JsCode("""
         function(params) {
             if (params.value === 'НЕ НАЗНАЧЕНО') {
                 return {'color': 'white', 'backgroundColor': '#E74C3C', 'fontWeight': 'bold'};
-            } else if (params.value === '🚚 В ЗАКАЗЕ') {
-                return {'color': 'white', 'backgroundColor': '#3498DB'};
             } else {
                 return {'color': 'white', 'fontWeight': 'bold', 'backgroundColor': '#2ECC71'};
             }
@@ -1895,110 +1888,113 @@ elif selected == "База Данных":
         grid_res = AgGrid(
             inventory_df,
             gridOptions=gb.build(),
-            height=500,
+            height=400,
             theme='alpine',
             allow_unsafe_jscode=True,
             update_on=['selectionChanged'], 
-            key="global_inventory_grid"
+            key="global_inventory_grid_v4"
         )
 
-        # Обработка выбора строки
         sel_row = grid_res.get('selected_rows')
         
         if sel_row is not None and len(sel_row) > 0:
             item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
             
-            # --- ПОДГОТОВКА ДАННЫХ (Твоя логика NameError) ---
-            inv_uuid = item.get('id') # Берем внутренний ID записи из inventory
+            # Данные для логики
+            inv_uuid = item.get('id')
             doc_id = str(item.get('ID Документа'))
-            item_name = item.get('Название товара')
-            
-            # Список складов из твоей топологии
-            warehouse_list = list(WAREHOUSE_MAP.keys())
-            
-            # Текущие данные из выбранной строки
+            product_name = item.get('Название товара')
             current_addr = item.get('Адрес', 'НЕ НАЗНАЧЕНО')
-            saved_zone = item.get('Склад', warehouse_list[0])
-
-            try:
-                wh_index = warehouse_list.index(saved_zone)
-            except:
-                wh_index = 0
+            current_wh = str(item.get('Склад', '19'))
 
             st.divider()
             
-            # Твои метрики под таблицей
-            col1, col2, col3, col4 = st.columns(4)
-            with col1: st.metric("Количество", f"{item.get('Количество', 0)} шт")
-            with col2: st.metric("Тип", item.get('Тип', 'Н/Д'))
-            with col3: st.metric("Контрагент", str(item.get('Контрагент', 'Н/Д'))[:15])
-            with col4:
-                date_val = str(item.get('Дата', 'Н/Д'))
-                st.metric("Дата", date_val[:10])
-            
+            # --- ВИЗУАЛЬНЫЕ МЕТРИКИ ВЫБРАННОГО ТОВАРА ---
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Количество", f"{item.get('Количество', 0)} шт")
+            m2.metric("Тип", item.get('Тип', 'Н/Д'))
+            m3.metric("Контрагент", str(item.get('Контрагент', 'Н/Д'))[:15])
+            m4.metric("Дата", str(item.get('Дата'))[:10])
+
             st.divider()
-            
+
             col_info, col_location = st.columns([1, 1.2])
             
             with col_info:
                 st.markdown(f"""
                 <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #58a6ff;">
-                    <b>📋 Детали товара:</b><br>
+                    <b>📋 Детали позиции:</b><br>
                     - ID Док: <code>{doc_id}</code><br>
-                    - Товар: <b>{item_name}</b><br>
+                    - Товар: <b>{product_name}</b><br>
                     - Текущий адрес: <span style="color:{'#E74C3C' if current_addr == 'НЕ НАЗНАЧЕНО' else '#2ECC71'}">{current_addr}</span>
                 </div>
                 """, unsafe_allow_html=True)
-                st.info("💡 Выберите новую ячейку справа для перемещения.")
+                st.info("💡 Кликните на ячейку в сетке ниже, чтобы назначить новое место.")
 
             with col_location:
-                st.markdown("""<div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #2ecc71;"><b>🏪 Управление локацией:</b></div>""", unsafe_allow_html=True)
-
-                # 1. Выбор склада
-                wh_id = st.selectbox("🏪 Выберите склад:", warehouse_list, index=wh_index, key=f"wh_sel_{inv_uuid}")
-
-                # 2. Получение ячеек
+                # Импорт топологии
+                from config_topology import WAREHOUSE_MAP
+                
+                wh_list = list(WAREHOUSE_MAP.keys())
+                # Пытаемся предустановить склад из данных товара
                 try:
-                    from config_topology import get_actual_cells
-                    all_cells = get_actual_cells(wh_id)
+                    default_wh_idx = wh_list.index(current_wh)
                 except:
-                    all_cells = []
+                    default_wh_idx = 0
 
-                if not all_cells:
-                    all_cells = [current_addr] if current_addr != "НЕ НАЗНАЧЕНО" else ["Список пуст"]
+                selected_wh = st.selectbox("🏪 Выберите склад для отрисовки карты:", wh_list, index=default_wh_idx)
+                
+                # --- ГЕНЕРАЦИЯ ТОПОЛОГИИ (СЕТКА) ---
+                st.write(f"### Схема склада: {selected_wh}")
+                
+                topo = WAREHOUSE_MAP[selected_wh]
+                rows = topo['rows']
+                cols = topo['cols']
+                prefix = topo['prefix']
+                
+                # Переменная для хранения выбранной в сетке ячейки
+                if 'temp_cell' not in st.session_state:
+                    st.session_state.temp_cell = current_addr
 
-                try:
-                    c_idx = all_cells.index(current_addr) if current_addr in all_cells else 0
-                except:
-                    c_idx = 0
+                # Отрисовка сетки
+                for r in rows:
+                    cols_layout = st.columns(len(cols))
+                    for idx, c in enumerate(cols):
+                        cell_id = f"{prefix}-{r}{c}"
+                        
+                        # Стиль: если это текущая ячейка товара - она выделена
+                        is_current = (current_addr == cell_id)
+                        btn_label = f"📍 {cell_id}" if is_current else cell_id
+                        
+                        if cols_layout[idx].button(btn_label, key=f"btn_{cell_uuid}_{cell_id}", use_container_width=True, type="primary" if is_current else "secondary"):
+                            st.session_state.temp_cell = cell_id
 
-                selected_cell = st.selectbox("📍 Выберите ячейку:", options=all_cells, index=c_idx, key=f"cell_sel_{inv_uuid}")
+                st.success(f"Выбрана ячейка: **{st.session_state.temp_cell}**")
 
                 if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", type="primary", use_container_width=True):
                     try:
-                        # ОБНОВЛЯЕМ В ДВУХ МЕСТАХ ДЛЯ НАДЕЖНОСТИ
-                        # 1. В таблице inventory (чтобы сразу обновилась база)
+                        # 1. Обновляем в мастере inventory
                         supabase.table("inventory").update({
-                            "cell_address": selected_cell,
-                            "warehouse_id": wh_id,
+                            "cell_address": st.session_state.temp_cell,
+                            "warehouse_id": selected_wh,
                             "updated_at": datetime.now().isoformat()
                         }).eq("id", inv_uuid).execute()
 
-                        # 2. В product_locations (для совместимости с другими модулями)
-                        loc_payload = {
+                        # 2. Дублируем в product_locations для карты и поиска
+                        supabase.table("product_locations").upsert({
                             "doc_id": doc_id,
-                            "product": item_name,
-                            "address": selected_cell,
-                            "zone": wh_id,
-                            "last_updated": datetime.now().isoformat()
-                        }
-                        supabase.table("product_locations").upsert(loc_payload, on_conflict="doc_id,product").execute()
+                            "product": product_name,
+                            "address": st.session_state.temp_cell,
+                            "zone": selected_wh
+                        }, on_conflict="doc_id,product").execute()
 
-                        st.success(f"✅ Адрес успешно изменен на {selected_cell}")
+                        st.success(f"✅ Место хранения обновлено: {st.session_state.temp_cell}")
+                        del st.session_state.temp_cell # Очищаем временный выбор
                         time.sleep(1)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Ошибка сохранения: {e}")
+                        st.error(f"Ошибка при сохранении: {e}")
+                        
 elif selected == "Карта": show_map()
 elif selected == "Личный кабинет": show_profile()
 elif selected == "Карта": show_map()
@@ -2207,6 +2203,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
