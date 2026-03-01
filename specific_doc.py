@@ -647,7 +647,7 @@ def create_defect_modal(*args, **kwargs):
         input_desc = st.text_area("Детальное описание повреждений")
         uploaded_photo = st.file_uploader("📸 Прикрепить фото", type=['png', 'jpg', 'jpeg'])
         
-        submitted = st.form_submit_button("🚀 ЗАРЕГИСТРИРОВАТЬ АКТ", use_container_width=True)
+        submitted = st.form_submit_button("🚀 ЗАРЕГИС��РИРОВАТЬ АКТ", use_container_width=True)
 
     if submitted:
         if not reporter or not item_name or not uploaded_photo:
@@ -658,7 +658,7 @@ def create_defect_modal(*args, **kwargs):
             try:
                 defect_id = f"DEF-{str(uuid.uuid4())[:6].upper()}"
                 
-                # === ЗАГРУЗКА ФОТО В BUCKET ===
+                # === ЗАГРУЗКА ФОТО В BUCKET defects_photos ===
                 final_photo_url = None
                 try:
                     file_ext = uploaded_photo.name.split('.')[-1].lower()
@@ -679,13 +679,18 @@ def create_defect_modal(*args, **kwargs):
                 # === ПОДГОТОВКА ДАННЫХ ===
                 now_iso = datetime.now().isoformat()
                 
-                items_json = json.dumps([{
-                    "item_name": item_name,
-                    "quantity": int(defect_qty),
-                    "defect_type": d_type
-                }], ensure_ascii=False)
+                # 🔥 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: items_data как ОБЪЕКТ, а не строка!
+                items_data = {
+                    "items": [
+                        {
+                            "item_name": item_name,
+                            "quantity": int(defect_qty),
+                            "defect_type": d_type
+                        }
+                    ]
+                }
                 
-                # === PAYLOAD ДЛЯ DIRECT INSERT ===
+                # === PAYLOAD ДЛЯ ТАБЛИЦЫ defects ===
                 supabase_payload = {
                     "id": defect_id,
                     "created_at": now_iso,
@@ -702,17 +707,13 @@ def create_defect_modal(*args, **kwargs):
                     "reported_by": reporter,
                     "decision": "На проверку",
                     "status": "ОБНАРУЖЕНО",
-                    "photo_url": final_photo_url,
+                    "photo_url": final_photo_url if final_photo_url else None,
                     "culprit": "Не установлен",
-                    "items_data": items_json
+                    "items_data": items_data  # ✅ Передаём как dict, не как JSON string!
                 }
                 
-                # === ВСТАВКА НАПРЯМУЮ В TABLE defects ===
-                # Используем параметризацию для безопасности
-                response = supabase.table("defects").insert(
-                    supabase_payload,
-                    count="exact"
-                ).execute()
+                # === ВСТАВКА В TABLE defects ===
+                response = supabase.table("defects").insert(supabase_payload).execute()
                 
                 st.success(f"✅ Акт {defect_id} успешно создан!")
                 st.balloons()
@@ -728,7 +729,7 @@ def create_defect_modal(*args, **kwargs):
                     "Тип дефекта": d_type,
                     "Выявил": reporter,
                     "Статус": "ОБНАРУЖЕНО",
-                    "Фото": "✅" if final_photo_url else "❌",
+                    "Фото": "✅ Загружено" if final_photo_url else "❌ Нет",
                     "Создано": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }])
                 
@@ -744,13 +745,17 @@ def create_defect_modal(*args, **kwargs):
                 error_msg = str(db_error)
                 st.error(f"🚨 Ошибка БД: {error_msg}")
                 
-                # Диагностика
+                # Отладка
                 if "main_registry" in error_msg:
-                    st.error("❌ ПРОБЛЕМА: Кто-то редирект запрос на VIEW main_registry!")
-                    st.info("✅ РЕШЕНИЕ: Отключи RLS на таблице defects (см. выше)")
-                if "permission" in error_msg.lower():
-                    st.error("❌ ПРОБЛЕМА: Нет прав на insert!")
-                    st.info("✅ РЕШЕНИЕ: Проверь RLS политики и права доступа")
+                    st.error("❌ Всё ещё редирект на VIEW! Проверь триггеры:")
+                    st.code("""
+SELECT trigger_name, action_statement
+FROM information_schema.triggers
+WHERE event_object_table = 'defects';
+                    """)
+                    
+                if "items_data" in error_msg or "jsonb" in error_msg:
+                    st.error("❌ Ошибка типа jsonb! Передавай как dict, не как JSON string")
             
 @st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
@@ -1031,6 +1036,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
