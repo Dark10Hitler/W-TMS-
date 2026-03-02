@@ -1732,16 +1732,17 @@ elif selected == "База Данных":
         gb.configure_default_column(resizable=True, filterable=True, sortable=True, floatingFilter=True)
         gb.configure_selection(selection_mode="single", use_checkbox=True)
         
+        // Замени свой cellsytle_jscode на этот:
         cellsytle_jscode = JsCode("""
-        function(params) {
-            if (params.value === 'НЕ НАЗНАЧЕНО') {
-                return {'color': 'white', 'backgroundColor': '#E74C3C', 'fontWeight': 'bold'};
-            } else if (params.value === '🚚 В ЗАКАЗЕ') {
-                return {'color': 'white', 'backgroundColor': '#3498DB'};
-            } else {
-                return {'color': 'white', 'fontWeight': 'bold', 'backgroundColor': '#2ECC71'};
-            }
-        };
+function(params) {
+    if (params.value === 'НЕ НАЗНАЧЕНО') {
+        return {'color': '#c42b1c', 'backgroundColor': '#fde7e9', 'fontWeight': '600', 'borderRadius': '4px'}; 
+    } else if (params.value === '🚚 В ЗАКАЗЕ') {
+        return {'color': '#0067c0', 'backgroundColor': '#e5f1fb', 'fontWeight': '600', 'borderRadius': '4px'};
+    } else {
+        return {'color': '#0f7b0f', 'backgroundColor': '#dff6dd', 'fontWeight': '600', 'borderRadius': '4px'};
+    }
+};
         """)
         gb.configure_column("Адрес", cellStyle=cellsytle_jscode, pinned='left', width=180)
         
@@ -1788,13 +1789,16 @@ elif selected == "База Данных":
             col_info, col_location = st.columns([1, 1.2])
             
             with col_info:
+                # Замени HTML-код внутри st.markdown в col_info на этот:
                 st.markdown(f"""
-                <div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #58a6ff;">
-                    <b>📋 Детали товара:</b><br>
-                    - ID: <code>{doc_id}</code><br>
-                    - Товар: <b>{item_name}</b><br>
-                    - Текущий адрес: <span style="color:{'#E74C3C' if current_addr == 'НЕ НАЗНАЧЕНО' else '#2ECC71'}">{current_addr}</span>
-                </div>
+<div style="background: #FFFFFF; padding: 20px; border-radius: 12px; border: 1px solid #E5E5E5; box-shadow: 0 4px 6px rgba(0,0,0,0.02);">
+    <b style="color: #1B1B1B; font-size: 1.1rem;">📋 Детали товара:</b><br>
+    <div style="margin-top: 10px; color: #666;">
+        - ID: <code style="color: #0067c0;">{doc_id}</code><br>
+        - Товар: <b style="color: #1B1B1B;">{item_name}</b><br>
+        - Текущий адрес: <span style="padding: 2px 8px; border-radius: 4px; background: {'#fde7e9' if current_addr == 'НЕ НАЗНАЧЕНО' else '#dff6dd'}; color: {'#c42b1c' if current_addr == 'НЕ НАЗНАЧЕНО' else '#0f7b0f'}; font-weight: 600;">{current_addr}</span>
+    </div>
+</div>
                 """, unsafe_allow_html=True)
                 
                 # Метрики внутри инфо-блока
@@ -1806,7 +1810,8 @@ elif selected == "База Данных":
                 st.info("💡 Выберите склад и ячейку справа. Карта Plotly обновится автоматически.")
 
             with col_location:
-                st.markdown("""<div style="background: #1d222b; padding: 15px; border-radius: 8px; border-left: 3px solid #2ecc71;"><b>🏪 Управление локацией:</b></div>""", unsafe_allow_html=True)
+                # Замени HTML-код заголовка в col_location на этот:
+                st.markdown("""<div style="color: #1B1B1B; font-weight: 600; font-size: 1.1rem; margin-bottom: 15px;">🏪 Управление локацией:</div>""", unsafe_allow_html=True)
 
                 # Выбор склада
                 wh_id = st.selectbox("🏪 Выберите склад:", warehouse_list, index=warehouse_list.index(saved_zone) if saved_zone in warehouse_list else 0, key=f"wh_db_{doc_id}")
@@ -1821,7 +1826,13 @@ elif selected == "База Данных":
                 # --- ТВОЯ ВИЗУАЛИЗАЦИЯ PLOTLY ---
                 try:
                     fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
-                    fig.update_layout(margin=dict(l=0, r=0, b=0, t=30), height=400)
+                    fig.update_layout(
+                        template="plotly_white", # ПРИНУДИТЕЛЬНО СВЕТЛАЯ ТЕМА КАРТЫ
+                        paper_bgcolor='rgba(0,0,0,0)', 
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        margin=dict(l=0, r=0, b=0, t=30), 
+                        height=400
+                        )
                     st.plotly_chart(fig, use_container_width=True)
                 except Exception as e:
                     st.warning(f"Карта Plotly временно недоступна: {e}")
@@ -2048,6 +2059,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
