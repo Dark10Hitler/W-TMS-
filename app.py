@@ -1353,7 +1353,7 @@ with st.sidebar:
     st.markdown("""
         <div style='padding: 10px 0px;'>
             <h2 style='color: #1E1E1E; font-family: "Segoe UI", Tahoma, Geneva, sans-serif; font-size: 22px; font-weight: 600;'>
-                📦 IMPERIA WMS
+                📦 LOGISTICS W&TMS
             </h2>
             <p style='color: #666; font-size: 12px; margin-top: -10px;'>Warehouse Management System</p>
         </div>
@@ -2058,6 +2058,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
