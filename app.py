@@ -1334,31 +1334,54 @@ def show_profile():
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
             
-# --- Сайдбар и навигация остаются как у тебя, но добавляем логику вызова ---
 with st.sidebar:
-    st.markdown("### 📦 IMPERIA WMS")
+    st.markdown("""
+        <div style='padding: 10px 0px;'>
+            <h2 style='color: #1E1E1E; font-family: "Segoe UI", Tahoma, Geneva, sans-serif; font-size: 22px; font-weight: 600;'>
+                📦 IMPERIA WMS
+            </h2>
+            <p style='color: #666; font-size: 12px; margin-top: -10px;'>Warehouse Management System</p>
+        </div>
+    """, unsafe_allow_html=True)
+
     selected = option_menu(
-        menu_title="Навигация",
+        menu_title=None, # Убираем заголовок меню для минимализма
         options=[
-            "Dashboard", "База Данных", "Main", "Заявки", "Приходы", 
-            "Дополнения", "Брак", "Водители", "ТС", "Карта", 
-            "Аналитика", "Личный кабинет", "Настройки"
+            "Main", "База Данных", "Заявки", "Приходы", 
+            "Дополнения", "Брак", "Карта", "Аналитика", "Настройки"
         ],
         icons=[
-            "grid-1x2", "database-fill", "table", "cart-check", "box-seam", 
-            "plus-square", "shield-slash", "person-vcard", "truck", "map", 
-            "bar-chart-line", "person-circle", "gear-wide-managed"
+            "house", "database-fill", "clipboard2-check", "box-arrow-in-down", 
+            "plus-circle", "exclamation-octagon", "map", "graph-up-arrow", "gear"
         ],
-        menu_icon="house-door",
+        menu_icon="cast",
         default_index=0,
         styles={
-            "container": {"padding": "5!important", "background-color": "#0e1117"},
-            "icon": {"color": "#faaa1d", "font-size": "18px"},
-            "nav-link": {"font-size": "14px", "text-align": "left", "margin": "0px", "--hover-color": "#262730"},
-            "nav-link-selected": {"background-color": "#ff4b4b"},
+            "container": {
+                "padding": "0!important", 
+                "background-color": "#FFFFFF", # Чистый белый фон
+                "border-radius": "0px"
+            },
+            "icon": {
+                "color": "#5F6368", # Спокойный серый для иконок
+                "font-size": "18px"
+            },
+            "nav-link": {
+                "font-size": "14px", 
+                "text-align": "left", 
+                "margin": "0px", 
+                "color": "#3C4043", # Цвет текста Windows Light
+                "font-family": "Segoe UI",
+                "--hover-color": "#F1F3F4" # Светло-серый при наведении
+            },
+            "nav-link-selected": {
+                "background-color": "#E8F0FE", # Нежно-голубой фон (как в Windows/Google)
+                "color": "#1A73E8", # Акцентный синий цвет текста
+                "font-weight": "600",
+                "border-left": "4px solid #1A73E8" # Полоска слева для акцента
+            },
         }
     )
-
     
 def delete_entry(table_key, entry_id):
     """
@@ -1395,14 +1418,14 @@ def delete_entry(table_key, entry_id):
     except Exception as e:
         st.error(f"❌ Ошибка при удалении из базы данных: {e}")
         
-if selected == "Dashboard": show_dashboard()
-elif selected == "Main": render_aggrid_table("main", "Основной Реестр")
+#if selected == "Dashboard": show_dashboard()
+if selected == "Main": render_aggrid_table("main", "Основной Реестр")
 elif selected == "Заявки": render_aggrid_table("orders", "Заявки")
 elif selected == "Приходы": render_aggrid_table("arrivals", "Приходы")
 elif selected == "Брак": render_aggrid_table("defects", "Журнал Брака")
 elif selected == "Дополнения": render_aggrid_table("extras", "Дополнения")
 # --- РАЗДЕЛ ВОДИТЕЛИ ---     
-elif selected == "Водители":
+#elif selected == "Водители":
     st.markdown("<h1 class='section-head'>👨‍✈️ Реестр водителей</h1>", unsafe_allow_html=True)
     
     # 1. СИНХРОНИЗАЦИЯ
@@ -1493,7 +1516,7 @@ elif selected == "Водители":
     else:
         st.info("Водители не найдены.")
         
-elif selected == "ТС":
+#elif selected == "ТС":
     st.markdown("<h1 class='section-head'>🚛 Управление Автопарком</h1>", unsafe_allow_html=True)
     
     if "vehicles" not in st.session_state or st.session_state.vehicles is None:
@@ -1987,9 +2010,9 @@ elif selected == "База Данных":
                         st.error(f"Ошибка сохранения: {e}")
                         
 elif selected == "Карта": show_map()
-elif selected == "Личный кабинет": show_profile()
+#elif selected == "Личный кабинет": show_profile()
 elif selected == "Карта": show_map()
-elif selected == "Личный кабинет": show_profile()
+#elif selected == "Личный кабинет": show_profile()
 elif selected == "Настройки":
     st.markdown("<h1 class='section-head'>⚙️ Системные настройки</h1>", unsafe_allow_html=True)
     
@@ -2194,6 +2217,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
