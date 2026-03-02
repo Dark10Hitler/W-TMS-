@@ -1732,7 +1732,6 @@ elif selected == "База Данных":
         gb.configure_default_column(resizable=True, filterable=True, sortable=True, floatingFilter=True)
         gb.configure_selection(selection_mode="single", use_checkbox=True)
         
-        // Замени свой cellsytle_jscode на этот:
         cellsytle_jscode = JsCode("""
 function(params) {
     if (params.value === 'НЕ НАЗНАЧЕНО') {
@@ -2059,6 +2058,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
