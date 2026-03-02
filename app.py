@@ -489,7 +489,7 @@ def save_new_location(product_name, location):
     except Exception as e:
         st.error(f"Ошибка сохранения топологии: {e}")
 
-st.set_page_config(layout="wide", page_title="IMPERIA LOGISTICS", page_icon="🏢")
+st.set_page_config(layout="wide", page_title="W&TMS", page_icon="🏛️")
 
 st.markdown("""
 <style>
@@ -2058,6 +2058,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
