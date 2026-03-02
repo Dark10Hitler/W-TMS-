@@ -1418,187 +1418,11 @@ def delete_entry(table_key, entry_id):
     except Exception as e:
         st.error(f"❌ Ошибка при удалении из базы данных: {e}")
         
-#if selected == "Dashboard": show_dashboard()
 if selected == "Main": render_aggrid_table("main", "Основной Реестр")
 elif selected == "Заявки": render_aggrid_table("orders", "Заявки")
 elif selected == "Приходы": render_aggrid_table("arrivals", "Приходы")
 elif selected == "Брак": render_aggrid_table("defects", "Журнал Брака")
 elif selected == "Дополнения": render_aggrid_table("extras", "Дополнения")
-# --- РАЗДЕЛ ВОДИТЕЛИ ---     
-#elif selected == "Водители":
-    st.markdown("<h1 class='section-head'>👨‍✈️ Реестр водителей</h1>", unsafe_allow_html=True)
-    
-    # 1. СИНХРОНИЗАЦИЯ
-    if "drivers" not in st.session_state or st.session_state.drivers.empty:
-        with st.spinner("Загрузка..."):
-            try:
-                res = supabase.table("drivers").select("*").execute()
-                if res.data:
-                    df = pd.DataFrame(res.data)
-                    # Маппинг из имен БД в имена для UI
-                    df = df.rename(columns={
-                        'first_name': 'Имя', 
-                        'last_name': 'Фамилия', 
-                        'phone': 'Телефон', 
-                        'categories': 'Категории',
-                        'experience': 'Стаж', 
-                        'status': 'Статус', 
-                        'photo_url': 'Фото'
-                    })
-                    st.session_state.drivers = df
-                else:
-                    st.session_state.drivers = pd.DataFrame(columns=['id', 'Имя', 'Фамилия', 'Телефон', 'Категории', 'Стаж', 'Статус', 'Фото'])
-            except Exception as e:
-                st.error(f"Ошибка загрузки: {e}")
-                st.session_state.drivers = pd.DataFrame()
-
-    col_btn, col_search = st.columns([1, 2])
-    
-    if col_btn.button("➕ ДОБАВИТЬ ВОДИТЕЛЯ", type="primary", use_container_width=True):
-        create_driver_modal() 
-
-    search = col_search.text_input("🔍 Поиск по фамилии...", placeholder="Введите фамилию")
-
-    df_drivers = st.session_state.drivers
-    
-    # Фильтрация (с защитой от пустых значений в колонке Фамилия)
-    if search and not df_drivers.empty:
-        df_drivers = df_drivers[df_drivers['Фамилия'].fillna('').str.contains(search, case=False, na=False)]
-
-    st.divider()
-
-    if not df_drivers.empty:
-        cols = st.columns(3)
-        for idx, (i, row) in enumerate(df_drivers.iterrows()):
-            # Безопасное получение данных через .get()
-            driver_id = row.get('id')
-            f_name = row.get('Имя', '')
-            l_name = row.get('Фамилия', '')
-            status = row.get('Статус', 'Н/Д')
-            phone = row.get('Телефон', 'Нет номера')
-            cats = row.get('Категории', '-')
-            exp = row.get('Стаж', 0)
-            
-            # Логика фото: проверяем 'Фото', потом 'photo_url', потом дефолт
-            img_url = row.get('Фото') or row.get('photo_url') or "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
-            
-            with cols[idx % 3]:
-                with st.container(border=True):
-                    st.markdown(f"""
-                    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
-                        <img src="{img_url}" style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover; border: 2px solid #58A6FF;">
-                        <div>
-                            <h3 style="margin: 0; font-size: 1.1em;">{l_name} {f_name}</h3>
-                            <small style="color: #8B949E;">{status}</small>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    st.caption(f"📱 {phone}")
-                    st.caption(f"🪪 Кат: {cats} | Стаж: {exp}л.")
-                    
-                    c1, c2 = st.columns(2)
-                    # Кнопка изменения
-                    if c1.button("⚙️ Изм.", key=f"ed_btn_{driver_id}", use_container_width=True):
-                        edit_driver_modal(driver_id)
-                    
-                    # Кнопка удаления
-                    if c2.button("🗑️", key=f"del_btn_{driver_id}", use_container_width=True):
-                        try:
-                            supabase.table("drivers").delete().eq("id", driver_id).execute()
-                            # Обновляем локальный стейт без перезагрузки всей базы
-                            st.session_state.drivers = st.session_state.drivers[st.session_state.drivers.id != driver_id]
-                            st.toast(f"Водитель {l_name} удален")
-                            time.sleep(0.5)
-                            st.rerun()
-                        except Exception as e:
-                            st.error("Ошибка удаления")
-    else:
-        st.info("Водители не найдены.")
-        
-#elif selected == "ТС":
-    st.markdown("<h1 class='section-head'>🚛 Управление Автопарком</h1>", unsafe_allow_html=True)
-    
-    if "vehicles" not in st.session_state or st.session_state.vehicles is None:
-        with st.spinner("Синхронизация..."):
-            st.session_state.vehicles = load_data_from_supabase("vehicles")
-
-    if st.button("➕ ДОБАВИТЬ НОВОЕ ТРАНСПОРТНОЕ СРЕДСТВО", type="primary", use_container_width=True):
-        create_vehicle_modal() 
-
-    st.divider()
-
-    df_v = st.session_state.get("vehicles", pd.DataFrame())
-
-    if not df_v.empty:
-        cols = st.columns(2) 
-        for idx, (i, row) in enumerate(df_v.iterrows()):
-            v_id = row.get('id')
-            g_num = row.get('Госномер') or row.get('gov_num') or "Н/Д"
-            brand = row.get('Марка') or row.get('brand') or ""
-            v_type = row.get('Тип') or row.get('body_type') or ""
-            status = row.get('Статус') or row.get('status') or "На линии"
-            veh_img = row.get('Фото') or row.get('photo_url') or "https://cdn-icons-png.flaticon.com/512/2554/2554977.png"
-            
-            cap = row.get('Грузоподъемность') or row.get('capacity') or 0
-            vol = row.get('Объем') or row.get('volume') or 0
-            pal = row.get('Паллеты') or row.get('pallets') or 0
-
-            st_color = "#238636" if status == "На линии" else "#d29922"
-
-            with cols[idx % 2]:
-                with st.container(border=True):
-                    # Мы упаковываем HTML в одну строку, чтобы Streamlit не путался
-                    card_html = f"""
-                    <div style="font-family: sans-serif;">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
-                            <div style="display: flex; gap: 12px;">
-                                <img src="{veh_img}" style="width: 48px; height: 48px; object-fit: contain; background: #161b22; border-radius: 8px; padding: 4px; border: 1px solid #30363d;">
-                                <div>
-                                    <div style="font-size: 1.1em; font-weight: bold; color: #58a6ff;">{g_num}</div>
-                                    <div style="font-size: 0.85em; color: #8b949e;">{brand} • {v_type}</div>
-                                </div>
-                            </div>
-                            <div style="border: 1px solid {st_color}; color: {st_color}; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold; background: {st_color}11;">
-                                {status.upper()}
-                            </div>
-                        </div>
-                        <div style="display: flex; gap: 8px;">
-                            <div style="flex: 1; background: #0d1117; padding: 8px; border-radius: 6px; border: 1px solid #30363d; text-align: center;">
-                                <div style="font-size: 0.6em; color: #8b949e; text-transform: uppercase;">Вес</div>
-                                <div style="font-size: 0.85em; font-weight: bold; color: #c9d1d9;">{cap} кг</div>
-                            </div>
-                            <div style="flex: 1; background: #0d1117; padding: 8px; border-radius: 6px; border: 1px solid #30363d; text-align: center;">
-                                <div style="font-size: 0.6em; color: #8b949e; text-transform: uppercase;">Объем</div>
-                                <div style="font-size: 0.85em; font-weight: bold; color: #c9d1d9;">{vol} м&sup3;</div>
-                            </div>
-                            <div style="flex: 1; background: #0d1117; padding: 8px; border-radius: 6px; border: 1px solid #30363d; text-align: center;">
-                                <div style="font-size: 0.6em; color: #8b949e; text-transform: uppercase;">Паллеты</div>
-                                <div style="font-size: 0.85em; font-weight: bold; color: #c9d1d9;">{pal} шт</div>
-                            </div>
-                        </div>
-                    </div>
-                    """.replace("\n", "") # Убираем переносы, которые ломают рендеринг
-                    
-                    st.markdown(card_html, unsafe_allow_html=True)
-                    st.write("") 
-                    
-                    c1, c2 = st.columns([4, 1])
-                    if c1.button(f"⚙️ ИЗМЕНИТЬ", key=f"ed_{v_id}", use_container_width=True):
-                        st.session_state.editing_id = v_id
-                        edit_vehicle_modal()
-                    
-                    if c2.button(f"🗑️", key=f"dl_{v_id}", use_container_width=True):
-                        try:
-                            supabase.table("vehicles").delete().eq("id", v_id).execute()
-                            st.session_state.vehicles = st.session_state.vehicles[st.session_state.vehicles.id != v_id]
-                            st.toast("Автомобиль удален")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Ошибка: {e}")
-    else:
-        st.info("ℹ️ В автопарке пока нет записей.")
-
 elif selected == "Аналитика":
     st.title("🛡️ Logistics Intelligence & Tech Audit")
     
@@ -2010,9 +1834,6 @@ elif selected == "База Данных":
                         st.error(f"Ошибка сохранения: {e}")
                         
 elif selected == "Карта": show_map()
-#elif selected == "Личный кабинет": show_profile()
-elif selected == "Карта": show_map()
-#elif selected == "Личный кабинет": show_profile()
 elif selected == "Настройки":
     st.markdown("<h1 class='section-head'>⚙️ Системные настройки</h1>", unsafe_allow_html=True)
     
@@ -2175,11 +1996,6 @@ if st.session_state.current_page != selected:
         st.session_state[key] = None
     st.session_state.current_page = selected
     st.rerun()
-
-# --- 3. ГЛАВНЫЙ ДИСПЕТЧЕР (БЕЗ ОШИБОК ИМЕНИ) ---
-
-# --- 3. ГЛАВНЫЙ ДИСПЕТЧЕР (ФИНАЛЬНАЯ ВЕРСИЯ) ---
-
 # ПРИОРИТЕТ 1: РЕДАКТИРОВАНИЕ
 if st.session_state.get("active_edit_modal"):
     target = st.session_state.active_edit_modal
@@ -2217,6 +2033,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
