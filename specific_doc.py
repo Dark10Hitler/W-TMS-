@@ -674,9 +674,7 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
 
     # === 2. ФОРМА (СВОБОДНЫЙ ВВОД ТОВАРА ВРУЧНУЮ) ===
     with st.form("defect_form_v7_manual_input"):
-        st.subheader("🚨 Акт регистрации дефекта")
-        st.info("💡 Режим ручного ввода. Товар не обязан числиться на остатках.")
-        
+        st.subheader("🚨 Акт регистрации дефекта") 
         # 1. Свободный ввод названия товара
         item_name_input = st.text_input(
             "📦 Название товара (Обязательно)", 
@@ -1054,6 +1052,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
