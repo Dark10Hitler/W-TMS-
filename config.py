@@ -157,6 +157,14 @@ import datetime
 def edit_order_modal(entry_id, table_key="orders"):
     from database import supabase  # Гарантируем импорт клиента Supabase
     import datetime
+    import pandas as pd
+    import folium
+    from streamlit_folium import st_folium
+    import math
+    import requests
+    import time
+    import uuid
+    import numpy as np
 
     # Вспомогательная функция для времени
     def get_moldova_time():
@@ -176,6 +184,10 @@ def edit_order_modal(entry_id, table_key="orders"):
                 # Проверка photo_url: если там не ссылка, ставим None
                 raw_photo = db_row.get('photo_url', '')
                 valid_photo = raw_photo if isinstance(raw_photo, str) and raw_photo.startswith('http') else None
+                
+                # --- ДОБАВЛЕНО: Проверка и валидация invoice_photo_url ---
+                raw_invoice_photo = db_row.get('invoice_photo_url', '')
+                valid_invoice_photo = raw_invoice_photo if isinstance(raw_invoice_photo, str) and raw_invoice_photo.startswith('http') else None
 
                 st.session_state[f"temp_row_{entry_id}"] = {
                     'id': db_row.get('id'),
@@ -184,7 +196,7 @@ def edit_order_modal(entry_id, table_key="orders"):
                     'Адрес клиента': db_row.get('delivery_address', ''), 
                     'Координаты': db_row.get('coordinates', ''),
                     'Статус': db_row.get('status', 'ОЖИДАНИЕ'),
-                    'Водитель': db_row.get('driver', ''),               
+                    'Водитель': db_row.get('driver', ''),                
                     'ТС': db_row.get('vehicle', ''),                  
                     'Адрес загрузки': db_row.get('load_address', 'Центральный склад'),
                     'Сумма заявки': float(db_row.get('total_sum', 0.0) or 0.0),
@@ -192,7 +204,8 @@ def edit_order_modal(entry_id, table_key="orders"):
                     'Допуск': db_row.get('approval_by', ''),            # КТО ОДОБРИЛ (approval_by)
                     'Сертификат': db_row.get('has_certificate', 'Нет'), # СЕРТИФИКАЦИЯ (has_certificate)
                     'Описание': db_row.get('description', ''),
-                    'photo_url': valid_photo
+                    'photo_url': valid_photo,
+                    'invoice_photo_url': valid_invoice_photo # --- ДОБАВЛЕНО ПОЛЕ ---
                 }
 
                 # Загрузка состава товаров
@@ -263,21 +276,36 @@ def edit_order_modal(entry_id, table_key="orders"):
 
         # РАБОТА С ФОТО
         st.markdown("---")
+        st.markdown("📷 **Основное фото груза**")
         f_c1, f_c2 = st.columns([1, 2])
         with f_c1:
             if row.get('photo_url') and str(row['photo_url']).startswith('http'):
                 st.image(row['photo_url'], caption="Текущее фото", width=200)
+                # Добавлена кнопка для открытия в полном размере
+                st.caption(f"🔗 [Посмотреть в полном размере]({row['photo_url']})")
             else:
                 st.info("📷 Фото отсутствует или некорректная ссылка")
         with f_c2:
             new_photo = st.file_uploader("Загрузить новое фото", type=['jpg', 'jpeg', 'png'], key=f"e_photo_{entry_id}")
 
+        # --- ДОБАВЛЕНО: РАБОТА С ФОТО ФАКТУРЫ ---
+        st.markdown("---")
+        st.markdown("📎 **Фото фактуры / документа**")
+        inv_c1, inv_c2 = st.columns([1, 2])
+        with inv_c1:
+            if row.get('invoice_photo_url') and str(row['invoice_photo_url']).startswith('http'):
+                # Отображаем фактуру с достаточной шириной для просмотра деталей
+                st.image(row['invoice_photo_url'], caption="Текущая фактура", width=200)
+                # Добавлена ссылка для открытия в полном размере в высоком качестве
+                st.caption(f"🔗 [Посмотреть в полном размере]({row['invoice_photo_url']})")
+            else:
+                st.info("📷 Фото фактуры отсутствует или некорректная ссылка")
+        with inv_c2:
+            new_invoice_photo = st.file_uploader("Загрузить новое фото фактуры (заменит текущее)", type=['jpg', 'jpeg', 'png'], key=f"e_inv_photo_{entry_id}")
+
         st.markdown("### 📦 Состав товаров (Редактирование таблицы)")
         updated_items = st.data_editor(items_df, width="stretch", num_rows="dynamic", key=f"ed_it_{entry_id}")
         st.session_state[f"temp_items_{entry_id}"] = updated_items
-
-    import math
-    import requests
 
 # --- ВКЛАДКА 2: КАРТА (Геолокация) ---
     with tab_map:
@@ -362,13 +390,24 @@ def edit_order_modal(entry_id, table_key="orders"):
         if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary", key=f"btn_save_{entry_id}"):
             with st.spinner("⏳ Сохранение в базу данных..."):
                 try:
-                    # 1. Загрузка фото в Storage (если есть новое)
+                    # 1. Загрузка фото в Storage (если есть новое основного фото)
                     final_photo_url = row['photo_url']
                     if new_photo:
                         file_ext = new_photo.name.split('.')[-1]
                         file_name = f"{entry_id}_{int(time.time())}.{file_ext}"
                         supabase.storage.from_("order-photos").upload(file_name, new_photo.getvalue())
                         final_photo_url = supabase.storage.from_("order-photos").get_public_url(file_name)
+
+                    # --- ДОБАВЛЕНО: Загрузка нового фото ФАКТУРЫ в Storage (если есть) ---
+                    final_invoice_photo_url = row['invoice_photo_url']
+                    if new_invoice_photo:
+                        inv_ext = new_invoice_photo.name.split('.')[-1]
+                        # СохраняемNaming convention f"invoice_{entry_id}_{time}.ext"
+                        inv_file_name = f"invoice_{entry_id}_{int(time.time())}.{inv_ext}"
+                        # Загружаем в тот же бакет order-photos
+                        supabase.storage.from_("order-photos").upload(inv_file_name, new_invoice_photo.getvalue())
+                        # Получаем публичную ссылку
+                        final_invoice_photo_url = supabase.storage.from_("order-photos").get_public_url(inv_file_name)
 
                     # 2. Формируем Payload для БД
                     now_md = get_moldova_time()
@@ -386,6 +425,7 @@ def edit_order_modal(entry_id, table_key="orders"):
                         "description": row['Описание'],         # СОХРАНЕНИЕ: Заметка
                         "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
                         "photo_url": final_photo_url,
+                        "invoice_photo_url": final_invoice_photo_url, # --- ДОБАВЛЕНО ПОЛЕ ---
                         "updated_at": now_md.isoformat()
                     }
 
@@ -404,6 +444,11 @@ def edit_order_modal(entry_id, table_key="orders"):
                             st.session_state[table_key].at[idx, 'Сертификат'] = row['Сертификат']
                         if 'Адрес клиента' in st.session_state[table_key].columns:
                              st.session_state[table_key].at[idx, 'Адрес клиента'] = row['Адрес клиента']
+                        
+                        # Обновляем индикаторы наличия фото в локальной таблице
+                        st.session_state[table_key].at[idx, 'Фото'] = "✅ Прикреплено" if final_photo_url else "Нет"
+                        if 'Фото фактуры' in st.session_state[table_key].columns:
+                            st.session_state[table_key].at[idx, 'Фото фактуры'] = "✅ Прикреплено" if final_invoice_photo_url else "Нет"
 
                     st.success("✅ Данные успешно обновлены!")
                     time.sleep(1)
@@ -1884,6 +1929,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
