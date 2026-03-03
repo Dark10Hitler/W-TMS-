@@ -124,6 +124,10 @@ def create_modal(table_key):
         except Exception as e:
             st.error(f"❌ Ошибка парсинга файла: {e}")
 
+    # --- НОВЫЙ БЛОК ДЛЯ ФОТО ФАКТУРЫ ЗДЕСЬ ---
+    st.markdown("### 📎 Фото фактуры / документа")
+    uploaded_invoice_photo = st.file_uploader("📸 Прикрепить фото фактуры (если нет Excel или как факт)", type=['png', 'jpg', 'jpeg'])
+
     # --- 2. ФОРМА ВВОДА ДАННЫХ ---
     st.markdown("### 2️⃣ Параметры заявки и Логистика")
     with st.form(f"full_create_form_{table_key}", clear_on_submit=False):
@@ -211,6 +215,17 @@ def create_modal(table_key):
             except Exception as e:
                 st.warning(f"⚠️ Фото не загружено в хранилище: {e}")
 
+        # --- НОВОЕ: Загрузка ФОТО ФАКТУРЫ в Bucket "order-photos" ---
+        final_invoice_photo_url = None
+        if uploaded_invoice_photo:
+            try:
+                inv_ext = uploaded_invoice_photo.name.split('.')[-1]
+                inv_file_name = f"invoice_{order_id}_{int(time.time())}.{inv_ext}"
+                supabase.storage.from_("order-photos").upload(inv_file_name, uploaded_invoice_photo.getvalue())
+                final_invoice_photo_url = supabase.storage.from_("order-photos").get_public_url(inv_file_name)
+            except Exception as e:
+                st.warning(f"⚠️ Фото фактуры не загружено в хранилище: {e}")
+
         # Конвертация таблицы товаров в JSON
         items_json = []
         if not parsed_items_df.empty:
@@ -236,6 +251,7 @@ def create_modal(table_key):
             "approval_by": input_dopusk,        # СИНХРОНИЗИРОВАНО
             "items_data": items_json,
             "photo_url": final_photo_url,       # ТЕПЕРЬ ССЫЛКА, А НЕ ТЕКСТ
+            "invoice_photo_url": final_invoice_photo_url, # --- ДОБАВЛЕНО В БАЗУ ДАННЫХ ---
             "print_flag": False,
             "created_at": moldova_time_iso      # МОЛДАВСКОЕ ВРЕМЯ СОЗДАНИЯ
         }
@@ -299,6 +315,7 @@ def create_modal(table_key):
             "Время создания": current_time,
             "Последнее изменение": f"{operator_name} ({current_time})",
             "Фото": "✅ Прикреплено" if final_photo_url else "Нет",
+            "Фото фактуры": "✅ Прикреплено" if final_invoice_photo_url else "Нет", # --- ДОБАВЛЕНО ОТОБРАЖЕНИЕ ---
             "Описание": input_desc,
             "Допуск": input_dopusk,
             "🖨️ Печать": False
@@ -331,7 +348,6 @@ def create_modal(table_key):
         
         time.sleep(1.5)
         st.rerun()
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -1052,6 +1068,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
