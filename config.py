@@ -484,6 +484,7 @@ def format_to_moldova_time(iso_string):
 @st.dialog("🔍 Детальный просмотр заявки", width="large")
 def show_order_details_modal(order_id):
     from database import supabase
+    import pandas as pd
     
     # --- 1. ЗАГРУЗКА ДАННЫХ ---
     with st.spinner("🚀 Синхронизация с облаком..."):
@@ -531,7 +532,9 @@ def show_order_details_modal(order_id):
             # Ссылка на карту, если есть координаты
             coords = db_row.get('coordinates', '')
             if coords and ',' in coords:
-                google_maps_url = f"https://www.google.com/maps?q={coords.replace(' ', '')}"
+                # Исправлена ссылка на Google Maps для корректного открытия
+                clean_coords = coords.replace(' ', '')
+                google_maps_url = f"https://www.google.com/maps?q={clean_coords}"
                 st.markdown(f"📍 **[Открыть точку на карте]({google_maps_url})**")
 
         with c2:
@@ -542,12 +545,43 @@ def show_order_details_modal(order_id):
             st.markdown(f"**Сертификат:** {db_row.get('has_certificate', 'Нет')}")
 
     with col_photo:
-        st.markdown("##### 📸 Фото-фиксация")
+        st.markdown("##### 📸 Фото груза")
         photo_url = db_row.get('photo_url')
         if photo_url:
-            st.image(photo_url, use_container_width=True, caption="Скан накладной / Фото груза")
+            st.image(photo_url, use_container_width=True, caption="Фото фиксация груза")
+            st.markdown(f"🔍 [Увеличить фото]({photo_url})")
         else:
-            st.warning("Фотография не прикреплена")
+            st.warning("Фотография груза не прикреплена")
+
+    st.divider()
+
+    # --- НОВЫЙ БЛОК: ПРОСМОТР ФАКТУРЫ ---
+    # Мы выносим это в отдельный заметный блок, так как документы требуют детального изучения
+    invoice_url = db_row.get('invoice_photo_url')
+    if invoice_url:
+        with st.expander("📎 ПРОСМОТР ПРИКРЕПЛЕННОЙ ФАКТУРЫ / ДОКУМЕНТА", expanded=True):
+            inv_col1, inv_col2 = st.columns([1, 2])
+            with inv_col1:
+                st.image(invoice_url, use_container_width=True)
+            with inv_col2:
+                st.markdown("### 📄 Документ к заявке")
+                st.write("Ниже представлена прямая ссылка на файл в высоком качестве. Вы можете открыть её в новой вкладке, чтобы максимально приблизить детали или распечатать.")
+                st.markdown(f"""
+                    <a href="{invoice_url}" target="_blank">
+                        <button style="
+                            background-color: #ff4b4b;
+                            color: white;
+                            padding: 10px 20px;
+                            border: none;
+                            border-radius: 5px;
+                            cursor: pointer;">
+                            📂 ОТКРЫТЬ ФАКТУРУ В ПОЛНОМ РАЗМЕРЕ
+                        </button>
+                    </a>
+                """, unsafe_allow_html=True)
+                st.caption("Файл хранится в защищенном облачном хранилище.")
+    else:
+        st.info("📂 **Фактура (документ) к этой заявке не была загружена.**")
 
     st.divider()
 
@@ -585,17 +619,21 @@ def show_order_details_modal(order_id):
 
     with exp_c2:
         with st.expander("🕒 Журнал изменений (Moldova Time)"):
-            created = format_to_moldova_time(db_row.get('created_at'))
-            updated = format_to_moldova_time(db_row.get('updated_at'))
-            st.write(f"**Создан:** {created}")
-            st.write(f"**Обновлен:** {updated}")
-            st.write(f"**Автор правок:** {db_row.get('updated_by', 'Система')}")
+            # Предполагается, что функция format_to_moldova_time определена глобально
+            try:
+                created = format_to_moldova_time(db_row.get('created_at'))
+                updated = format_to_moldova_time(db_row.get('updated_at'))
+                st.write(f"**Создан:** {created}")
+                st.write(f"**Обновлен:** {updated}")
+                st.write(f"**Автор правок:** {db_row.get('updated_by', 'Система')}")
+            except:
+                st.write(f"**Создан:** {db_row.get('created_at')}")
+                st.write(f"**Обновлен:** {db_row.get('updated_at')}")
 
-   # --- 6. КНОПКИ УПРАВЛЕНИЯ ---
+    # --- 6. КНОПКИ УПРАВЛЕНИЯ ---
     st.markdown("<br>", unsafe_allow_html=True)
-    col_close, col_extra = st.columns(2) # Распаковываем список на две колонки
+    col_close, col_extra = st.columns(2)
 
-# Теперь вызываем кнопку ВНУТРИ колонки
     if col_close.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
         
@@ -603,10 +641,13 @@ def show_order_details_modal(order_id):
 @st.dialog("🖨️ Печать документа", width="large")
 def show_print_modal(order_id):
     from database import supabase
-    
+    import pandas as pd
+    from datetime import datetime
+    import streamlit.components.v1 as components
+
     # --- 1. ЗАГРУЗКА АКТУАЛЬНЫХ ДАННЫХ ИЗ БД (ОБЯЗАТЕЛЬНО) ---
     try:
-        table_name = "orders" if order_id.startswith("ORD") else "arrivals"
+        table_name = "orders" if str(order_id).startswith("ORD") else "arrivals"
         response = supabase.table(table_name).select("*").eq("id", order_id).execute()
         
         if not response.data:
@@ -616,6 +657,10 @@ def show_print_modal(order_id):
         row = response.data[0]
         # Извлекаем товары из JSONB поля
         raw_items = pd.DataFrame(row.get('items_data', []))
+        
+        # Получаем ссылку на фактуру
+        invoice_url = row.get('invoice_photo_url')
+        
     except Exception as e:
         st.error(f"Ошибка связи с БД: {e}")
         return
@@ -630,7 +675,21 @@ def show_print_modal(order_id):
 
     items_html = print_df.to_html(index=False, border=1, classes='items-table')
 
-    # --- 3. ГЕНЕРАЦИЯ HTML (Используем ключи из БД) ---
+    # --- 3. ЛОГИКА ОТОБРАЖЕНИЯ ФАКТУРЫ В HTML ---
+    # Если фактура есть, создаем HTML блок с разрывом страницы перед ним
+    invoice_html_block = ""
+    if invoice_url:
+        invoice_html_block = f"""
+        <div class="page-break"></div>
+        <div class="invoice-section">
+            <h3 style="border-left: 5px solid #27ae60; padding-left: 10px; margin-bottom: 15px;">📎 ПРИКРЕПЛЕННЫЙ ДОКУМЕНТ (ФАКТУРА)</h3>
+            <div style="text-align: center;">
+                <img src="{invoice_url}" class="invoice-img">
+            </div>
+        </div>
+        """
+
+    # --- 4. ГЕНЕРАЦИЯ ПОЛНОГО HTML ---
     full_html = f"""
     <!DOCTYPE html>
     <html>
@@ -639,10 +698,17 @@ def show_print_modal(order_id):
         @media print {{
             @page {{ size: A4; margin: 10mm; }}
             .no-print {{ display: none !important; }}
-            body {{ background: white; }}
-            .print-container {{ width: 100%; zoom: 85%; }}
+            body {{ background: white; padding: 0; }}
+            .print-container {{ 
+                width: 100%; 
+                box-shadow: none; 
+                margin: 0; 
+                padding: 0;
+            }}
+            .page-break {{ page-break-before: always; }}
+            .invoice-img {{ max-width: 100%; height: auto; }}
         }}
-        body {{ font-family: "Segoe UI", Arial, sans-serif; background: #f0f0f0; padding: 20px; }}
+        body {{ font-family: "Segoe UI", Arial, sans-serif; background: #f0f0f0; padding: 20px; color: #333; }}
         .print-container {{ 
             background: white; padding: 30px; max-width: 900px; margin: 0 auto; 
             box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 8px;
@@ -653,19 +719,30 @@ def show_print_modal(order_id):
         .info-table b {{ color: #555; text-transform: uppercase; font-size: 10px; }}
         
         .items-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-        .items-table th {{ background: #444; color: white; border: 1px solid #000; padding: 8px; font-size: 12px; }}
+        .items-table th {{ background: #444; color: white; border: 1px solid #000; padding: 8px; font-size: 12px; text-align: left; }}
         .items-table td {{ border: 1px solid #333; padding: 8px; font-size: 12px; }}
         
         .footer {{ margin-top: 40px; border-top: 1px dashed #ccc; padding-top: 20px; }}
         .signature-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 60px; margin-top: 30px; }}
+        
+        .invoice-section {{ margin-top: 30px; padding-top: 20px; border-top: 2px solid #eee; }}
+        .invoice-img {{ 
+            max-width: 100%; 
+            border: 1px solid #ccc; 
+            margin-top: 10px;
+            border-radius: 4px;
+        }}
+
         .btn-print {{ 
             background: #27ae60; color: white; padding: 15px 30px; border: none; 
-            border-radius: 6px; cursor: pointer; font-weight: bold; margin-bottom: 20px; width: 100%;
+            border-radius: 6px; cursor: pointer; font-weight: bold; margin-bottom: 20px; 
+            width: 100%; font-size: 16px;
         }}
+        .btn-print:hover {{ background: #219150; }}
     </style>
     </head>
     <body>
-        <button class="btn-print no-print" onclick="window.print()">🖨️ ОТПРАВИТЬ НА ПЕЧАТЬ / СОХРАНИТЬ В PDF</button>
+        <button class="btn-print no-print" onclick="window.print()">🖨️ ПОДТВЕРДИТЬ И ПЕЧАТАТЬ (A4 / PDF)</button>
 
         <div class="print-container">
             <div class="header">
@@ -695,11 +772,11 @@ def show_print_modal(order_id):
                 </tr>
             </table>
 
-            <div style="padding:10px; border:1px solid #eee; background:#f9f9f9; font-size:12px;">
+            <div style="padding:10px; border:1px solid #eee; background:#f9f9f9; font-size:12px; margin-bottom: 20px;">
                 <b>📑 Комментарий / Допуск:</b> {row.get('description', '---')}
             </div>
 
-            <h3 style="border-left: 5px solid #2c3e50; padding-left: 10px; margin-top:30px;">СПЕЦИФИКАЦИЯ ТМЦ</h3>
+            <h3 style="border-left: 5px solid #2c3e50; padding-left: 10px; margin-top:20px;">СПЕЦИФИКАЦИЯ ТМЦ</h3>
             {items_html}
 
             <div class="footer">
@@ -719,13 +796,17 @@ def show_print_modal(order_id):
                     Система управления складом IMPERIA | Дата печати: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
                 </p>
             </div>
+
+            {invoice_html_block}
         </div>
     </body>
     </html>
     """
 
-    components.html(full_html, height=850, scrolling=True)
+    # Отображение HTML через компонент
+    components.html(full_html, height=1200, scrolling=True)
     
+    st.markdown("---")
     if st.button("❌ ЗАКРЫТЬ ОКНО ПЕЧАТИ", use_container_width=True):
         st.session_state.active_print_modal = None
         st.rerun()
@@ -1929,6 +2010,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
