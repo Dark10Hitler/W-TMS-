@@ -664,61 +664,31 @@ def create_extras_modal(*args, **kwargs):
 @st.dialog("⚠️ Регистрация Брака / Повреждений", width="large")
 def create_defect_modal(table_key="defects", *args, **kwargs):
     from database import supabase
-    import pandas as pd
     from datetime import datetime
     import time
     import uuid
+    import streamlit as st
 
-    # === 1. ЗАГРУЗКА ДАННЫХ (БЕЗ МУСОРА) ===
-    @st.cache_data(ttl=5) 
-    def load_inventory_clean():
-        try:
-            # Тянем всё из inventory
-            response = supabase.table("inventory").select("id, doc_id, item_name, quantity, cell_address").execute()
-            df = pd.DataFrame(response.data)
-            
-            if df.empty:
-                return pd.DataFrame()
-            
-            # УБИРАЕМ "TOTAL" И ПУСТЫЕ СТРОКИ
-            df = df[df['item_name'] != 'TOTAL']
-            df = df.dropna(subset=['item_name'])
-            
-            # Формируем метку для селектора
-            df['display_label'] = (
-                df['item_name'] + 
-                " | Ячейка: " + df['cell_address'].fillna("?") + 
-                " | Док: " + df['doc_id'].fillna("?")
-            )
-            return df
-        except Exception as e:
-            st.error(f"❌ Ошибка загрузки: {e}")
-            return pd.DataFrame()
+    # === 1. ЗАГРУЗКА ДАННЫХ ИЗ БАЗЫ УДАЛЕНА ===
+    # Больше никаких проверок. Зависимость от таблицы inventory полностью отключена!
 
-    inv_df = load_inventory_clean()
-
-    if inv_df.empty:
-        st.warning("⚠️ Склад пуст. Нечего регистрировать.")
-        return
-
-    # === 2. ФОРМА (БЕЗ ДУБЛИРОВАНИЯ НАЗВАНИЯ) ===
-    with st.form("defect_form_v6_clean"):
+    # === 2. ФОРМА (СВОБОДНЫЙ ВВОД ТОВАРА ВРУЧНУЮ) ===
+    with st.form("defect_form_v7_manual_input"):
         st.subheader("🚨 Акт регистрации дефекта")
+        st.info("💡 Режим ручного ввода. Товар не обязан числиться на остатках.")
         
-        # 1. Выбираем товар один раз
-        selected_label = st.selectbox("📦 Выберите товар из наличия", options=inv_df['display_label'].values)
-        selected_row = inv_df[inv_df['display_label'] == selected_label].iloc[0]
-        
-        # Данные товара (скрыто для юзера, но важно для базы)
-        item_name_hidden = selected_row['item_name']
+        # 1. Свободный ввод названия товара
+        item_name_input = st.text_input(
+            "📦 Название товара (Обязательно)", 
+            placeholder="Впишите точное название поврежденного товара руками..."
+        )
         
         st.divider()
         
         col1, col2 = st.columns(2)
         with col1:
             reporter = st.text_input("👤 Кто выявил (ФИО)", placeholder="Имя сотрудника")
-            # Вместо названия товара теперь Тип дефекта
-            d_type = st.selectbox("📝 Тип дефекта", ["Бой", "Порча", "Брак производителя", "Некомплект"])
+            d_type = st.selectbox("📝 Тип дефекта", ["Бой", "Порча", "Брак производителя", "Некомплект", "Утеря"])
         
         with col2:
             # Локация брака
@@ -727,18 +697,20 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
 
         col3, col4 = st.columns([1, 2])
         with col3:
-            # МИНИМУМ 1, МАКСИМУМ ИЗ БАЗЫ
-            db_qty = float(selected_row['quantity'])
+            # МИНИМУМ 1, МАКСИМУМ НЕ ОГРАНИЧЕН (так как нет привязки к базе)
             defect_qty = st.number_input(
-                f"🔢 Кол-во (в ячейке {db_qty})", 
+                "🔢 Количество брака", 
                 min_value=1.0, 
-                max_value=max(1.0, db_qty), 
                 value=1.0,
-                step=1.0
+                step=1.0,
+                help="Укажите фактическое количество бракованных единиц."
             )
         
         with col4:
-            description = st.text_input("🗒️ Комментарий к дефекту")
+            description = st.text_input("🗒️ Комментарий к дефекту", placeholder="Опишите характер повреждений")
+
+        # Так как мы больше не тянем данные из базы, даем возможность вписать номер документа руками
+        linked_doc_input = st.text_input("📄 Связанный документ (Необязательно)", placeholder="Например: номер накладной или партии")
 
         uploaded_photo = st.file_uploader("📸 Фото повреждения (Обязательно)", type=['png', 'jpg', 'jpeg'])
 
@@ -746,50 +718,62 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
 
     # === 3. СОХРАНЕНИЕ ===
     if submitted:
-        if not reporter or not uploaded_photo:
-            st.error("❌ Заполните ФИО и добавьте фото!")
+        # Проверка обязательных полей (теперь проверяем и ручной ввод товара)
+        if not item_name_input.strip():
+            st.error("❌ Вы не вписали название товара!")
+            return
+        if not reporter.strip():
+            st.error("❌ Заполните ФИО сотрудника!")
+            return
+        if not uploaded_photo:
+            st.error("❌ Добавьте фото повреждения!")
             return
 
-        with st.spinner("💾 Сохранение..."):
+        with st.spinner("💾 Сохранение в базу данных..."):
             defect_id = f"DEF-{uuid.uuid4().hex[:6].upper()}"
             
-            # Загрузка фото (твоя логика из orders)
+            # Загрузка фото в бакет
             photo_url = None
             try:
                 f_ext = uploaded_photo.name.split('.')[-1]
                 f_name = f"{defect_id}_{int(time.time())}.{f_ext}"
                 supabase.storage.from_("defects_photos").upload(f_name, uploaded_photo.getvalue())
                 photo_url = supabase.storage.from_("defects_photos").get_public_url(f_name)
-            except: pass
+            except Exception as img_err:
+                st.warning(f"⚠️ Фото не загружено в хранилище: {img_err}")
+                pass
 
-            # Пишем СТРОГО в таблицу defects
+            # Формируем payload. Пишем СТРОГО в таблицу defects
             payload = {
                 "id": defect_id,
                 "created_at": datetime.now().isoformat(),
-                "item_name": item_name_hidden,  # Берем из селектора автоматически
+                "item_name": item_name_input.strip(),  # Берем из текстового поля напрямую
                 "quantity": int(defect_qty),
                 "storage_address": q_zone,
                 "defect_type": d_type,
                 "description": description,
-                "responsible_party": reporter,
+                "responsible_party": reporter.strip(),
                 "decision": decision,
                 "status": "ОБНАРУЖЕНО",
                 "photo_url": photo_url,
-                "linked_doc_id": selected_row['doc_id']
+                "linked_doc_id": linked_doc_input.strip() if linked_doc_input else None  # Сохраняем логику колонки
             }
 
             try:
                 # Физическая вставка в таблицу
                 supabase.table("defects").insert(payload).execute()
                 
-                st.success(f"✅ Акт {defect_id} создан. Товар {item_name_hidden} зарегистрирован как брак.")
+                st.success(f"✅ Акт {defect_id} создан. Товар «{item_name_input}» зарегистрирован как брак.")
                 st.balloons()
                 
-                st.cache_data.clear()
+                # Очищаем кэш и перезагружаем страницу
+                if hasattr(st, 'cache_data'):
+                    st.cache_data.clear()
+                
                 time.sleep(1.5)
                 st.rerun()
             except Exception as e:
-                st.error(f"🚨 Ошибка базы: {e}")
+                st.error(f"🚨 Ошибка записи в базу: {e}")
                 
 @st.dialog("👤 Регистрация водителя")
 def create_driver_modal():
@@ -1070,6 +1054,7 @@ def edit_vehicle_modal():
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка БД: {e}")
+
 
 
 
