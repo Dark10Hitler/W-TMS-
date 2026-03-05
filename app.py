@@ -385,11 +385,12 @@ def get_full_inventory_df():
     try:
         # ===== ПРИХОДЫ (ARRIVALS) =====
         try:
-            # Прямой запрос без промежуточной функции
-            response = supabase.table("arrivals").select("*").execute()
-            arrivals_data = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+            import sqlite3
+            conn = sqlite3.connect("imperia_data.db")
+            arrivals_data = pd.read_sql("SELECT * FROM arrivals", conn)
+            conn.close()
         except Exception as e:
-            st.warning(f"⚠️ Ошибка загрузки приходов: {e}")
+            st.warning(f"⚠️ Ошибка загрузки приходов с ПК: {e}")
             arrivals_data = pd.DataFrame()
 
         if not arrivals_data.empty:
@@ -438,10 +439,12 @@ def get_full_inventory_df():
         
         # ===== ЗАКАЗЫ (ORDERS) =====
         try:
-            response = supabase.table("orders").select("*").execute()
-            orders_data = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+            import sqlite3
+            conn = sqlite3.connect("imperia_data.db")
+            orders_data = pd.read_sql("SELECT * FROM orders", conn)
+            conn.close()
         except Exception as e:
-            st.warning(f"⚠️ Ошибка загрузки заказов: {e}")
+            st.warning(f"⚠️ Ошибка загрузки заказов с ПК: {e}")
             orders_data = pd.DataFrame()
 
         if not orders_data.empty:
@@ -2082,6 +2085,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
