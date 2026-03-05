@@ -112,40 +112,61 @@ def get_address_cached(lat, lon):
     except Exception as e:
         return "Ошибка геокодирования"
 
+import os
+import time
+
 def upload_image_to_supabase(file_name, file_data, bucket_name="avatars"):
+    """Теперь сохраняет локально на ПК в папку storage/"""
     try:
-        # Очищаем имя файла от лишних символов и добавляем таймштамп
+        # Создаем папку для хранения, если её нет
+        storage_dir = os.path.join("storage", bucket_name)
+        if not os.path.exists(storage_dir):
+            os.makedirs(storage_dir, exist_ok=True)
+
+        # Очищаем имя и создаем путь
         clean_name = "".join(c for c in file_name if c.isalnum() or c in "._-").rstrip()
-        path_on_supa = f"manager/{int(time.time())}_{clean_name}"
-        
-        # Загрузка через binary stream
-        res = supabase.storage.from_(bucket_name).upload(
-            path=path_on_supa,
-            file=file_data,
-            file_options={"content-type": "image/jpeg"} # или определять программно
-        )
-        
-        # Получаем публичную ссылку
-        public_url = supabase.storage.from_(bucket_name).get_public_url(path_on_supa)
-        return public_url
+        file_path = os.path.join(storage_dir, f"{int(time.time())}_{clean_name}")
+
+        # Сохраняем файл на жесткий диск
+        # Если file_data - это объект BytesIO (из st.file_uploader)
+        if hasattr(file_data, 'getbuffer'):
+            with open(file_path, "wb") as f:
+                f.write(file_data.getbuffer())
+        else:
+            # Если это уже байты
+            with open(file_path, "wb") as f:
+                f.write(file_data)
+
+        # Возвращаем путь к файлу (он заменит URL в базе данных)
+        return file_path
     except Exception as e:
-        st.error(f"Ошибка на стороне Supabase: {e}")
+        st.error(f"Ошибка сохранения на ПК: {e}")
         return None
 
+import os
+import time
+
 def upload_driver_photo(file):
-    from database import supabase
-    import time
+    """Сохраняем фото водителя на ПК в папку storage/drivers"""
     try:
+        # 1. Создаем папку, если её нет
+        storage_dir = os.path.join("storage", "drivers")
+        if not os.path.exists(storage_dir):
+            os.makedirs(storage_dir, exist_ok=True)
+
+        # 2. Формируем имя и путь
         file_ext = file.name.split(".")[-1]
         file_name = f"drv_{int(time.time())}.{file_ext}"
-        # Загружаем в созданный тобой бакет
-        supabase.storage.from_("defects_photos").upload(
-            path=file_name,
-            file=file.getvalue(),
-            file_options={"content-type": f"image/{file_ext}"}
-        )
-        return supabase.storage.from_("defects_photos").get_public_url(file_name)
-    except:
+        file_path = os.path.join(storage_dir, file_name)
+
+        # 3. Пишем файл на диск
+        with open(file_path, "wb") as f:
+            f.write(file.getvalue())
+
+        # Возвращаем путь к файлу для записи в БД
+        return file_path
+    except Exception as e:
+        # Если что-то пошло не так, возвращаем ссылку на стандартную иконку
         return "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
 
 TABLES_CONFIG = {
@@ -159,43 +180,46 @@ TABLES_CONFIG = {
 }
 
 # Добавь это в начало после импортов
+from local_db import select_all
+
 def sync_all_from_supabase():
-    """Функция первичной синхронизации всех таблиц"""
-    # ЗАМЕНЯЕМ "main" на "main_registry"
-    tables_to_sync = ["main_registry", "orders", "arrivals", "defects", "extras", "drivers", "vehicles"]
+    """Теперь эта функция загружает данные ПРЯМО С ПК"""
+    # Список всех твоих реальных таблиц
+    tables_to_sync = ["orders", "arrivals", "defects", "extras", "drivers", "vehicles", "inventory"]
+    
     for table in tables_to_sync:
-        data = load_data_from_supabase(table)
-        # Если мы загрузили main_registry, в память сохраняем как 'main' для совместимости с кодом
-        state_key = "main" if table == "main_registry" else table
-        st.session_state[state_key] = data
+        # Читаем данные из локальной папки (из файла .db)
+        data = select_all(table)
+        st.session_state[table] = data
+    
+    # Для совместимости: если в коде используется 'main', берем данные из 'orders'
+    # (так как 'main_registry' — это обычно просто объединенные заказы)
+    st.session_state["main"] = st.session_state["orders"]
+
+import sqlite3
+import pandas as pd
 
 def load_data_from_supabase(table_name):
+    """Теперь загружает данные из локальной БД imperia_data.db"""
     try:
-        # 1. Запрос к Supabase
-        response = supabase.table(table_name).select("*").order("created_at", desc=True).execute()
+        # 1. Подключение к локальной БД
+        conn = sqlite3.connect("imperia_data.db")
         
-        # 2. ПРОВЕРКА ДАННЫХ (Исправление ошибки конструктора)
-        # Проверяем, что response.data существует и является списком
-        raw_data = response.data
-        if raw_data is None or not isinstance(raw_data, list):
-            st.warning(f"⚠️ Данные для {table_name} не получены или имеют неверный формат.")
-            return pd.DataFrame(columns=TABLE_STRUCT.get(table_name, []))
-            
-        # Теперь безопасно создаем DataFrame
-        df = pd.DataFrame(raw_data)
+        # 2. Читаем данные. Если есть колонка created_at, сортируем по ней
+        query = f"SELECT * FROM {table_name}"
+        df = pd.read_sql(query, conn)
+        conn.close()
         
-        # Если в базе 0 записей, создаем пустой DF с нужными колонками
         if df.empty:
-            return pd.DataFrame(columns=TABLE_STRUCT.get(table_name, []))
+            # Используем твой TABLE_STRUCT для пустых таблиц (убедись, что он доступен)
+            cols = TABLE_STRUCT.get(table_name, []) if 'TABLE_STRUCT' in globals() else []
+            return pd.DataFrame(columns=cols)
 
-        # --- КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ ДЛЯ JSON/DICT ---
-        # Чтобы не было ошибок хеширования и проблем с AgGrid
-        for col in df.columns:
-            # Проверяем, есть ли в колонке словари или списки
-            if df[col].apply(lambda x: isinstance(x, (dict, list))).any():
-                df[col] = df[col].apply(lambda x: str(x) if x is not None else None)
+        # --- Сортировка (аналог .order в Supabase) ---
+        if 'created_at' in df.columns:
+            df = df.sort_values(by='created_at', ascending=False)
 
-        # 3. Маппинг (как у вас был)
+        # 3. Маппинг названий (оставляем без изменений, чтобы AgGrid работал)
         RENAME_MAP = {
             "id": "id",
             "status": "Статус",
@@ -216,7 +240,7 @@ def load_data_from_supabase(table_name):
             "approved_by": "Кто одобрил",
             "parent_id": "Связь с ID",
             "transport": "На чем",
-            "items_data": "items_data" # Системное поле
+            "items_data": "items_data"
         }
         
         current_rename = {k: v for k, v in RENAME_MAP.items() if k in df.columns}
@@ -225,23 +249,22 @@ def load_data_from_supabase(table_name):
         return df
 
     except Exception as e:
-        st.error(f"🚨 Критическая ошибка загрузки {table_name}: {str(e)}")
-        # Возвращаем пустой DF, чтобы приложение не "падало" полностью
+        st.error(f"🚨 Ошибка чтения локальной таблицы {table_name}: {str(e)}")
         return pd.DataFrame()
 
-# --- ГЛОБАЛЬНАЯ СИНХРОНИЗАЦИЯ ---
 def refresh_all_data():
-    """Полное обновление данных из облака в Session State"""
-    with st.spinner("🔄 Синхронизация с базой данных..."):
-        # ОШИБКА БЫЛА ЗДЕСЬ: заменяем "main" на "main_registry"
-        st.session_state.main = load_data_from_supabase("main_registry") 
-        
+    """Полное обновление данных из локальной БД на ПК"""
+    with st.spinner("💾 Загрузка данных с диска..."):
+        # Используем уже переписанную функцию load_data_from_supabase
         st.session_state.orders = load_data_from_supabase("orders")
         st.session_state.arrivals = load_data_from_supabase("arrivals")
         st.session_state.extras = load_data_from_supabase("extras")
         st.session_state.defects = load_data_from_supabase("defects")
         st.session_state.drivers = load_data_from_supabase("drivers")
         st.session_state.vehicles = load_data_from_supabase("vehicles")
+        
+        # main_registry на ПК — это те же заказы (orders)
+        st.session_state.main = st.session_state.orders
 
 # Инициализация при первом запуске
 if "db_initialized" not in st.session_state:
@@ -250,14 +273,15 @@ if "db_initialized" not in st.session_state:
     st.session_state.db_initialized = True
     
 
+from local_db import insert_data, update_data
+import json
+
 def save_to_supabase(table_name, data_dict, entry_id=None):
     """
-    Универсальное сохранение: если есть entry_id — обновляет (UPDATE), 
-    если нет — создает новую запись (INSERT).
+    Универсальное сохранение на ПК: если есть entry_id — UPDATE, иначе — INSERT.
     """
     try:
         # 1. МАППИНГ ОБРАТНО (UI Русский -> DB English)
-        # Этот словарь — зеркало того, что мы использовали при загрузке
         REVERSE_MAP = {
             "Статус": "status",
             "Клиент": "client_name",
@@ -279,37 +303,35 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
             "На чем": "transport"
         }
 
-        # Создаем чистый словарь для БД
         db_payload = {}
         for k, v in data_dict.items():
-            db_key = REVERSE_MAP.get(k, k) # Если нет в маппинге, оставляем как есть
-            # Пропускаем технические колонки AgGrid, их не должно быть в БД
+            db_key = REVERSE_MAP.get(k, k)
             if k not in ["📝 Ред.", "🔍 Просмотр", "🖨️ Печать"]:
                 db_payload[db_key] = v
 
         # 2. АВТОМАТИЧЕСКАЯ УПАКОВКА ТОВАРОВ
-        # Если для этого ID в реестре есть товары — кладем их в JSONB поле
         current_id = entry_id or data_dict.get('id')
         if current_id in st.session_state.items_registry:
             items_df = st.session_state.items_registry[current_id]
-            # Превращаем DataFrame в список словарей, понятный для PostgreSQL
-            db_payload["items_data"] = items_df.to_dict(orient='records')
-            # Обновляем счетчик позиций
+            # SQLite не умеет хранить списки напрямую, превращаем их в ТЕКСТ (JSON)
+            items_list = items_df.to_dict(orient='records')
+            db_payload["items_data"] = json.dumps(items_list, ensure_ascii=False)
             db_payload["items_count"] = len(items_df)
 
-        # 3. ВЫБОР ОПЕРАЦИИ (INSERT / UPDATE)
+        # 3. ВЫБОР ОПЕРАЦИИ (INSERT / UPDATE) через local_db
         if entry_id:
-            # Обновляем существующую запись
-            response = supabase.table(table_name).update(db_payload).eq("id", entry_id).execute()
+            # Обновляем запись на ПК
+            update_data(table_name, db_payload, "id", entry_id)
         else:
-            # Создаем новую
-            if "id" not in db_payload: db_payload["id"] = generate_id()
-            response = supabase.table(table_name).insert(db_payload).execute()
+            # Создаем новую запись на ПК
+            if "id" not in db_payload or not db_payload["id"]:
+                db_payload["id"] = generate_id() # Убедись, что функция generate_id доступна
+            insert_data(table_name, db_payload)
 
-        return True, response
+        return True, "Success"
 
     except Exception as e:
-        st.error(f"🚨 Ошибка сохранения в {table_name}: {e}")
+        st.error(f"🚨 Ошибка локального сохранения в {table_name}: {e}")
         return False, None
 
 
@@ -2060,6 +2082,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
