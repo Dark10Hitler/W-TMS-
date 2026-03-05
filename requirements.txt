@@ -14,3 +14,7 @@ streamlit-autorefresh
 openpyxl
 geopy
 xlsxwriter
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+st-gsheets-connection
