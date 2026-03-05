@@ -30,7 +30,7 @@ import folium
 from streamlit_folium import st_folium
 import requests
 from streamlit_autorefresh import st_autorefresh
-from database import supabase
+from local_db import select_all, insert_data, update_data, delete_data
 from geopy.distance import geodesic
 import json
 from geopy.geocoders import Nominatim # Для получения адреса по координатам
@@ -47,7 +47,7 @@ def sync_to_inventory(doc_id, items_list, doc_type):
     items_list: список товаров из этого документа (из JSONB)
     doc_type: '📦 ПРИХОД', '🚚 ЗАКАЗ' или '🔄 ДОПОЛНЕНИЕ'
     """
-    from database import supabase
+    from local_db import insert_data, delete_data
     
     inventory_records = []
     
@@ -68,9 +68,11 @@ def sync_to_inventory(doc_id, items_list, doc_type):
             inventory_records.append(record)
     
     if inventory_records:
-        # Сохраняем/обновляем в общую таблицу
-        # on_conflict='doc_id, product_name' гарантирует, что мы не создадим дублей
-        supabase.table("inventory").upsert(inventory_records, on_conflict="doc_id,product_name").execute()
+        # В SQLite нет прямого upsert как в Supabase, поэтому:
+        # 1. Сначала удаляем старые записи по этому документу, чтобы не было дублей
+        delete_data("inventory", "doc_id", str(doc_id))
+        # 2. Записываем обновленные данные
+        insert_data("inventory", inventory_records)
 
 def get_moldova_time():
     tz = pytz.timezone('Europe/Chisinau')
@@ -2058,6 +2060,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
