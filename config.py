@@ -689,18 +689,21 @@ def show_print_modal(order_id):
     # Используем твою функцию времени Молдовы
     current_dt = get_moldova_time()
 
-# Формат: День.Месяц.Год Часы:Минуты:Секунды
-    display_date = current_dt.strftime('%d.%m.%Y %H:%M:%S')
+# 1. Получаем текущее время Молдовы для футера (время печати)
+    print_time = get_moldova_time().strftime('%d.%m.%Y %H:%M:%S')
 
-# Если хочешь брать дату именно из записи БД, но с правильным временем:
+# 2. Формируем дату документа (время создания из БД)
     db_created_at = row.get('created_at')
     if db_created_at:
         try:
-        # Парсим дату из БД и переводим в часовой пояс Молдовы
+        # Переводим время из базы напрямую в пояс Кишинева
             dt_obj = pd.to_datetime(db_created_at).astimezone(pytz.timezone('Europe/Chisinau'))
-            display_date = dt_obj.strftime('%d.%m.%Y %H:%M')
+            display_date = dt_obj.strftime('%d.%m.%Y %H:%M:%S')
         except:
-            display_date = db_created_at # Если ошибка, оставим как есть
+            display_date = str(db_created_at)
+    else:
+    # Если в базе пусто, берем текущее
+        display_date = get_moldova_time().strftime('%d.%m.%Y %H:%M:%S')
 
     # --- 4. ГЕНЕРАЦИЯ ПОЛНОГО HTML ---
     full_html = f"""
@@ -808,7 +811,7 @@ def show_print_modal(order_id):
                     </div>
                 </div>
                 <p style="text-align: center; margin-top: 50px; font-size: 9px; color: #aaa;">
-                    Система управления складом IMPERIA | Дата печати: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
+                    Система управления складом IMPERIA | Дата печати: {get_moldova_time().strftime('%d.%m.%Y %H:%M:%S')}
                 </p>
             </div>
 
@@ -2040,6 +2043,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
