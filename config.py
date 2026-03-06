@@ -165,6 +165,7 @@ def edit_order_modal(entry_id, table_key="orders"):
     import time
     import uuid
     import numpy as np
+    from uploader import upload_to_cloudinary
 
     # Вспомогательная функция для времени
     def get_moldova_time():
@@ -390,24 +391,15 @@ def edit_order_modal(entry_id, table_key="orders"):
         if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary", key=f"btn_save_{entry_id}"):
             with st.spinner("⏳ Сохранение в базу данных..."):
                 try:
-                    # 1. Загрузка фото в Storage (если есть новое основного фото)
+                    # 1. Загрузка основного фото в Cloudinary (если загружено новое)
                     final_photo_url = row['photo_url']
                     if new_photo:
-                        file_ext = new_photo.name.split('.')[-1]
-                        file_name = f"{entry_id}_{int(time.time())}.{file_ext}"
-                        supabase.storage.from_("order-photos").upload(file_name, new_photo.getvalue())
-                        final_photo_url = supabase.storage.from_("order-photos").get_public_url(file_name)
+                        final_photo_url = upload_to_cloudinary(new_photo, folder_name="orders_main")
 
-                    # --- ДОБАВЛЕНО: Загрузка нового фото ФАКТУРЫ в Storage (если есть) ---
+                    # 2. Загрузка фото фактуры в Cloudinary (если загружено новое)
                     final_invoice_photo_url = row['invoice_photo_url']
                     if new_invoice_photo:
-                        inv_ext = new_invoice_photo.name.split('.')[-1]
-                        # СохраняемNaming convention f"invoice_{entry_id}_{time}.ext"
-                        inv_file_name = f"invoice_{entry_id}_{int(time.time())}.{inv_ext}"
-                        # Загружаем в тот же бакет order-photos
-                        supabase.storage.from_("order-photos").upload(inv_file_name, new_invoice_photo.getvalue())
-                        # Получаем публичную ссылку
-                        final_invoice_photo_url = supabase.storage.from_("order-photos").get_public_url(inv_file_name)
+                        final_invoice_photo_url = upload_to_cloudinary(new_invoice_photo, folder_name="orders_invoice")
 
                     # 2. Формируем Payload для БД
                     now_md = get_moldova_time()
@@ -2010,6 +2002,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
