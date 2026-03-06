@@ -807,6 +807,7 @@ def show_print_modal(order_id):
 @st.dialog("⚙️ Приемка: Редактирование прихода", width="large")
 def edit_arrival_modal(entry_id):
     from database import supabase
+    from uploader import upload_to_cloudinary  # <--- ДОБАВЛЕНО: Импорт нашего загрузчика
     import numpy as np
     import pandas as pd
     from datetime import datetime
@@ -818,7 +819,6 @@ def edit_arrival_modal(entry_id):
     if f"temp_row_{entry_id}" not in st.session_state:
         with st.spinner("🔄 Синхронизация состава прихода с БД..."):
             try:
-                # Запрашиваем свежие данные из базы, чтобы достать поле items_data
                 response = supabase.table(table_key).select("*").eq("id", entry_id).execute()
                 
                 if not response.data:
@@ -827,7 +827,10 @@ def edit_arrival_modal(entry_id):
                 
                 db_row = response.data[0]
                 
-                # Мапим данные из БД на русские ключи твоего интерфейса
+                # --- ИЗМЕНЕНО: Проверка наличия ссылки на фото в базе ---
+                raw_photo = db_row.get('photo_url', '')
+                valid_photo = raw_photo if isinstance(raw_photo, str) and raw_photo.startswith('http') else None
+
                 st.session_state[f"temp_row_{entry_id}"] = {
                     'Клиент': db_row.get('client_name', db_row.get('Клиент', '')),
                     'Телефон': db_row.get('phone', db_row.get('Телефон', '')),
@@ -836,28 +839,25 @@ def edit_arrival_modal(entry_id):
                     'ТС (Госномер)': db_row.get('vehicle', db_row.get('ТС (Госномер)', '')),
                     'Водитель': db_row.get('driver', db_row.get('Водитель', '')),
                     'Сертификат': db_row.get('has_certificate', db_row.get('Сертификат', 'Нет')),
-                    'Общий объем (м3)': db_row.get('total_volume', 0.0)
+                    'Общий объем (м3)': db_row.get('total_volume', 0.0),
+                    'photo_url': valid_photo  # <--- ДОБАВЛЕНО: Сохраняем ссылку в состояние
                 }
                 
-                # ДОСТАЕМ ТОВАРЫ ИЗ items_data (Тут решается проблема пустоты)
                 items_raw = db_row.get('items_data', [])
                 if isinstance(items_raw, list) and len(items_raw) > 0:
                     items_reg = pd.DataFrame(items_raw)
                 else:
-                    # Фолбэк на реестр, если в базе совсем пусто
                     items_reg = st.session_state.items_registry.get(
                         entry_id, 
                         pd.DataFrame(columns=['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'])
                     ).copy()
 
-                # Проверка колонок
                 for col in ['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес']:
                     if col not in items_reg.columns:
                         items_reg[col] = 0 if 'Объем' in col or 'Кол' in col else "НЕ УКАЗАНО"
                         
                 st.session_state[f"temp_items_{entry_id}"] = items_reg
 
-                # Индекс для локального DF
                 if table_key in st.session_state:
                     df_local = st.session_state[table_key]
                     idx_list = df_local.index[df_local['id'] == entry_id].tolist()
@@ -867,7 +867,6 @@ def edit_arrival_modal(entry_id):
                 st.error(f"Ошибка инициализации прихода: {e}")
                 return
 
-    # Ссылки на данные в текущей сессии
     row = st.session_state[f"temp_row_{entry_id}"]
     items_df = st.session_state[f"temp_items_{entry_id}"]
     idx = st.session_state.get(f"temp_idx_{entry_id}")
@@ -892,19 +891,33 @@ def edit_arrival_modal(entry_id):
         row['Сертификат'] = r2_4.selectbox("Документы в порядке", ["Да", "Нет"], 
                                            index=(0 if row.get('Сертификат')=="Да" else 1), key=f"ar_f7_{entry_id}")
 
+        # --- ДОБАВЛЕНО: ВИЗУАЛИЗАЦИЯ И ЗАГРУЗКА ФОТО ---
+        st.divider()
+        st.markdown("📷 **Фотофиксация груза**")
+        f_col1, f_col2 = st.columns([1, 2])
+        with f_col1:
+            if row.get('photo_url'):
+                st.image(row['photo_url'], caption="Текущее фото", width=150)
+            else:
+                st.info("Нет фото")
+        with f_col2:
+            new_photo = st.file_uploader("Заменить фото (Cloudinary)", type=['jpg', 'jpeg', 'png'], key=f"ar_photo_{entry_id}")
+
         st.divider()
         st.markdown("### 📦 Состав принимаемого груза")
-        
-        # Редактор (заменил на width="stretch")
         updated_items = st.data_editor(items_df, width="stretch", num_rows="dynamic", key=f"ar_ed_{entry_id}")
         st.session_state[f"temp_items_{entry_id}"] = updated_items
 
         if st.button("💾 ЗАФИКСИРОВАТЬ ПРИЕМКУ", width="stretch", type="primary"):
-            # Расчет итогов
             valid_vol = pd.to_numeric(updated_items['Объем (м3)'], errors='coerce').fillna(0)
             total_vol = round(float(valid_vol.sum()), 3)
             
-            # 1. ПОДГОТОВКА ДАННЫХ (БЕЗ СОКРАЩЕНИЙ)
+            # --- ИЗМЕНЕНО: Загрузка в Cloudinary перед сохранением в БД ---
+            final_photo_url = row.get('photo_url')
+            if new_photo:
+                with st.spinner("📤 Загрузка фото в Cloudinary..."):
+                    final_photo_url = upload_to_cloudinary(new_photo, folder_name="arrivals")
+
             db_payload = {
                 "client_name": row['Клиент'],
                 "phone": row['Телефон'],
@@ -916,18 +929,16 @@ def edit_arrival_modal(entry_id):
                 "total_volume": total_vol,
                 "items_count": len(updated_items),
                 "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
+                "photo_url": final_photo_url,  # <--- СОХРАНЯЕМ ССЫЛКУ
                 "updated_at": datetime.now().isoformat()
             }
 
             try:
-                # 2. СОХРАНЕНИЕ В ОБЛАКО
                 supabase.table(table_key).update(db_payload).eq("id", entry_id).execute()
 
-                # 3. СИНХРОНИЗАЦИЯ С ТАБЛИЦЕЙ INVENTORY
+                # СИНХРОНИЗАЦИЯ С ТАБЛИЦЕЙ INVENTORY
                 if row['Статус'] == "ПРИНЯТО":
-                    # Сначала очищаем старые записи по этому doc_id, чтобы не было конфликта
                     supabase.table("inventory").delete().eq("doc_id", entry_id).execute()
-                    
                     inv_rows = []
                     for _, item in updated_items.iterrows():
                         addr = item.get('Адрес')
@@ -942,17 +953,15 @@ def edit_arrival_modal(entry_id):
                     if inv_rows:
                         supabase.table("inventory").insert(inv_rows).execute()
 
-                # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ
                 if idx is not None:
                     target_df = st.session_state[table_key]
                     for field, val in row.items():
                         if field in target_df.columns:
                             target_df.at[idx, field] = val
                     target_df.at[idx, 'Общий объем (м3)'] = total_vol
-                    if "items_data" in target_df.columns:
-                        target_df.at[idx, "items_data"] = db_payload["items_data"]
+                    if "photo_url" in target_df.columns:
+                        target_df.at[idx, "photo_url"] = final_photo_url
                 
-                st.session_state.items_registry[entry_id] = updated_items
                 st.success(f"✅ Приемка {entry_id} сохранена!")
                 time.sleep(1)
                 st.rerun()
@@ -961,8 +970,14 @@ def edit_arrival_modal(entry_id):
                 st.error(f"🚨 Ошибка: {e}")
 
     with tab_wh:
-        from config import render_warehouse_logic # убедись, что импорт верный
-        render_warehouse_logic(entry_id, updated_items)
+        # Ответ на твой вопрос: в импорте внутри функции нужно быть осторожным. 
+        # Если render_warehouse_logic лежит в этом же файле config.py, 
+        # то импортировать её не нужно, просто вызывай.
+        try:
+            from config_topology import render_warehouse_logic 
+            render_warehouse_logic(entry_id, updated_items)
+        except Exception as e:
+            st.warning(f"Логика склада временно недоступна: {e}")
         
 @st.dialog("🔍 Карточка Прихода", width="large")
 def show_arrival_details_modal(arrival_id):
@@ -2002,6 +2017,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
