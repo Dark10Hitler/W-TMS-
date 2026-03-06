@@ -840,7 +840,7 @@ def edit_arrival_modal(entry_id):
     import pytz
     import time
     
-    # Вспомогательная функция времени (если она не импортирована глобально)
+    # Вспомогательная функция времени
     def get_md_time():
         return datetime.now(pytz.timezone('Europe/Chisinau'))
     
@@ -858,10 +858,8 @@ def edit_arrival_modal(entry_id):
                 
                 db_row = response.data[0]
                 
-                # Проверка наличия ссылки на фото
-                raw_photo = db_row.get('photo_url', '')
-                valid_photo = raw_photo if isinstance(raw_photo, str) and raw_photo.startswith('http') else None
-
+                # --- ИСПРАВЛЕНО: Четкое сопоставление полей БД и Session State ---
+                # Теперь мы берем данные из английских названий колонок (как в SQL)
                 st.session_state[f"temp_row_{entry_id}"] = {
                     'Клиент': db_row.get('client_name', ''),
                     'Телефон': db_row.get('phone', ''),
@@ -871,7 +869,7 @@ def edit_arrival_modal(entry_id):
                     'Водитель': db_row.get('driver', ''),
                     'Сертификат': db_row.get('has_certificate', 'Нет'),
                     'Общий объем (м3)': db_row.get('total_volume', 0.0),
-                    'photo_url': valid_photo
+                    'photo_url': db_row.get('photo_url') # БЕРЕМ ИЗ НОВОЙ КОЛОНКИ
                 }
                 
                 items_raw = db_row.get('items_data', [])
@@ -886,7 +884,6 @@ def edit_arrival_modal(entry_id):
                         
                 st.session_state[f"temp_items_{entry_id}"] = items_reg
 
-                # Поиск индекса в локальном df для обновления UI
                 if table_key in st.session_state:
                     df_local = st.session_state[table_key]
                     idx_list = df_local.index[df_local['id'] == entry_id].tolist()
@@ -896,6 +893,7 @@ def edit_arrival_modal(entry_id):
                 st.error(f"Ошибка инициализации прихода: {e}")
                 return
 
+    # Загружаем текущие данные из состояния
     row = st.session_state[f"temp_row_{entry_id}"]
     items_df = st.session_state[f"temp_items_{entry_id}"]
     idx = st.session_state.get(f"temp_idx_{entry_id}")
@@ -920,19 +918,21 @@ def edit_arrival_modal(entry_id):
         row['Сертификат'] = r2_4.selectbox("Документы в порядке", ["Да", "Нет"], 
                                            index=(0 if row.get('Сертификат')=="Да" else 1), key=f"ar_f7_{entry_id}")
 
-        # --- БЛОК ФОТО (Cloudinary) ---
+        # --- БЛОК ФОТО (Исправленный под колонку photo_url) ---
         st.divider()
         st.markdown("📷 **Фотофиксация груза**")
         f_col1, f_col2 = st.columns([1, 2])
         with f_col1:
-            if row.get('photo_url'):
-                # Оптимизируем превью через Cloudinary (делаем маленьким для экономии трафика)
-                thumb_url = row['photo_url'].replace("/upload/", "/upload/c_thumb,w_200,g_face/") if "cloudinary" in row['photo_url'] else row['photo_url']
-                st.image(thumb_url, caption="Текущее фото", use_container_width=True)
+            # Прямая проверка ссылки из словаря row
+            current_photo_url = row.get('photo_url')
+            if current_photo_url and isinstance(current_photo_url, str) and current_photo_url.startswith("http"):
+                # Применяем трансформацию Cloudinary для превью
+                thumb_url = current_photo_url.replace("/upload/", "/upload/c_thumb,w_200,g_face/") if "cloudinary" in current_photo_url else current_photo_url
+                st.image(thumb_url, caption="Текущее фото груза", use_container_width=True)
             else:
-                st.info("Нет фото")
+                st.info("Нет загруженного фото")
         with f_col2:
-            new_photo = st.file_uploader("Заменить фото (Cloudinary)", type=['jpg', 'jpeg', 'png'], key=f"ar_photo_{entry_id}")
+            new_photo = st.file_uploader("Загрузить / Заменить фото", type=['jpg', 'jpeg', 'png'], key=f"ar_photo_{entry_id}")
 
         st.divider()
         st.markdown("### 📦 Состав принимаемого груза")
@@ -943,13 +943,12 @@ def edit_arrival_modal(entry_id):
             valid_vol = pd.to_numeric(updated_items['Объем (м3)'], errors='coerce').fillna(0)
             total_vol = round(float(valid_vol.sum()), 3)
             
-            # --- ЗАГРУЗКА ФОТО ---
+            # --- ЛОГИКА СОХРАНЕНИЯ ФОТО ---
             final_photo_url = row.get('photo_url')
             if new_photo:
-                with st.spinner("📤 Загрузка нового фото..."):
+                with st.spinner("📤 Загрузка в Cloudinary..."):
                     final_photo_url = upload_to_cloudinary(new_photo, folder_name="arrivals")
 
-            # --- ФОРМИРОВАНИЕ ПЕЙЛОАДА С ПРАВИЛЬНЫМ ВРЕМЕНЕМ ---
             db_payload = {
                 "client_name": row['Клиент'],
                 "phone": row['Телефон'],
@@ -961,8 +960,8 @@ def edit_arrival_modal(entry_id):
                 "total_volume": total_vol,
                 "items_count": len(updated_items),
                 "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
-                "photo_url": final_photo_url,
-                "updated_at": get_md_time().isoformat()  # ИСПОЛЬЗУЕМ МОЛДОВУ
+                "photo_url": final_photo_url,  # СОХРАНЯЕМ В НОВУЮ КОЛОНКУ
+                "updated_at": get_md_time().isoformat()
             }
 
             try:
@@ -985,15 +984,18 @@ def edit_arrival_modal(entry_id):
                     if inv_rows:
                         supabase.table("inventory").insert(inv_rows).execute()
 
-                # ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ (Чтобы изменения сразу были видны на главной)
+                # ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ
                 if idx is not None and table_key in st.session_state:
                     target_df = st.session_state[table_key]
-                    # Обновляем все поля в локальном DataFrame
                     target_df.at[idx, 'client_name'] = row['Клиент']
                     target_df.at[idx, 'status'] = row['Статус']
                     target_df.at[idx, 'total_volume'] = total_vol
+                    # Важно: обновляем и в локальной таблице, чтобы фото появилось сразу
                     if "photo_url" in target_df.columns:
                         target_df.at[idx, "photo_url"] = final_photo_url
+                
+                # Очищаем временное состояние, чтобы при следующем открытии данные пересосались из БД
+                del st.session_state[f"temp_row_{entry_id}"]
                 
                 st.success(f"✅ Приемка {entry_id} сохранена!")
                 time.sleep(1)
@@ -2140,6 +2142,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
