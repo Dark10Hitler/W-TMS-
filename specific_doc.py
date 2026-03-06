@@ -385,23 +385,33 @@ def create_arrival_modal(table_key="arrivals", *args, **kwargs):
             
             # Обновление остатков (Inventory)
             if items_json:
-                inv_payload = [{
-                    "doc_id": arrival_id,
-                    "item_name": str(i.get('Название товара', 'Неизвестно')),
-                    "quantity": float(i.get('Количество', 0)),
-                    "warehouse_id": "Зона приемки",
-                    "cell_address": gate_num,
-                    "status": "ПРИНЯТО",
-                    "created_at": now_md.isoformat()
-                } for i in items_json]
-                supabase.table("inventory").upsert(inv_payload, on_conflict="doc_id,item_name").execute()
+                inv_payload = []
+                for i in items_json:
+                    # Безопасное получение количества
+                    raw_qty = i.get('Количество')
+                    try:
+                        # Если там None или пустая строка, float() не сработает, поэтому проверяем
+                        valid_qty = float(raw_qty) if raw_qty is not None else 0.0
+                    except (ValueError, TypeError):
+                        valid_qty = 0.0
+
+                    inv_payload.append({
+                        "doc_id": arrival_id,
+                        "item_name": str(i.get('Название товара') or 'Неизвестно'),
+                        "quantity": valid_qty,
+                        "warehouse_id": "Зона приемки",
+                        "cell_address": gate_num,
+                        "status": "ПРИНЯТО",
+                        "created_at": now_md.isoformat()
+                    })
+                
+                if inv_payload:
+                    supabase.table("inventory").upsert(inv_payload, on_conflict="doc_id,item_name").execute()
 
             st.success(f"✅ Приход {arrival_id} оформлен!")
             st.balloons()
             time.sleep(1.5)
             st.rerun()
-        except Exception as e:
-            st.error(f"🚨 Ошибка Supabase: {e}")
         
     
 import streamlit as st
@@ -696,3 +706,4 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
                 
             except Exception as e:
                 st.error(f"🚨 Ошибка Supabase: {e}")
+
