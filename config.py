@@ -686,8 +686,11 @@ def show_print_modal(order_id):
         </div>
         """
         # Перед генерацией full_html в функции show_print_modal добавь:
+    # Используем твою функцию времени Молдовы
     current_dt = get_moldova_time()
-    display_date = current_dt.strftime('%d.%m.%Y %H:%M')
+
+# Формат: День.Месяц.Год Часы:Минуты:Секунды
+    display_date = current_dt.strftime('%d.%m.%Y %H:%M:%S')
 
 # Если хочешь брать дату именно из записи БД, но с правильным временем:
     db_created_at = row.get('created_at')
@@ -2037,6 +2040,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
