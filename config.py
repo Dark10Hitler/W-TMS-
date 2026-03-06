@@ -650,8 +650,13 @@ def show_print_modal(order_id):
         # Извлекаем товары из JSONB поля
         raw_items = pd.DataFrame(row.get('items_data', []))
         
-        # Получаем ссылку на фактуру
-        invoice_url = row.get('invoice_photo_url')
+        # Получаем ссылку и сразу оптимизируем её для быстрой загрузки при печати
+        raw_invoice_url = row.get('invoice_photo_url', '')
+        invoice_url = raw_invoice_url
+        
+        # Если это ссылка Cloudinary, просим его сжать фото и подогнать под ширину A4 (около 1000px)
+        if "cloudinary" in str(raw_invoice_url):
+            invoice_url = raw_invoice_url.replace("/upload/", "/upload/c_limit,w_1000,q_auto,f_auto/")
         
     except Exception as e:
         st.error(f"Ошибка связи с БД: {e}")
@@ -713,6 +718,8 @@ def show_print_modal(order_id):
         .items-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
         .items-table th {{ background: #444; color: white; border: 1px solid #000; padding: 8px; font-size: 12px; text-align: left; }}
         .items-table td {{ border: 1px solid #333; padding: 8px; font-size: 12px; }}
+        .items-table tr { page-break-inside: avoid; page-break-after: auto; }
+        .invoice-section { page-break-inside: avoid; } /* Чтобы заголовок фактуры не отрывался от самого фото */
         
         .footer {{ margin-top: 40px; border-top: 1px dashed #ccc; padding-top: 20px; }}
         .signature-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 60px; margin-top: 30px; }}
@@ -760,7 +767,7 @@ def show_print_modal(order_id):
                 <tr>
                     <td><b>📏 Общий объем</b><br>{row.get('total_volume', '0')} м³</td>
                     <td><b>📜 Сертификация</b><br>{row.get('has_certificate', '---')}</td>
-                    <td><b>📅 Дата док-та</b><br>{row.get('created_at', '---')}</td>
+                    <td><b>📅 Дата док-та</b><br>{pd.to_datetime(row.get('created_at')).strftime('%d.%m.%Y %H:%M') if row.get('created_at') else '---'}</td>
                 </tr>
             </table>
 
@@ -2017,6 +2024,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
