@@ -1767,70 +1767,32 @@ def show_extra_print_modal(extra_id):
         st.rerun()
         
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-from datetime import datetime
-import time
-import ast
-
-def upload_image(file):
-    """Загрузка изображения в Supabase Storage"""
-    from database import supabase
-    try:
-        file_ext = file.name.split(".")[-1]
-        file_name = f"defect_{int(time.time())}.{file_ext}"
-        # Важно: Бакет 'defects_photos' должен быть создан в Supabase и быть PUBLIC
-        supabase.storage.from_("defects_photos").upload(
-            path=file_name,
-            file=file.getvalue(),
-            file_options={"content-type": f"image/{file_ext}"}
-        )
-        return supabase.storage.from_("defects_photos").get_public_url(file_name)
-    except Exception as e:
-        st.error(f"Ошибка загрузки фото: {e}")
-        return None
-
 @st.dialog("🚨 Актирование и Редактирование брака", width="large")
 def edit_defect_modal(entry_id):
     from database import supabase
+    from uploader import upload_to_cloudinary  # Используем наш стандартный загрузчик
     import pandas as pd
     import numpy as np
     from datetime import datetime
+    import pytz
     import time
-    import uuid
 
-    # --- 1. ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ЗАГРУЗКИ ТОВАРОВ ИЗ INVENTORY ---
-    def fetch_inventory_clean():
-        try:
-            # Берем всё из inventory, исключая TOTAL (как в регистрации)
-            response = supabase.table("inventory").select("item_name, quantity, cell_address").execute()
-            if not response.data:
-                return pd.DataFrame(columns=['Товар', 'Кол-во', 'Ячейка'])
-            
-            df_inv = pd.DataFrame(response.data)
-            # Убираем системные строки TOTAL
-            df_inv = df_inv[df_inv['item_name'] != 'TOTAL']
-            
-            # Переименовываем для редактора спецификации
-            df_inv = df_inv.rename(columns={
-                'item_name': 'Товар',
-                'quantity': 'Кол-во',
-                'cell_address': 'Ячейка'
-            })
-            return df_inv
-        except Exception as e:
-            st.error(f"Ошибка загрузки инвентаря: {e}")
-            return pd.DataFrame(columns=['Товар', 'Кол-во', 'Ячейка'])
+    # Вспомогательная функция времени Молдовы
+    def get_md_time():
+        return datetime.now(pytz.timezone('Europe/Chisinau'))
 
-    # --- 2. ИНИЦИАЛИЗАЦИЯ ДАННЫХ ИЗ БАЗЫ (DEFECTS) ---
+    # --- 1. ИНИЦИАЛИЗАЦИЯ ДАННЫХ ИЗ БАЗЫ (ПРЯМАЯ ЗАГРУЗКА) ---
     if f"temp_row_{entry_id}" not in st.session_state:
-        try:
-            res = supabase.table("defects").select("*").eq("id", entry_id).execute()
-            if res.data:
+        with st.spinner("🔄 Загрузка данных акта..."):
+            try:
+                res = supabase.table("defects").select("*").eq("id", entry_id).execute()
+                if not res.data:
+                    st.error(f"Акт №{entry_id} не найден.")
+                    return
+                
                 db_row = res.data[0]
                 
-                # Синхронизация полей с таблицей в БД
+                # Маппинг данных из БД в Session State
                 st.session_state[f"temp_row_{entry_id}"] = {
                     'item_name': db_row.get('item_name', ''),
                     'linked_doc_id': db_row.get('linked_doc_id', ''),
@@ -1841,89 +1803,79 @@ def edit_defect_modal(entry_id):
                     'storage_address': db_row.get('storage_address', 'ZONE-BRAK'),
                     'photo_url': db_row.get('photo_url', ''),
                     'description': db_row.get('description', ''),
-                    'responsible_party': db_row.get('responsible_party', '')
+                    'responsible_party': db_row.get('responsible_party', db_row.get('reported_by', ''))
                 }
                 
                 # Загрузка спецификации (JSONB)
-                items_in_act = db_row.get('items_data', [])
-                if isinstance(items_in_act, dict): # Если это один объект
-                    items_in_act = [items_in_act]
-                
-                if isinstance(items_in_act, list) and len(items_in_act) > 0:
-                    st.session_state[f"temp_items_{entry_id}"] = pd.DataFrame(items_in_act)
+                items_raw = db_row.get('items_data', [])
+                if isinstance(items_raw, list) and len(items_raw) > 0:
+                    st.session_state[f"temp_items_{entry_id}"] = pd.DataFrame(items_raw)
                 else:
-                    # Если спецификация пуста, создаем строку на основе данных акта
+                    # Создаем дефолтную строку, если данных нет
                     st.session_state[f"temp_items_{entry_id}"] = pd.DataFrame([{
-                        "Товар": db_row.get('item_name'),
+                        "Товар": db_row.get('item_name', 'Не указан'),
                         "Кол-во": db_row.get('quantity', 1),
-                        "Описание": db_row.get('description', '')
+                        "Описание": db_row.get('description', 'Первичный осмотр')
                     }])
-        except Exception as e:
-            st.error(f"Ошибка инициализации акта: {e}")
-            return
+            except Exception as e:
+                st.error(f"Ошибка инициализации акта: {e}")
+                return
 
-    # Ссылки на данные в сессии
+    # Ссылки на актуальные данные
     row = st.session_state[f"temp_row_{entry_id}"]
     items_df = st.session_state[f"temp_items_{entry_id}"]
 
-    st.subheader(f"📝 Редактирование Акта №{entry_id}")
+    st.markdown(f"### 📝 Редактирование Акта №`{entry_id}`")
+    st.divider()
 
-    # --- 3. ИНТЕРФЕЙС РЕДАКТИРОВАНИЯ ---
+    # --- 2. ИНТЕРФЕЙС РЕДАКТИРОВАНИЯ ---
     c1, c2, c3 = st.columns(3)
-    row['item_name'] = c1.text_input("📦 Товар (основной)", value=row['item_name'])
-    row['linked_doc_id'] = c2.text_input("📄 ID Документа-основания", value=row['linked_doc_id'])
-    row['storage_address'] = c3.text_input("📍 Зона брака", value=row['storage_address'])
+    row['item_name'] = c1.text_input("📦 Товар (основной)", value=row['item_name'], key=f"df_v1_{entry_id}")
+    row['linked_doc_id'] = c2.text_input("📄 ID Документа-основания", value=row['linked_doc_id'], key=f"df_v2_{entry_id}")
+    row['storage_address'] = c3.text_input("📍 Зона брака (ячейка)", value=row['storage_address'], key=f"df_v3_{entry_id}")
 
     r2_1, r2_2, r2_3 = st.columns(3)
     defect_opts = ["Бой", "Порча", "Брак производителя", "Некомплект"]
+    curr_def = row['defect_type']
     row['defect_type'] = r2_1.selectbox("Тип дефекта", defect_opts, 
-                                        index=defect_opts.index(row['defect_type']) if row['defect_type'] in defect_opts else 0)
+                                        index=defect_opts.index(curr_def) if curr_def in defect_opts else 0,
+                                        key=f"df_v4_{entry_id}")
     
     culprit_opts = ["Склад", "Перевозчик", "Поставщик", "Не установлен"]
+    curr_culp = row['culprit']
     row['culprit'] = r2_2.selectbox("Ответственная сторона", culprit_opts, 
-                                    index=culprit_opts.index(row['culprit']) if row['culprit'] in culprit_opts else 0)
+                                    index=culprit_opts.index(curr_culp) if curr_culp in culprit_opts else 0,
+                                    key=f"df_v5_{entry_id}")
     
     status_opts = ["ОБНАРУЖЕНО", "В ЭКСПЕРТИЗЕ", "ПОДТВЕРЖДЕНО", "СПИСАНО"]
+    curr_stat = row['status']
     row['status'] = r2_3.selectbox("Статус акта", status_opts, 
-                                    index=status_opts.index(row['status']) if row['status'] in status_opts else 0)
+                                    index=status_opts.index(curr_stat) if curr_stat in status_opts else 0,
+                                    key=f"df_v6_{entry_id}")
 
     col_res, col_resp = st.columns([2, 1])
-    row['decision'] = col_res.text_area("⚖️ Решение / Заключение комиссии", value=row['decision'], height=80)
-    row['responsible_party'] = col_resp.text_input("👤 Кто выявил (ФИО)", value=row['responsible_party'])
+    row['decision'] = col_res.text_area("⚖️ Решение / Заключение комиссии", value=row['decision'], height=80, key=f"df_v7_{entry_id}")
+    row['responsible_party'] = col_resp.text_input("👤 Кто выявил (ФИО)", value=row['responsible_party'], key=f"df_v8_{entry_id}")
 
-    # --- 4. БЛОК ФОТО (С ЗАГРУЗКОЙ В STORAGE) ---
+    # --- 3. БЛОК ФОТО (Cloudinary) ---
     st.divider()
-    st.write("📸 **Фотофиксация повреждений**")
+    st.markdown("📸 **Фотофиксация повреждений**")
+    f_col1, f_col2 = st.columns([1, 2])
     
-    col_img, col_up = st.columns([1, 2])
+    with f_col1:
+        if row['photo_url']:
+            # Миниатюра для UI
+            thumb = row['photo_url'].replace("/upload/", "/upload/c_thumb,w_300,g_face/") if "cloudinary" in row['photo_url'] else row['photo_url']
+            st.image(thumb, caption="Текущее фото")
+        else:
+            st.info("Фото отсутствует")
     
-    if row['photo_url']:
-        col_img.image(row['photo_url'], width=250, caption="Текущее фото")
-    else:
-        col_img.info("Фото отсутствует")
-    
-    uploaded_file = col_up.file_uploader("Заменить или добавить фото", type=['png', 'jpg', 'jpeg'], key=f"edit_up_{entry_id}")
-    
-    if uploaded_file:
-        with st.spinner("Загрузка фото в облако..."):
-            try:
-                # Твоя логика генерации имени
-                file_ext = uploaded_file.name.split('.')[-1]
-                file_name = f"EDIT_{entry_id}_{int(time.time())}.{file_ext}"
-                
-                # Загружаем в бакет defects_photos
-                supabase.storage.from_("defects_photos").upload(file_name, uploaded_file.getvalue())
-                new_url = supabase.storage.from_("defects_photos").get_public_url(file_name)
-                
-                row['photo_url'] = new_url
-                st.success("✅ Фото обновлено!")
-                st.rerun() # Обновляем, чтобы показать новое фото
-            except Exception as e:
-                st.error(f"Ошибка загрузки фото: {e}")
+    with f_col2:
+        uploaded_file = st.file_uploader("Заменить фото (JPG/PNG)", type=['png', 'jpg', 'jpeg'], key=f"df_up_{entry_id}")
 
-    # --- 5. СПЕЦИФИКАЦИЯ (РЕДАКТИРУЕМАЯ ТАБЛИЦА) ---
+    # --- 4. СПЕЦИФИКАЦИЯ (РЕДАКТИРУЕМАЯ ТАБЛИЦА) ---
     st.divider()
-    st.write(f"📦 **Спецификация позиций в акте:**")
+    st.markdown(f"📦 **Спецификация позиций в акте:**")
     
     updated_items = st.data_editor(
         items_df,
@@ -1937,58 +1889,93 @@ def edit_defect_modal(entry_id):
         }
     )
 
-    # --- 6. СОХРАНЕНИЕ ВСЕХ ИЗМЕНЕНИЙ ---
-    if st.button("💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
-        # Чистим данные перед отправкой
-        final_items_df = updated_items.dropna(subset=['Товар'])
-        total_q = int(final_items_df['Кол-во'].sum()) if not final_items_df.empty else 0
-        
-        # Payload полностью синхронизирован с твоими колонками БД
-        db_payload = {
-            "item_name": row['item_name'],
-            "main_item": row['item_name'], # Дублируем для совместимости
-            "quantity": total_q,
-            "total_defective": total_q, # Дублируем для совместимости
-            "linked_doc_id": row['linked_doc_id'],
-            "defect_type": row['defect_type'],
-            "culprit": row['culprit'],
-            "status": row['status'],
-            "decision": row['decision'],
-            "photo_url": row['photo_url'],
-            "storage_address": row['storage_address'],
-            "quarantine_address": row['storage_address'], # Дублируем
-            "description": row['description'],
-            "responsible_party": row['responsible_party'],
-            "reported_by": row['responsible_party'], # Дублируем
-            "items_data": final_items_df.replace({np.nan: None}).to_dict(orient='records'),
-            "updated_at": datetime.now().isoformat()
-        }
+    # --- 5. СОХРАНЕНИЕ ВСЕХ ИЗМЕНЕНИЙ ---
+    if st.button("💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ В БД", use_container_width=True, type="primary"):
+        try:
+            # 1. Загрузка фото, если оно было выбрано
+            final_photo_url = row['photo_url']
+            if uploaded_file:
+                with st.spinner("📤 Загрузка фото в облако..."):
+                    final_photo_url = upload_to_cloudinary(uploaded_file, folder_name="defects")
 
-        with st.spinner("Синхронизация с базой данных..."):
-            try:
-                # Обновляем таблицу defects
+            # 2. Подготовка данных
+            final_items_df = updated_items.dropna(subset=['Товар'])
+            total_q = int(final_items_df['Кол-во'].sum()) if not final_items_df.empty else 0
+            
+            db_payload = {
+                "item_name": row['item_name'],
+                "main_item": row['item_name'],
+                "quantity": total_q,
+                "total_defective": total_q,
+                "linked_doc_id": row['linked_doc_id'],
+                "defect_type": row['defect_type'],
+                "culprit": row['culprit'],
+                "status": row['status'],
+                "decision": row['decision'],
+                "photo_url": final_photo_url,
+                "storage_address": row['storage_address'],
+                "quarantine_address": row['storage_address'],
+                "description": row['description'],
+                "responsible_party": row['responsible_party'],
+                "reported_by": row['responsible_party'],
+                "items_data": final_items_df.replace({np.nan: None}).to_dict(orient='records'),
+                "updated_at": get_md_time().isoformat()
+            }
+
+            with st.spinner("💾 Синхронизация с базой..."):
+                # Сохраняем в Supabase
                 supabase.table("defects").update(db_payload).eq("id", entry_id).execute()
                 
-                # Очищаем кэш и сессию
+                # Обновляем локальную таблицу в session_state (если она есть)
+                if "defects" in st.session_state:
+                    df_local = st.session_state["defects"]
+                    idx_list = df_local.index[df_local['id'] == entry_id].tolist()
+                    if idx_list:
+                        idx = idx_list[0]
+                        df_local.at[idx, 'status'] = row['status']
+                        df_local.at[idx, 'item_name'] = row['item_name']
+                        df_local.at[idx, 'quantity'] = total_q
+
+                # Очистка временных данных
                 if f"temp_row_{entry_id}" in st.session_state:
                     del st.session_state[f"temp_row_{entry_id}"]
-                st.cache_data.clear()
+                if f"temp_items_{entry_id}" in st.session_state:
+                    del st.session_state[f"temp_items_{entry_id}"]
                 
-                st.success("🎉 Акт успешно обновлен!")
-                time.sleep(1.2)
+                st.success("🎉 Акт брака успешно обновлен!")
+                time.sleep(1)
                 st.rerun()
-            except Exception as e:
-                st.error(f"🚨 Критическая ошибка базы: {e}")
+
+        except Exception as e:
+            st.error(f"🚨 Ошибка при сохранении: {e}")
+
+    # Кнопка закрытия без сохранения
+    if st.button("❌ ОТМЕНИТЬ", use_container_width=True):
+        if f"temp_row_{entry_id}" in st.session_state:
+            del st.session_state[f"temp_row_{entry_id}"]
+        st.rerun()
         
 @st.dialog("🔍 Просмотр Акта брака", width="large")
 def show_defect_details_modal(defect_id):
     from database import supabase
     import pandas as pd
     import streamlit as st
+    import pytz
+    from datetime import datetime
 
-    # --- 1. ЗАГРУЗКА ДАННЫХ ИЗ ТАБЛИЦЫ DEFECTS ---
+    # --- 1. ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ВРЕМЕНИ МОЛДОВЫ ---
+    def format_to_md_time(date_str):
+        if not date_str:
+            return "---"
+        try:
+            # Конвертируем строку UTC из БД в объект с часовым поясом Кишинева
+            dt = pd.to_datetime(date_str).astimezone(pytz.timezone('Europe/Chisinau'))
+            return dt.strftime('%d.%m.%Y %H:%M:%S')
+        except Exception:
+            return str(date_str)
+
+    # --- 2. ЗАГРУЗКА ДАННЫХ ИЗ ТАБЛИЦЫ DEFECTS ---
     try:
-        # Тянем все поля по конкретному ID
         response = supabase.table("defects").select("*").eq("id", defect_id).execute()
         
         if not response.data:
@@ -1996,21 +1983,23 @@ def show_defect_details_modal(defect_id):
             if st.button("Закрыть"): st.rerun()
             return
             
-        # Берем строку данных
         db_row = response.data[0]
         
         # Обработка вложенной спецификации (JSONB)
         items_list = db_row.get('items_data', [])
-        # Если данные пришли строкой (хотя в Supabase это JSON), подстрахуемся
+        
+        # Подстраховка на случай, если JSON пришел строкой
         if isinstance(items_list, str):
             import json
-            try: items_list = json.loads(items_list)
-            except: items_list = []
+            try: 
+                items_list = json.loads(items_list)
+            except: 
+                items_list = []
         
-        # Превращаем в DataFrame для красивого отображения
+        # Превращаем в DataFrame
         items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame()
 
-        # Чистим названия колонок в спецификации для пользователя
+        # Маппинг названий колонок для удобства пользователя
         if not items_df.empty:
             rename_map = {
                 'item': 'Товар', 
@@ -2026,67 +2015,76 @@ def show_defect_details_modal(defect_id):
         st.error(f"🚨 Ошибка при чтении базы данных: {e}")
         return
 
-    # --- 2. ШАПКА АКТА ---
+    # --- 3. ШАПКА АКТА ---
     st.subheader(f"📑 Акт дефектовки №{defect_id}")
     
-    # Метрики сверху для быстрого понимания ситуации
+    # Метрики сверху
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("📊 Статус", db_row.get('status', 'Н/Д'))
-    m2.metric("👤 Виновник", db_row.get('culprit', 'Не указан'))
-    m3.metric("⚠️ Тип", db_row.get('defect_type', 'Н/Д'))
+    m2.metric("👤 Ответственный", db_row.get('culprit', 'Не указан'))
+    m3.metric("⚠️ Тип дефекта", db_row.get('defect_type', 'Н/Д'))
     m4.metric("🔢 Всего брака", f"{db_row.get('quantity', 0)} ед.")
 
     st.divider()
     
-    # --- 3. ДЕТАЛЬНАЯ ИНФОРМАЦИЯ ---
+    # --- 4. ДЕТАЛЬНАЯ ИНФОРМАЦИЯ ---
     col_left, col_right = st.columns(2)
     
     with col_left:
         st.markdown("### 📦 Информация о товаре")
         st.write(f"**Наименование:** {db_row.get('item_name', '---')}")
         st.write(f"**Документ-основание:** `{db_row.get('linked_doc_id', 'Не привязан')}`")
-        st.write(f"**Выявил сотрудник:** {db_row.get('responsible_party', 'Не указан')}")
+        st.write(f"**Выявил сотрудник:** {db_row.get('responsible_party', db_row.get('reported_by', 'Не указан'))}")
     
     with col_right:
         st.markdown("### 📍 Локация и время")
         st.write(f"**Зона хранения брака:** `{db_row.get('storage_address', 'ZONE-BRAK')}`")
         
-        # Красивое форматирование даты
-        raw_date = db_row.get('updated_at') or db_row.get('created_at', '---')
-        if 'T' in str(raw_date):
-            clean_date = raw_date.replace('T', ' ').split('.')[0]
-        else:
-            clean_date = raw_date
+        # Используем наше форматирование времени Молдовы
+        updated_at = format_to_md_time(db_row.get('updated_at'))
+        created_at = format_to_md_time(db_row.get('created_at'))
             
-        st.write(f"**Последнее обновление:** {clean_date}")
+        st.write(f"**Создано:** {created_at}")
+        st.write(f"**Последнее обновление:** {updated_at}")
         st.write(f"**ID записи:** `{defect_id}`")
 
-    # --- 4. ЗАКЛЮЧЕНИЕ И РЕШЕНИЕ ---
+    # --- 5. ЗАКЛЮЧЕНИЕ И РЕШЕНИЕ ---
     st.markdown("---")
-    with st.container():
-        st.markdown("### ⚖️ Решение комиссии / Описание")
-        decision_text = db_row.get('decision') or "Заключение еще не сформировано."
+    st.markdown("### ⚖️ Решение комиссии / Описание")
+    decision_text = db_row.get('decision') or "Заключение еще не сформировано."
+    
+    # Выделяем решение цветом в зависимости от статуса
+    if db_row.get('status') == "СПИСАНО":
+        st.error(decision_text)
+    elif db_row.get('status') == "ПОДТВЕРЖДЕНО":
+        st.success(decision_text)
+    else:
         st.info(decision_text)
         
-        if db_row.get('description'):
-            with st.expander("📝 Дополнительные комментарии"):
-                st.write(db_row.get('description'))
+    if db_row.get('description') and db_row.get('description') != decision_text:
+        with st.expander("📝 Дополнительные комментарии"):
+            st.write(db_row.get('description'))
 
-    # --- 5. ФОТОФИКСАЦИЯ (ГЛАВНЫЙ ЭЛЕМЕНТ) ---
+    # --- 6. ФОТОФИКСАЦИЯ (Оптимизированная) ---
     photo_url = db_row.get('photo_url')
     if photo_url:
         st.markdown("---")
         st.markdown("### 📸 Фотография повреждения")
-        # Показываем фото на всю ширину для детального осмотра
-        st.image(photo_url, use_container_width=True, caption=f"Фотофиксация к акту №{defect_id}")
+        
+        display_url = photo_url
+        # Если фото на Cloudinary, запрашиваем качественную, но сжатую версию
+        if "cloudinary" in str(photo_url):
+            display_url = photo_url.replace("/upload/", "/upload/q_auto,f_auto,w_1200/")
+            
+        st.image(display_url, use_container_width=True, caption=f"Фотофиксация к акту №{defect_id}")
+        st.markdown(f'<a href="{photo_url}" target="_blank">🔗 Открыть фото в полном разрешении</a>', unsafe_allow_html=True)
     else:
         st.warning("⚠️ К данному акту фотография не прикреплена.")
 
-    # --- 6. ТАБЛИЦА СПЕЦИФИКАЦИИ ---
+    # --- 7. ТАБЛИЦА СПЕЦИФИКАЦИИ ---
     st.markdown("---")
-    st.markdown("### 📋 Детальная спецификация")
+    st.markdown("### 📋 Детальная спецификация позиций")
     if not items_df.empty:
-        # Отображаем таблицу без возможности редактирования (просмотр)
         st.dataframe(
             items_df, 
             use_container_width=True, 
@@ -2095,18 +2093,19 @@ def show_defect_details_modal(defect_id):
     else:
         st.caption("Детальная спецификация позиций отсутствует. Информация указана в заголовке акта.")
 
-    # --- 7. КНОПКИ УПРАВЛЕНИЯ ---
+    # --- 8. КНОПКИ УПРАВЛЕНИЯ ---
     st.divider()
     c_btn1, c_btn2 = st.columns(2)
     
     with c_btn1:
-        if st.button("⬅️ ВЕРНУТЬСЯ К СПИСКУ", use_container_width=True):
+        if st.button("⬅️ ЗАКРЫТЬ", use_container_width=True):
             st.rerun()
             
     with c_btn2:
-        # Полезная кнопка для перехода в режим редактирования прямо из просмотра
+        # Переход в режим редактирования прямо из просмотра
         if st.button("📝 РЕДАКТИРОВАТЬ АКТ", use_container_width=True, type="primary"):
-            st.session_state['edit_defect_id'] = defect_id
+            # Если у вас есть механизм переключения диалогов через state:
+            st.session_state['active_edit_defect_id'] = defect_id
             st.rerun()
         
 @st.dialog("🖨️ Печать Акта о браке", width="large")
@@ -2115,8 +2114,22 @@ def show_defect_print_modal(defect_id):
     import pandas as pd
     import streamlit as st
     import json
+    import pytz
+    from datetime import datetime
+    import streamlit.components.v1 as components
 
-    # --- 1. ЗАГРУЗКА И СИНХРОНИЗАЦИЯ ДАННЫХ ---
+    # --- 1. ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ВРЕМЕНИ МОЛДОВЫ ---
+    def format_to_md_time(date_str):
+        if not date_str:
+            return "---"
+        try:
+            # Конвертируем UTC в часовой пояс Кишинева
+            dt = pd.to_datetime(date_str).astimezone(pytz.timezone('Europe/Chisinau'))
+            return dt.strftime('%d.%m.%Y %H:%M:%S')
+        except Exception:
+            return str(date_str)
+
+    # --- 2. ЗАГРУЗКА И СИНХРОНИЗАЦИЯ ДАННЫХ ---
     try:
         response = supabase.table("defects").select("*").eq("id", defect_id).execute()
         if not response.data:
@@ -2128,13 +2141,14 @@ def show_defect_print_modal(defect_id):
         # Синхронизация JSON данных (Спецификация)
         items_list = row.get('items_data', [])
         if isinstance(items_list, str):
-            try: items_list = json.loads(items_list)
-            except: items_list = []
+            try: 
+                items_list = json.loads(items_list)
+            except: 
+                items_list = []
             
-        # Превращаем в DataFrame и унифицируем колонки СТРОГО под твою БД
+        # Превращаем в DataFrame и унифицируем колонки
         if items_list:
             items_df = pd.DataFrame(items_list)
-            # Маппинг всех возможных вариантов названий в единый стандарт для печати
             rename_map = {
                 'item': 'Товар', 
                 'item_name': 'Товар',
@@ -2147,12 +2161,11 @@ def show_defect_print_modal(defect_id):
             }
             items_df = items_df.rename(columns={k: v for k, v in rename_map.items() if k in items_df.columns})
             
-            # Гарантируем наличие нужных колонок для таблицы
+            # Гарантируем колонки
             for col in ['Товар', 'Кол-во', 'Описание дефекта']:
                 if col not in items_df.columns:
                     items_df[col] = "---"
             
-            # Оставляем только нужный набор для печати
             items_df = items_df[['Товар', 'Кол-во', 'Описание дефекта']]
         else:
             items_df = pd.DataFrame(columns=['Товар', 'Кол-во', 'Описание дефекта'])
@@ -2161,159 +2174,163 @@ def show_defect_print_modal(defect_id):
         st.error(f"🚨 Ошибка связи с БД: {e}")
         return
 
-    # --- 2. ПОДГОТОВКА HTML-ТАБЛИЦЫ ---
+    # --- 3. ПОДГОТОВКА HTML-ТАБЛИЦЫ ---
     if not items_df.empty:
         items_html = items_df.to_html(index=False, border=1, classes='data-table', escape=False)
     else:
         items_html = "<p style='text-align:center; padding: 20px;'>Спецификация товаров пуста</p>"
 
-    # Логика фото (Синхронизировано с полем photo_url)
+    # Логика фото (Cloudinary Optimization)
     photo_html = ""
     current_photo = row.get('photo_url')
     if current_photo:
+        print_photo = current_photo
+        if "cloudinary" in str(current_photo):
+            # Оптимизируем фото для печати (ширина 1000px, авто-качество)
+            print_photo = current_photo.replace("/upload/", "/upload/c_limit,w_1000,q_auto,f_auto/")
+        
         photo_html = f"""
-        <div style="margin-top: 30px; text-align: center; page-break-inside: avoid;">
+        <div style="margin-top: 30px; text-align: center; page-break-before: auto;">
             <h3 style="font-size: 14px; text-align: left; border-left: 4px solid #d32f2f; padding-left: 10px; text-transform: uppercase;">
-                Фотофиксация повреждений (Приложение к акту №{defect_id}):
+                Фотофиксация повреждений:
             </h3>
             <div style="border: 1px solid #333; padding: 10px; background: #f9f9f9; display: inline-block; width: 95%;">
-                <img src="{current_photo}" style="max-width: 100%; max-height: 500px; object-fit: contain;">
-                <p style="font-size: 10px; color: #666; margin-top: 5px;">Дата снимка: {str(row.get('created_at'))[:16]}</p>
+                <img src="{print_photo}" style="max-width: 100%; max-height: 500px; border-radius: 4px;">
+                <p style="font-size: 10px; color: #666; margin-top: 5px;">Приложение к акту №{defect_id}</p>
             </div>
         </div>
         """
 
-    # --- 3. ГЕНЕРАЦИЯ ПОЛНОГО HTML ДОКУМЕНТА ---
-    # Синхронизация переменных: main_item, linked_doc_id, storage_address
+    # --- 4. ГЕНЕРАЦИЯ HTML ---
+    # Используем двойные {{ }} для CSS стилей внутри f-строки
     full_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="utf-8">
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
-            body {{ font-family: 'Roboto', Arial, sans-serif; padding: 20px; color: #1a1a1a; line-height: 1.5; background: #f0f0f0; }}
-            .act-border {{ border: 1px solid #000; padding: 40px; background: #fff; max-width: 850px; margin: auto; box-shadow: 0 0 10px rgba(0,0,0,0.1); }}
+            @media print {{
+                @page {{ size: A4; margin: 10mm; }}
+                .no-print {{ display: none !important; }}
+                body {{ background: white; padding: 0; font-size: 12pt; }}
+                .act-border {{ border: none !important; box-shadow: none !important; width: 100% !important; padding: 0 !important; }}
+                .stamp {{ -webkit-print-color-adjust: exact; color-adjust: exact; }}
+            }}
+            body {{ font-family: 'Segoe UI', Roboto, Arial, sans-serif; padding: 20px; color: #1a1a1a; line-height: 1.4; background: #f4f4f4; }}
+            .act-border {{ border: 1px solid #ddd; padding: 40px; background: #fff; max-width: 800px; margin: auto; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }}
             
-            .header {{ text-align: center; border-bottom: 3px solid #d32f2f; margin-bottom: 25px; padding-bottom: 15px; position: relative; }}
-            .header h1 {{ color: #d32f2f; margin: 0; font-size: 28px; letter-spacing: 2px; }}
-            .header p {{ font-size: 12px; margin: 5px 0 0; font-weight: bold; color: #555; }}
+            .header {{ text-align: center; border-bottom: 3px solid #d32f2f; margin-bottom: 25px; padding-bottom: 15px; }}
+            .header h1 {{ color: #d32f2f; margin: 0; font-size: 24px; text-transform: uppercase; letter-spacing: 1px; }}
             
             .info-table {{ width: 100%; border-collapse: collapse; margin-bottom: 25px; }}
-            .info-table td {{ padding: 12px 8px; border-bottom: 1px solid #ddd; font-size: 14px; vertical-align: top; }}
-            .label {{ font-weight: bold; color: #444; width: 30%; }}
+            .info-table td {{ padding: 8px; border-bottom: 1px solid #eee; font-size: 13px; }}
+            .label {{ font-weight: bold; color: #555; width: 25%; }}
             
-            .data-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-            .data-table th {{ background: #333; color: #fff; padding: 12px; border: 1px solid #000; text-align: left; font-size: 13px; }}
-            .data-table td {{ padding: 10px; border: 1px solid #000; font-size: 13px; }}
+            .data-table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
+            .data-table th {{ background: #f0f0f0; color: #333; padding: 10px; border: 1px solid #333; text-align: left; font-size: 12px; }}
+            .data-table td {{ padding: 8px; border: 1px solid #333; font-size: 12px; }}
             
-            .decision-box {{ border: 2px dashed #d32f2f; padding: 20px; margin-top: 25px; background: #fffcfc; }}
-            .decision-title {{ color: #d32f2f; font-weight: bold; font-size: 15px; margin-bottom: 10px; display: block; }}
+            .decision-box {{ border: 1px solid #d32f2f; padding: 15px; margin-top: 20px; background: #fff8f8; }}
+            .decision-title {{ color: #d32f2f; font-weight: bold; font-size: 13px; text-transform: uppercase; display: block; margin-bottom: 5px; }}
             
-            .footer {{ margin-top: 60px; display: flex; justify-content: space-between; }}
-            .signature-block {{ width: 60%; }}
-            .sig-item {{ margin-bottom: 35px; border-bottom: 1px solid #000; width: 300px; position: relative; }}
-            .sig-label {{ font-size: 10px; position: absolute; bottom: -15px; left: 0; text-transform: uppercase; }}
+            .footer-grid {{ display: flex; justify-content: space-between; margin-top: 40px; align-items: flex-start; }}
+            .signature-section {{ width: 65%; }}
+            .sig-item {{ margin-bottom: 30px; border-bottom: 1px solid #000; width: 100%; max-width: 350px; position: relative; height: 20px; }}
+            .sig-label {{ font-size: 9px; position: absolute; bottom: -15px; left: 0; color: #444; }}
             
-            .stamp-area {{ width: 200px; display: flex; flex-direction: column; align-items: center; justify-content: center; }}
-            .stamp {{ border: 3px double #1a237e; color: #1a237e; width: 140px; height: 140px; 
-                        text-align: center; border-radius: 50%; opacity: 0.8; font-size: 12px; 
-                        display: flex; align-items: center; justify-content: center;
-                        transform: rotate(-10deg); font-weight: bold; border-style: double; }}
+            .stamp-area {{ width: 160px; text-align: center; }}
+            .stamp {{ border: 3px double #1a237e; color: #1a237e; width: 130px; height: 130px; 
+                        border-radius: 50%; font-size: 11px; display: flex; align-items: center; 
+                        justify-content: center; transform: rotate(-8deg); font-weight: bold; margin: auto; }}
             
-            .no-print {{ display: block; width: 100%; max-width: 850px; margin: 0 auto 20px; }}
             .print-btn {{
-                width: 100%; padding: 20px; background: #2e7d32; color: white; 
-                border: none; cursor: pointer; font-weight: bold; border-radius: 8px; 
-                font-size: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-            }}
-            
-            @media print {{ 
-                .no-print {{ display: none !important; }} 
-                body {{ background: white; padding: 0; }}
-                .act-border {{ border: none; box-shadow: none; width: 100%; max-width: 100%; padding: 20px; }}
-                .stamp {{ -webkit-print-color-adjust: exact; }}
+                width: 100%; max-width: 800px; display: block; margin: 0 auto 20px;
+                padding: 15px; background: #d32f2f; color: white; border: none; 
+                border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 18px;
             }}
         </style>
     </head>
     <body>
         <div class="no-print">
             <button class="print-btn" onclick="window.print()">
-                🖨️ РАСПЕЧАТАТЬ АКТ (PDF / ПРИНТЕР)
+                🖨️ ПЕЧАТЬ АКТА ДЕФЕКТОВКИ
             </button>
         </div>
         
         <div class="act-border">
             <div class="header">
-                <h1>АКТ ДЕФЕКТОВКИ №{defect_id}</h1>
-                <p>IMPERIA WMS | QUALITY CONTROL SYSTEM | ОФИЦИАЛЬНЫЙ ДОКУМЕНТ</p>
+                <h1>АКТ О БРАКЕ / ДЕФЕКТОВКЕ №{defect_id}</h1>
+                <p style="font-size: 10px; margin-top: 5px;">IMPERIA WMS | ОТДЕЛ КОНТРОЛЯ КАЧЕСТВА</p>
             </div>
             
             <table class="info-table">
                 <tr>
                     <td class="label">Дата и время:</td>
-                    <td>{str(row.get('updated_at', row.get('created_at', '---')))[:16].replace('T', ' ')}</td>
+                    <td>{format_to_md_time(row.get('updated_at', row.get('created_at')))}</td>
                     <td class="label">Статус:</td>
-                    <td style="color: #d32f2f; font-weight: bold;">{row.get('status', 'ЗАРЕГИСТРИРОВАНО')}</td>
-                </tr>
-                <tr>
-                    <td class="label">Виновник:</td>
-                    <td>{row.get('culprit', 'Не установлен')}</td>
-                    <td class="label">Тип дефекта:</td>
-                    <td>{row.get('defect_type', 'Не указан')}</td>
+                    <td style="font-weight: bold;">{row.get('status', '---')}</td>
                 </tr>
                 <tr>
                     <td class="label">Товар (основной):</td>
-                    <td><b>{row.get('item_name', row.get('main_item', '---'))}</b></td>
-                    <td class="label">Зона хранения:</td>
-                    <td>{row.get('storage_address', row.get('quarantine_address', 'ZONE-BRAK'))}</td>
+                    <td><b>{row.get('item_name', '---')}</b></td>
+                    <td class="label">Виновник:</td>
+                    <td>{row.get('culprit', 'Не установлен')}</td>
                 </tr>
                 <tr>
-                    <td class="label">Документ-основание:</td>
-                    <td>{row.get('linked_doc_id', row.get('related_doc_id', '---'))}</td>
-                    <td class="label">Ответственный:</td>
-                    <td>{row.get('responsible_party', 'Системный администратор')}</td>
+                    <td class="label">Док-основание:</td>
+                    <td>{row.get('linked_doc_id', '---')}</td>
+                    <td class="label">Тип дефекта:</td>
+                    <td>{row.get('defect_type', '---')}</td>
+                </tr>
+                <tr>
+                    <td class="label">Зона хранения:</td>
+                    <td>{row.get('storage_address', 'ZONE-BRAK')}</td>
+                    <td class="label">Выявил:</td>
+                    <td>{row.get('responsible_party', '---')}</td>
                 </tr>
             </table>
             
             <div class="decision-box">
-                <span class="decision-title">ЗАКЛЮЧЕНИЕ И ПРИНЯТОЕ РЕШЕНИЕ:</span>
-                <p style="margin: 0; font-style: italic;">{row.get('decision', 'Ожидается решение комиссии по качеству.')}</p>
+                <span class="decision-title">Заключение и принятые меры:</span>
+                <p style="margin: 0; font-size: 13px; font-style: italic;">
+                    {row.get('decision', 'Ожидается решение комиссии по качеству.')}
+                </p>
             </div>
             
-            <h3 style="margin-top: 30px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Спецификация поврежденных ТМЦ:</h3>
+            <h3 style="margin-top: 25px; font-size: 13px; text-transform: uppercase;">Спецификация поврежденных позиций:</h3>
             {items_html}
 
             {photo_html}
 
-            <div class="footer">
-                <div class="signature-block">
-                    <div class="sig-item"><span class="sig-label">Сдал (Представитель поставщика/перевозчика)</span></div>
+            <div class="footer-grid">
+                <div class="signature-section">
+                    <div class="sig-item"><span class="sig-label">Сдал (Представитель контрагента / водитель)</span></div>
                     <div class="sig-item"><span class="sig-label">Принял (Сотрудник склада WMS)</span></div>
-                    <div class="sig-item"><span class="sig-label">Утвердил (Старший смены / Контролер ГК)</span></div>
+                    <div class="sig-item"><span class="sig-label">Утвердил (Старший контролер ГК)</span></div>
                 </div>
                 <div class="stamp-area">
                     <div class="stamp">
-                        IMPERIA WMS<br>СЕКТОР КОНТРОЛЯ<br>БРАК ПРИНЯТ<br>ПОДПИСЬ: ____
+                        IMPERIA WMS<br>КОНТРОЛЬ<br>КАЧЕСТВА<br>BRAK OK
                     </div>
-                    <p style="font-size: 9px; margin-top: 10px;">Для внутренних документов</p>
                 </div>
             </div>
 
-            <div style="margin-top: 40px; border-top: 1px solid #eee; padding-top: 10px; font-size: 10px; color: #999; text-align: center;">
-                Электронная подпись документа: {hash(defect_id)} | Сформировано в Imperia WMS v.3.0
+            <div style="margin-top: 30px; border-top: 1px dashed #ccc; padding-top: 10px; font-size: 9px; color: #888; text-align: center;">
+                Документ сформирован автоматически в системе управления складом. ID сессии: {hash(defect_id)}
             </div>
         </div>
     </body>
     </html>
     """
 
-    # Вывод HTML
-    st.components.v1.html(full_html, height=1300, scrolling=True)
+    # Вывод
+    components.html(full_html, height=1200, scrolling=True)
     
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
+        st.session_state.active_print_modal = None
         st.rerun()
+
 
 
 
