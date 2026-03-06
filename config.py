@@ -833,11 +833,16 @@ def show_print_modal(order_id):
 @st.dialog("⚙️ Приемка: Редактирование прихода", width="large")
 def edit_arrival_modal(entry_id):
     from database import supabase
-    from uploader import upload_to_cloudinary  # <--- ДОБАВЛЕНО: Импорт нашего загрузчика
+    from uploader import upload_to_cloudinary
     import numpy as np
     import pandas as pd
     from datetime import datetime
+    import pytz
     import time
+    
+    # Вспомогательная функция времени (если она не импортирована глобально)
+    def get_md_time():
+        return datetime.now(pytz.timezone('Europe/Chisinau'))
     
     table_key = "arrivals"
     
@@ -853,30 +858,27 @@ def edit_arrival_modal(entry_id):
                 
                 db_row = response.data[0]
                 
-                # --- ИЗМЕНЕНО: Проверка наличия ссылки на фото в базе ---
+                # Проверка наличия ссылки на фото
                 raw_photo = db_row.get('photo_url', '')
                 valid_photo = raw_photo if isinstance(raw_photo, str) and raw_photo.startswith('http') else None
 
                 st.session_state[f"temp_row_{entry_id}"] = {
-                    'Клиент': db_row.get('client_name', db_row.get('Клиент', '')),
-                    'Телефон': db_row.get('phone', db_row.get('Телефон', '')),
-                    'Адрес загрузки': db_row.get('load_address', db_row.get('Адрес загрузки', 'Склад №1')),
-                    'Статус': db_row.get('status', db_row.get('Статус', 'ПРИЕМКА')),
-                    'ТС (Госномер)': db_row.get('vehicle', db_row.get('ТС (Госномер)', '')),
-                    'Водитель': db_row.get('driver', db_row.get('Водитель', '')),
-                    'Сертификат': db_row.get('has_certificate', db_row.get('Сертификат', 'Нет')),
+                    'Клиент': db_row.get('client_name', ''),
+                    'Телефон': db_row.get('phone', ''),
+                    'Адрес загрузки': db_row.get('load_address', 'Склад №1'),
+                    'Статус': db_row.get('status', 'ПРИЕМКА'),
+                    'ТС (Госномер)': db_row.get('vehicle', ''),
+                    'Водитель': db_row.get('driver', ''),
+                    'Сертификат': db_row.get('has_certificate', 'Нет'),
                     'Общий объем (м3)': db_row.get('total_volume', 0.0),
-                    'photo_url': valid_photo  # <--- ДОБАВЛЕНО: Сохраняем ссылку в состояние
+                    'photo_url': valid_photo
                 }
                 
                 items_raw = db_row.get('items_data', [])
                 if isinstance(items_raw, list) and len(items_raw) > 0:
                     items_reg = pd.DataFrame(items_raw)
                 else:
-                    items_reg = st.session_state.items_registry.get(
-                        entry_id, 
-                        pd.DataFrame(columns=['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'])
-                    ).copy()
+                    items_reg = pd.DataFrame(columns=['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'])
 
                 for col in ['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес']:
                     if col not in items_reg.columns:
@@ -884,6 +886,7 @@ def edit_arrival_modal(entry_id):
                         
                 st.session_state[f"temp_items_{entry_id}"] = items_reg
 
+                # Поиск индекса в локальном df для обновления UI
                 if table_key in st.session_state:
                     df_local = st.session_state[table_key]
                     idx_list = df_local.index[df_local['id'] == entry_id].tolist()
@@ -917,13 +920,15 @@ def edit_arrival_modal(entry_id):
         row['Сертификат'] = r2_4.selectbox("Документы в порядке", ["Да", "Нет"], 
                                            index=(0 if row.get('Сертификат')=="Да" else 1), key=f"ar_f7_{entry_id}")
 
-        # --- ДОБАВЛЕНО: ВИЗУАЛИЗАЦИЯ И ЗАГРУЗКА ФОТО ---
+        # --- БЛОК ФОТО (Cloudinary) ---
         st.divider()
         st.markdown("📷 **Фотофиксация груза**")
         f_col1, f_col2 = st.columns([1, 2])
         with f_col1:
             if row.get('photo_url'):
-                st.image(row['photo_url'], caption="Текущее фото", width=150)
+                # Оптимизируем превью через Cloudinary (делаем маленьким для экономии трафика)
+                thumb_url = row['photo_url'].replace("/upload/", "/upload/c_thumb,w_200,g_face/") if "cloudinary" in row['photo_url'] else row['photo_url']
+                st.image(thumb_url, caption="Текущее фото", use_container_width=True)
             else:
                 st.info("Нет фото")
         with f_col2:
@@ -938,12 +943,13 @@ def edit_arrival_modal(entry_id):
             valid_vol = pd.to_numeric(updated_items['Объем (м3)'], errors='coerce').fillna(0)
             total_vol = round(float(valid_vol.sum()), 3)
             
-            # --- ИЗМЕНЕНО: Загрузка в Cloudinary перед сохранением в БД ---
+            # --- ЗАГРУЗКА ФОТО ---
             final_photo_url = row.get('photo_url')
             if new_photo:
-                with st.spinner("📤 Загрузка фото в Cloudinary..."):
+                with st.spinner("📤 Загрузка нового фото..."):
                     final_photo_url = upload_to_cloudinary(new_photo, folder_name="arrivals")
 
+            # --- ФОРМИРОВАНИЕ ПЕЙЛОАДА С ПРАВИЛЬНЫМ ВРЕМЕНЕМ ---
             db_payload = {
                 "client_name": row['Клиент'],
                 "phone": row['Телефон'],
@@ -955,14 +961,14 @@ def edit_arrival_modal(entry_id):
                 "total_volume": total_vol,
                 "items_count": len(updated_items),
                 "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
-                "photo_url": final_photo_url,  # <--- СОХРАНЯЕМ ССЫЛКУ
-                "updated_at": datetime.now().isoformat()
+                "photo_url": final_photo_url,
+                "updated_at": get_md_time().isoformat()  # ИСПОЛЬЗУЕМ МОЛДОВУ
             }
 
             try:
                 supabase.table(table_key).update(db_payload).eq("id", entry_id).execute()
 
-                # СИНХРОНИЗАЦИЯ С ТАБЛИЦЕЙ INVENTORY
+                # СИНХРОНИЗАЦИЯ С ИНВЕНТАРЕМ
                 if row['Статус'] == "ПРИНЯТО":
                     supabase.table("inventory").delete().eq("doc_id", entry_id).execute()
                     inv_rows = []
@@ -979,12 +985,13 @@ def edit_arrival_modal(entry_id):
                     if inv_rows:
                         supabase.table("inventory").insert(inv_rows).execute()
 
-                if idx is not None:
+                # ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ (Чтобы изменения сразу были видны на главной)
+                if idx is not None and table_key in st.session_state:
                     target_df = st.session_state[table_key]
-                    for field, val in row.items():
-                        if field in target_df.columns:
-                            target_df.at[idx, field] = val
-                    target_df.at[idx, 'Общий объем (м3)'] = total_vol
+                    # Обновляем все поля в локальном DataFrame
+                    target_df.at[idx, 'client_name'] = row['Клиент']
+                    target_df.at[idx, 'status'] = row['Статус']
+                    target_df.at[idx, 'total_volume'] = total_vol
                     if "photo_url" in target_df.columns:
                         target_df.at[idx, "photo_url"] = final_photo_url
                 
@@ -993,12 +1000,9 @@ def edit_arrival_modal(entry_id):
                 st.rerun()
 
             except Exception as e:
-                st.error(f"🚨 Ошибка: {e}")
+                st.error(f"🚨 Ошибка сохранения: {e}")
 
     with tab_wh:
-        # Ответ на твой вопрос: в импорте внутри функции нужно быть осторожным. 
-        # Если render_warehouse_logic лежит в этом же файле config.py, 
-        # то импортировать её не нужно, просто вызывай.
         try:
             from config_topology import render_warehouse_logic 
             render_warehouse_logic(entry_id, updated_items)
@@ -1009,6 +1013,19 @@ def edit_arrival_modal(entry_id):
 def show_arrival_details_modal(arrival_id):
     from database import supabase
     import pandas as pd
+    import pytz
+    from datetime import datetime
+
+    # --- Вспомогательная функция для времени Молдовы (внутри для надежности) ---
+    def format_to_moldova_time(date_str):
+        if not date_str:
+            return "---"
+        try:
+            # Парсим ISO строку из базы и переводим в часовой пояс Кишинева
+            dt = pd.to_datetime(date_str).astimezone(pytz.timezone('Europe/Chisinau'))
+            return dt.strftime('%d.%m.%Y %H:%M:%S')
+        except Exception:
+            return str(date_str)
 
     # --- 1. ЗАГРУЗКА АКТУАЛЬНЫХ ДАННЫХ ИЗ БД ---
     try:
@@ -1030,25 +1047,40 @@ def show_arrival_details_modal(arrival_id):
     
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown(f"**🏢 Поставщик:** {db_row.get('client_name', '---')}")
-        st.markdown(f"**📞 Контакт:** {db_row.get('phone', '---')}")
+        st.markdown(f"**🏢 Поставщик:** \n{db_row.get('client_name', '---')}")
+        st.markdown(f"**📞 Контакт:** \n{db_row.get('phone', '---')}")
     with c2:
-        st.markdown(f"**📦 Статус:** `{db_row.get('status', '---')}`")
-        st.markdown(f"**🏗️ Склад приемки:** {db_row.get('load_address', '---')}")
+        st.markdown(f"**📦 Статус:** \n`{db_row.get('status', '---')}`")
+        st.markdown(f"**🏗️ Склад приемки:** \n{db_row.get('load_address', '---')}")
     with c3:
-        st.markdown(f"**🚛 Транспорт:** {db_row.get('vehicle', '---')}")
-        st.markdown(f"**👤 Водитель:** {db_row.get('driver', '---')}")
+        st.markdown(f"**🚛 Транспорт:** \n{db_row.get('vehicle', '---')}")
+        st.markdown(f"**👤 Водитель:** \n{db_row.get('driver', '---')}")
 
     st.divider()
     
-    # --- 3. ТАБЛИЦА ТОВАРОВ ---
+    # --- 3. БЛОК ФОТОФИКСАЦИИ (Cloudinary) ---
+    photo_url = db_row.get('photo_url')
+    if photo_url:
+        with st.expander("🖼️ ПОСМОТРЕТЬ ФОТО ГРУЗА", expanded=True):
+            # Используем трансформацию Cloudinary для качественного отображения в интерфейсе
+            display_photo = photo_url
+            if "cloudinary" in str(photo_url):
+                display_photo = photo_url.replace("/upload/", "/upload/q_auto,f_auto,w_800/")
+            
+            st.image(display_photo, caption=f"Фотофиксация прихода {arrival_id}", use_container_width=True)
+            st.markdown(f'<a href="{photo_url}" target="_blank">🔗 Открыть оригинал в полном размере</a>', unsafe_allow_html=True)
+    else:
+        st.info("📷 Фотофиксация для данного прихода отсутствует.")
+
+    st.divider()
+    
+    # --- 4. ТАБЛИЦА ТОВАРОВ ---
     st.markdown("### 📋 Принятые позиции")
     if not items_df.empty:
-        # Стилизация адреса
-        if 'Адрес' in items_df.columns:
-            st.dataframe(items_df, use_container_width=True)
-        else:
-            st.dataframe(items_df, use_container_width=True)
+        # Очистка названий колонок для красоты
+        items_df.columns = [col.replace('_', ' ').title() if col not in ['Адрес', 'Название товара', 'Кол-во'] else col for col in items_df.columns]
+        
+        st.dataframe(items_df, use_container_width=True, hide_index=True)
             
         m1, m2, m3 = st.columns(3)
         m1.metric("Принято строк", f"{len(items_df)}")
@@ -1061,17 +1093,17 @@ def show_arrival_details_modal(arrival_id):
     else:
         st.warning("⚠️ Спецификация товаров пуста.")
 
-    # --- 4. ДОБАВЛЕНИЕ ЖУРНАЛА ИЗМЕНЕНИЙ (МОЛДОВА) ---
-    st.write("") # Отступ
-    exp_c1, exp_c2 = st.columns([1, 1]) # Можно сделать в колонке или на всю ширину
+    # --- 5. ЖУРНАЛ ИЗМЕНЕНИЙ (MOLDOVA) ---
+    st.write("") 
+    exp_c1, exp_c2 = st.columns([1, 1])
     
     with exp_c1:
-        # Дополнительная информация (если есть)
-        st.caption(f"ID записи: {db_row.get('id')}")
+        st.caption(f"GUID записи: {db_row.get('id')}")
+        st.caption(f"Сертификация: {db_row.get('has_certificate', '---')}")
 
     with exp_c2:
-        with st.expander("🕒 Журнал изменений (Moldova Time)"):
-            # Берем системные колонки created_at и updated_at из Supabase
+        with st.expander("🕒 История документа"):
+            # Применяем функцию форматирования к датам из базы
             created = format_to_moldova_time(db_row.get('created_at'))
             updated = format_to_moldova_time(db_row.get('updated_at'))
             
@@ -1079,16 +1111,25 @@ def show_arrival_details_modal(arrival_id):
             st.write(f"**🔄 Обновлен:** {updated}")
             st.write(f"**👤 Автор правок:** {db_row.get('updated_by', 'Система')}")
 
-    # --- 5. КНОПКА ЗАКРЫТИЯ ---
-    if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
+    st.divider()
+
+    # --- 6. КНОПКА ЗАКРЫТИЯ ---
+    if st.button("❌ ЗАКРЫТЬ КАРТОЧКУ", use_container_width=True, type="secondary"):
         st.rerun()
         
 @st.dialog("🖨️ Печать приходного ордера", width="large")
 def show_arrival_print_modal(arrival_id):
     from database import supabase
     import pandas as pd
+    from datetime import datetime
+    import pytz
+    import streamlit.components.v1 as components
 
-    # --- 1. ЗАГРУЗКА АКТУАЛЬНЫХ ДАННЫХ ИЗ БД ---
+    # --- 1. ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ВРЕМЕНИ МОЛДОВЫ ---
+    def get_now_md():
+        return datetime.now(pytz.timezone('Europe/Chisinau'))
+
+    # --- 2. ЗАГРУЗКА АКТУАЛЬНЫХ ДАННЫХ ИЗ БД ---
     try:
         response = supabase.table("arrivals").select("*").eq("id", arrival_id).execute()
         
@@ -1100,14 +1141,17 @@ def show_arrival_print_modal(arrival_id):
         # Берем список товаров напрямую из JSONB поля
         items_list = row.get('items_data', [])
         items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame(columns=["Товар", "Кол-во", "Адрес"])
+        
+        # Ссылка на фото
+        invoice_url = row.get('photo_url')
+        
     except Exception as e:
         st.error(f"Ошибка связи с БД: {e}")
         return
 
-    # --- 2. ПОДГОТОВКА ТАБЛИЦЫ ТОВАРОВ ---
-    # Очищаем таблицу от лишних колонок для печати
+    # --- 3. ПОДГОТОВКА ТАБЛИЦЫ ТОВАРОВ ---
     if not items_df.empty:
-        # Оставляем только важные колонки, если они есть
+        # Оставляем только важные колонки для печати
         cols_to_show = [c for c in ['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'] if c in items_df.columns]
         print_df = items_df[cols_to_show].fillna("-")
     else:
@@ -1115,67 +1159,120 @@ def show_arrival_print_modal(arrival_id):
 
     items_html = print_df.to_html(index=False, border=1, classes='items-table')
 
-    # --- 3. ГЕНЕРАЦИЯ HTML ---
+    # --- 4. ЛОГИКА ФОТО ДЛЯ ПЕЧАТИ (Cloudinary) ---
+    invoice_html_block = ""
+    if invoice_url:
+        # Оптимизируем ссылку для печати (сжатие + ширина 1000px)
+        print_photo_url = invoice_url
+        if "cloudinary" in str(invoice_url):
+            print_photo_url = invoice_url.replace("/upload/", "/upload/c_limit,w_1000,q_auto,f_auto/")
+        
+        invoice_html_block = f"""
+        <div class="page-break"></div>
+        <div class="invoice-section">
+            <h3 style="border-left: 5px solid #2E7D32; padding-left: 10px; margin-bottom: 15px;">📷 ФОТОФИКСАЦИЯ ПРИНЯТОГО ГРУЗА</h3>
+            <div style="text-align: center;">
+                <img src="{print_photo_url}" class="invoice-img">
+            </div>
+        </div>
+        """
+
+    # --- 5. ГЕНЕРАЦИЯ HTML (с двойными скобками для CSS) ---
     full_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
     <style>
-        @media print {{ .no-print {{ display: none !important; }} }}
-        body {{ font-family: sans-serif; padding: 20px; color: #333; }}
-        .print-container {{ background: white; padding: 20px; border: 1px solid #ccc; max-width: 800px; margin: auto; }}
-        .header {{ border-bottom: 2px solid #000; display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; }}
-        .info-table {{ width: 100%; margin-top: 20px; border-collapse: collapse; }}
-        .info-table td {{ border: 1px solid #eee; padding: 8px; font-size: 14px; }}
-        .items-table {{ width: 100%; margin-top: 20px; border-collapse: collapse; }}
+        @media print {{
+            @page {{ size: A4; margin: 10mm; }}
+            .no-print {{ display: none !important; }}
+            body {{ background: white; padding: 0; }}
+            .print-container {{ width: 100%; box-shadow: none; border: none; margin: 0; padding: 0; }}
+            .page-break {{ page-break-before: always; }}
+            .invoice-img {{ max-width: 100%; height: auto; border: 1px solid #ddd; }}
+        }}
+        body {{ font-family: "Segoe UI", Arial, sans-serif; padding: 20px; color: #333; line-height: 1.5; }}
+        .print-container {{ 
+            background: white; padding: 30px; border: 1px solid #ccc; 
+            max-width: 850px; margin: auto; box-shadow: 0 0 10px rgba(0,0,0,0.1); 
+        }}
+        .header {{ border-bottom: 3px solid #000; display: flex; justify-content: space-between; align-items: center; padding-bottom: 15px; }}
+        .info-table {{ width: 100%; margin-top: 25px; border-collapse: collapse; }}
+        .info-table td {{ border: 1px solid #ddd; padding: 10px; font-size: 14px; vertical-align: top; }}
+        .info-table b {{ color: #555; font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 5px; }}
+        
+        .items-table {{ width: 100%; margin-top: 25px; border-collapse: collapse; }}
         .items-table th {{ background: #f2f2f2; padding: 10px; border: 1px solid #000; font-size: 13px; text-align: left; }}
         .items-table td {{ padding: 10px; border: 1px solid #000; font-size: 13px; }}
-        .footer-sigs {{ margin-top:50px; display:flex; justify-content: space-between; font-weight: bold; }}
+        .items-table tr {{ page-break-inside: avoid; }}
+        
+        .footer-sigs {{ margin-top: 60px; display: grid; grid-template-columns: 1fr 1fr; gap: 50px; }}
+        .sig-line {{ border-bottom: 1px solid #000; margin-top: 40px; width: 100%; }}
+        .invoice-section {{ margin-top: 30px; }}
     </style>
     </head>
     <body>
-        <button class="no-print" onclick="window.print()" style="width:100%; padding:12px; background: #2E7D32; color:white; border:none; cursor:pointer; font-weight:bold; margin-bottom: 10px;">
-            🖨️ ПЕЧАТАТЬ ПРИХОДНЫЙ ОРДЕР / СОХРАНИТЬ PDF
+        <button class="no-print" onclick="window.print()" style="width:100%; padding:15px; background: #2E7D32; color:white; border:none; cursor:pointer; font-weight:bold; font-size:16px; margin-bottom: 20px; border-radius: 5px;">
+            🖨️ ПЕЧАТАТЬ ПРИХОДНЫЙ ОРДЕР (A4 / PDF)
         </button>
+
         <div class="print-container">
             <div class="header">
                 <div style="text-align:left;">
-                    <h2 style="margin:0;">ПРИХОДНЫЙ ОРДЕР №{arrival_id}</h2>
-                    <small>Дата формирования: {datetime.now().strftime('%d.%m.%Y %H:%M')}</small>
+                    <h1 style="margin:0; font-size:24px;">ПРИХОДНЫЙ ОРДЕР №{arrival_id}</h1>
+                    <div style="margin-top:5px; color:#666;">Дата документа: {get_now_md().strftime('%d.%m.%Y %H:%M:%S')}</div>
                 </div>
                 <div style="text-align:right;">
-                    <p style="margin:0; font-weight:bold;">IMPERIA WMS</p>
-                    <p style="margin:0; font-size:12px;">УЧЕТ ПРИЕМКИ</p>
+                    <div style="font-size:20px; font-weight:bold; color:#2E7D32;">IMPERIA WMS</div>
+                    <div style="font-size:11px; letter-spacing: 2px;">LOGISTICS & WAREHOUSE</div>
                 </div>
             </div>
+
             <table class="info-table">
                 <tr>
-                    <td><b>Отправитель (Поставщик):</b><br>{row.get('client_name', row.get('Клиент', '---'))}</td>
-                    <td><b>Склад приемки:</b><br>{row.get('load_address', row.get('Адрес загрузки', '---'))}</td>
+                    <td><b>🏢 Отправитель (Поставщик)</b>{row.get('client_name', '---')}</td>
+                    <td><b>🏗️ Склад приемки</b>{row.get('load_address', '---')}</td>
                 </tr>
                 <tr>
-                    <td><b>Транспорт:</b> {row.get('vehicle', row.get('ТС (Госномер)', '---'))}</td>
-                    <td><b>Водитель:</b> {row.get('driver', row.get('Водитель', '---'))}</td>
+                    <td><b>🚛 Транспорт (Госномер)</b>{row.get('vehicle', '---')}</td>
+                    <td><b>👤 Водитель / Экспедитор</b>{row.get('driver', '---')}</td>
+                </tr>
+                <tr>
+                    <td><b>📏 Общий объем</b>{row.get('total_volume', '0')} м³</td>
+                    <td><b>📜 Сопр. документы</b>{row.get('has_certificate', '---')}</td>
                 </tr>
             </table>
-            <h3 style="margin-top:30px; border-bottom: 1px solid #eee;">СПЕЦИФИКАЦИЯ ПРИНЯТОГО ТОВАРА</h3>
+
+            <h3 style="margin-top:30px; border-left: 5px solid #333; padding-left: 10px;">СПЕЦИФИКАЦИЯ ПРИНЯТОГО ТОВАРА</h3>
             {items_html}
             
             <div class="footer-sigs">
-                <div>Сдал (Водитель): _________________</div>
-                <div>Принял (Кладовщик): _________________</div>
+                <div>
+                    <b>Сдал (Водитель / Представитель):</b>
+                    <div class="sig-line"></div>
+                    <div style="font-size:10px; margin-top:5px;">ФИО, Подпись / Дата</div>
+                </div>
+                <div>
+                    <b>Принял (Ответственное лицо склада):</b>
+                    <div class="sig-line"></div>
+                    <div style="font-size:10px; margin-top:5px;">ФИО, Подпись / Дата</div>
+                </div>
             </div>
             
-            <div style="margin-top:40px; text-align:center; font-size:10px; color:#999;">
-                Документ сгенерирован автоматически в системе IMPERIA WMS
+            <div style="margin-top:60px; text-align:center; font-size:10px; color:#999; border-top: 1px dashed #ccc; padding-top: 10px;">
+                Система управления складом IMPERIA | Печать выполнена: {get_now_md().strftime('%d.%m.%Y %H:%M:%S')}
             </div>
+
+            {invoice_html_block}
         </div>
     </body>
     </html>
     """
-    components.html(full_html, height=800, scrolling=True)
+    # Увеличиваем высоту для отображения с фото
+    components.html(full_html, height=1200, scrolling=True)
 
-    if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
+    st.markdown("---")
+    if st.button("❌ ЗАКРЫТЬ ОКНО ПЕЧАТИ", use_container_width=True):
         st.session_state.active_print_modal = None
         st.rerun()
         
@@ -2043,6 +2140,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
