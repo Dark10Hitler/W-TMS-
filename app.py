@@ -23,8 +23,7 @@ from config import edit_arrival_modal, edit_defect_modal, edit_extra_modal, edit
 from config import show_extra_details_modal, show_arrival_details_modal, show_defect_details_modal, show_order_details_modal
 from config import show_arrival_print_modal, show_defect_print_modal, show_extra_print_modal, show_print_modal
 from config_topology import get_warehouse_figure
-from specific_doc import create_modal, create_extras_modal, create_arrival_modal, create_defect_modal, create_driver_modal, create_vehicle_modal
-from specific_doc import edit_vehicle_modal, edit_driver_modal
+from specific_doc import create_modal, create_extras_modal, create_arrival_modal, create_defect_modal
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
@@ -2060,4 +2059,5 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
