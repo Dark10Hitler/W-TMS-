@@ -718,8 +718,8 @@ def show_print_modal(order_id):
         .items-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
         .items-table th {{ background: #444; color: white; border: 1px solid #000; padding: 8px; font-size: 12px; text-align: left; }}
         .items-table td {{ border: 1px solid #333; padding: 8px; font-size: 12px; }}
-        .items-table tr { page-break-inside: avoid; page-break-after: auto; }
-        .invoice-section { page-break-inside: avoid; }
+        .items-table tr {{ page-break-inside: avoid; page-break-after: auto; }}
+        .invoice-section {{ page-break-inside: avoid; }}
         
         .footer {{ margin-top: 40px; border-top: 1px dashed #ccc; padding-top: 20px; }}
         .signature-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 60px; margin-top: 30px; }}
@@ -2024,6 +2024,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
