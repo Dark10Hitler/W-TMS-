@@ -685,6 +685,19 @@ def show_print_modal(order_id):
             </div>
         </div>
         """
+        # Перед генерацией full_html в функции show_print_modal добавь:
+    current_dt = get_moldova_time()
+    display_date = current_dt.strftime('%d.%m.%Y %H:%M')
+
+# Если хочешь брать дату именно из записи БД, но с правильным временем:
+    db_created_at = row.get('created_at')
+    if db_created_at:
+        try:
+        # Парсим дату из БД и переводим в часовой пояс Молдовы
+            dt_obj = pd.to_datetime(db_created_at).astimezone(pytz.timezone('Europe/Chisinau'))
+            display_date = dt_obj.strftime('%d.%m.%Y %H:%M')
+        except:
+            display_date = db_created_at # Если ошибка, оставим как есть
 
     # --- 4. ГЕНЕРАЦИЯ ПОЛНОГО HTML ---
     full_html = f"""
@@ -767,7 +780,7 @@ def show_print_modal(order_id):
                 <tr>
                     <td><b>📏 Общий объем</b><br>{row.get('total_volume', '0')} м³</td>
                     <td><b>📜 Сертификация</b><br>{row.get('has_certificate', '---')}</td>
-                    <td><b>📅 Дата док-та</b><br>{pd.to_datetime(row.get('created_at')).strftime('%d.%m.%Y %H:%M') if row.get('created_at') else '---'}</td>
+                    <td><b>📅 Дата док-та</b><br>{display_date}</td>
                 </tr>
             </table>
 
@@ -2024,6 +2037,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
