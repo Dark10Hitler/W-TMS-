@@ -2,11 +2,11 @@ import cloudinary
 import cloudinary.uploader
 import streamlit as st
 
-# Автоматическая настройка через секреты
+# Автоматическая настройка через секреты (с учетом секции [Cloudinary])
 cloudinary.config(
-    cloud_name = st.secrets["CLOUDINARY_CLOUD_NAME"],
-    api_key = st.secrets["CLOUDINARY_API_KEY"],
-    api_secret = st.secrets["CLOUDINARY_API_SECRET"],
+    cloud_name = st.secrets["Cloudinary"]["CLOUDINARY_CLOUD_NAME"],
+    api_key = st.secrets["Cloudinary"]["CLOUDINARY_API_KEY"],
+    api_secret = st.secrets["Cloudinary"]["CLOUDINARY_API_SECRET"],
     secure = True
 )
 
