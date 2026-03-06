@@ -40,6 +40,8 @@ from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
 import pytz
 from datetime import datetime
+from uploader import upload_to_cloudinary
+from database import insert_data # Твоя функция Supabase
 
 def sync_to_inventory(doc_id, items_list, doc_type):
     """
@@ -2058,3 +2060,4 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
