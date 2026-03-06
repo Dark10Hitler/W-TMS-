@@ -1282,33 +1282,74 @@ def show_arrival_print_modal(arrival_id):
 @st.dialog("⚙️ Корректировка: Дополнение к документу", width="large")
 def edit_extra_modal(entry_id):
     from database import supabase
+    from uploader import upload_to_cloudinary
     import numpy as np
+    import pandas as pd
+    from datetime import datetime
+    import pytz
     import time
-
+    
+    # Вспомогательная функция времени Молдовы
+    def get_md_time():
+        return datetime.now(pytz.timezone('Europe/Chisinau'))
+    
     table_key = "extras"
     
-    # --- 1. ИНИЦИАЛИЗАЦИЯ ---
+    # --- 1. УМНАЯ ИНИЦИАЛИЗАЦИЯ (ПРЯМАЯ ЗАГРУЗКА ИЗ БД) ---
     if f"temp_row_{entry_id}" not in st.session_state:
-        if table_key not in st.session_state:
-            st.error("Таблица дополнений не инициализирована")
-            return
-            
-        df = st.session_state[table_key]
-        idx_list = df.index[df['id'] == entry_id].tolist()
-        
-        if not idx_list:
-            st.error("Запись не найдена")
-            return
-        
-        st.session_state[f"temp_idx_{entry_id}"] = idx_list[0]
-        st.session_state[f"temp_row_{entry_id}"] = df.iloc[idx_list[0]].to_dict()
-        st.session_state[f"temp_items_{entry_id}"] = st.session_state.items_registry.get(
-            entry_id, pd.DataFrame(columns=['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'])
-        ).copy()
+        with st.spinner("🔄 Загрузка данных корректировки..."):
+            try:
+                response = supabase.table(table_key).select("*").eq("id", entry_id).execute()
+                
+                if not response.data:
+                    st.error(f"Документ {entry_id} не найден в базе.")
+                    return
+                
+                db_row = response.data[0]
+                
+                # Маппинг английских колонок БД в удобные ключи для UI
+                st.session_state[f"temp_row_{entry_id}"] = {
+                    'Кто одобрил': db_row.get('approved_by', ''),
+                    'Связь с ID': db_row.get('parent_id', ''),
+                    'На чем': db_row.get('transport', ''),
+                    'Когда': db_row.get('event_date', get_md_time().strftime("%Y-%m-%d")),
+                    'Время': db_row.get('event_time', get_md_time().strftime("%H:%M")),
+                    'Где': db_row.get('location', ''),
+                    'Что именно': db_row.get('subject', ''),
+                    'Статус': db_row.get('status', 'СОГЛАСОВАНО'),
+                    'Сумма заявки': db_row.get('amount', 0.0),
+                    'Почему (Причина)': db_row.get('reason', ''),
+                    'photo_url': db_row.get('photo_url') # Добавляем поддержку фото
+                }
+                
+                # Загрузка состава товаров из JSONB
+                items_raw = db_row.get('items_data', [])
+                if isinstance(items_raw, list) and len(items_raw) > 0:
+                    items_reg = pd.DataFrame(items_raw)
+                else:
+                    items_reg = pd.DataFrame(columns=['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'])
 
+                # Проверка структуры колонок
+                for col in ['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес']:
+                    if col not in items_reg.columns:
+                        items_reg[col] = 0 if 'Объем' in col or 'Кол' in col else "НЕ УКАЗАНО"
+                        
+                st.session_state[f"temp_items_{entry_id}"] = items_reg
+
+                # Индекс для локального обновления
+                if table_key in st.session_state:
+                    df_local = st.session_state[table_key]
+                    idx_list = df_local.index[df_local['id'] == entry_id].tolist()
+                    st.session_state[f"temp_idx_{entry_id}"] = idx_list[0] if idx_list else None
+
+            except Exception as e:
+                st.error(f"Ошибка инициализации корректировки: {e}")
+                return
+
+    # Загружаем текущие данные из состояния
     row = st.session_state[f"temp_row_{entry_id}"]
     items_df = st.session_state[f"temp_items_{entry_id}"]
-    idx = st.session_state[f"temp_idx_{entry_id}"]
+    idx = st.session_state.get(f"temp_idx_{entry_id}")
 
     st.markdown(f"### 🖋️ Редактирование дополнения `{entry_id}`")
     tab_info, tab_wh = st.tabs(["📝 Детали (EXTRA_COLUMNS)", "🏗️ Размещение на складе"])
@@ -1322,14 +1363,13 @@ def edit_extra_modal(entry_id):
 
         st.markdown("##### 📅 Время и Локация")
         r2_1, r2_2, r2_3 = st.columns(3)
-        # Обработка даты
         try:
-            curr_date = pd.to_datetime(row.get('Когда', datetime.now())).date()
+            curr_date = pd.to_datetime(row.get('Когда')).date()
         except:
-            curr_date = datetime.now().date()
+            curr_date = get_md_time().date()
             
         row['Когда'] = r2_1.date_input("Когда (Дата события)", value=curr_date, key=f"ex_v4_{entry_id}").strftime("%Y-%m-%d")
-        row['Время'] = r2_2.text_input("Время", value=row.get('Время', datetime.now().strftime("%H:%M")), key=f"ex_v5_{entry_id}")
+        row['Время'] = r2_2.text_input("Время", value=row.get('Время', get_md_time().strftime("%H:%M")), key=f"ex_v5_{entry_id}")
         row['Где'] = r2_3.text_input("Где (Точка/Склад)", value=row.get('Где', ''), key=f"ex_v6_{entry_id}")
 
         st.markdown("##### 📄 Суть корректировки")
@@ -1344,14 +1384,33 @@ def edit_extra_modal(entry_id):
 
         row['Почему (Причина)'] = st.text_area("Почему (Причина корректировки)", value=row.get('Почему (Причина)', ''), height=70, key=f"ex_v10_{entry_id}")
 
+        # --- БЛОК ФОТО (Cloudinary) ---
+        st.divider()
+        st.markdown("📷 **Документальное подтверждение (Фото)**")
+        f_col1, f_col2 = st.columns([1, 2])
+        with f_col1:
+            current_photo_url = row.get('photo_url')
+            if current_photo_url and isinstance(current_photo_url, str) and current_photo_url.startswith("http"):
+                thumb_url = current_photo_url.replace("/upload/", "/upload/c_thumb,w_200,g_face/") if "cloudinary" in current_photo_url else current_photo_url
+                st.image(thumb_url, caption="Загруженное фото", use_container_width=True)
+            else:
+                st.info("Нет фото")
+        with f_col2:
+            new_photo = st.file_uploader("Добавить/Заменить фото", type=['jpg', 'jpeg', 'png'], key=f"ex_photo_{entry_id}")
+
         st.divider()
         st.markdown("### 📦 Изменения в составе товаров")
         updated_items = st.data_editor(items_df, use_container_width=True, num_rows="dynamic", key=f"ex_ed_{entry_id}")
         st.session_state[f"temp_items_{entry_id}"] = updated_items
 
         if st.button("💾 СОХРАНИТЬ ВСЕ ДАННЫЕ", use_container_width=True, type="primary"):
-            # 1. ПОДГОТОВКА PAYLOAD ДЛЯ SUPABASE
-            # Маппинг на колонки вашей таблицы extras в БД
+            # 1. ЗАГРУЗКА НОВОГО ФОТО
+            final_photo_url = row.get('photo_url')
+            if new_photo:
+                with st.spinner("📤 Загрузка изображения..."):
+                    final_photo_url = upload_to_cloudinary(new_photo, folder_name="extras")
+
+            # 2. ПОДГОТОВКА PAYLOAD
             db_payload = {
                 "approved_by": row['Кто одобрил'],
                 "parent_id": row['Связь с ID'],
@@ -1365,59 +1424,81 @@ def edit_extra_modal(entry_id):
                 "reason": row['Почему (Причина)'],
                 "items_count": len(updated_items),
                 "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
-                "updated_at": datetime.now().isoformat()
+                "photo_url": final_photo_url,
+                "updated_at": get_md_time().isoformat() # Молдавское время
             }
 
             try:
-                # 2. СОХРАНЕНИЕ В ОБЛАКО (Таблица extras)
+                # 3. СОХРАНЕНИЕ В ОБЛАКО
                 supabase.table(table_key).update(db_payload).eq("id", entry_id).execute()
 
-                # 3. СИНХРОНИЗАЦИЯ СКЛАДСКИХ ОСТАТКОВ (inventory)
-                # Если корректировка завершена, обновляем ячейки
+                # 4. СИНХРОНИЗАЦИЯ СКЛАДСКИХ ОСТАТКОВ
                 if row['Статус'] == "ЗАВЕРШЕНО":
+                    # Удаляем старые записи по этому документу, чтобы избежать дублей при пересохранении
+                    supabase.table("inventory").delete().eq("doc_id", entry_id).execute()
+                    
+                    inv_rows = []
                     for _, item in updated_items.iterrows():
-                        if item.get('Адрес') and item['Адрес'] != "НЕ УКАЗАНО":
-                            inv_payload = {
+                        addr = item.get('Адрес')
+                        if addr and addr != "НЕ УКАЗАНО":
+                            inv_rows.append({
                                 "doc_id": entry_id,
                                 "item_name": item['Название товара'],
-                                "cell_address": item['Адрес'],
+                                "cell_address": addr,
                                 "quantity": float(item.get('Кол-во', 0)),
-                                "warehouse_id": item['Адрес'].split('-')[0].replace('WH', '') if '-' in item['Адрес'] else "1"
-                            }
-                            supabase.table("inventory").upsert(inv_payload, on_conflict="doc_id, item_name").execute()
+                                "warehouse_id": addr.split('-')[0].replace('WH', '') if '-' in addr else "1"
+                            })
+                    if inv_rows:
+                        supabase.table("inventory").insert(inv_rows).execute()
 
-                # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ
-                target_df = st.session_state[table_key]
-                for field, val in row.items():
-                    if field in target_df.columns:
-                        target_df.at[idx, field] = val
+                # 5. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО СОСТОЯНИЯ (Session State)
+                if idx is not None and table_key in st.session_state:
+                    target_df = st.session_state[table_key]
+                    # Синхронизируем колонки
+                    mapping = {
+                        'approved_by': row['Кто одобрил'],
+                        'status': row['Статус'],
+                        'amount': row['Сумма заявки'],
+                        'photo_url': final_photo_url
+                    }
+                    for db_col, val in mapping.items():
+                        if db_col in target_df.columns:
+                            target_df.at[idx, db_col] = val
+
+                # Сбрасываем кэш этой записи
+                del st.session_state[f"temp_row_{entry_id}"]
                 
-                # Синхронизация с MAIN
-                if "main" in st.session_state:
-                    m_df = st.session_state["main"]
-                    m_idx_list = m_df.index[m_df['id'] == entry_id].tolist()
-                    if m_idx_list:
-                        m_idx = m_idx_list[0]
-                        m_df.at[m_idx, 'Статус'] = row['Статус']
-                        if 'Сумма заявки' in m_df.columns:
-                            m_df.at[m_idx, 'Сумма заявки'] = row['Сумма заявки']
-
-                st.session_state.items_registry[entry_id] = updated_items
-                st.success(f"✅ Корректировка {entry_id} синхронизирована с БД!")
+                st.success(f"✅ Корректировка {entry_id} синхронизирована!")
                 time.sleep(1)
                 st.rerun()
 
             except Exception as e:
-                st.error(f"🚨 Ошибка сохранения корректировки: {e}")
+                st.error(f"🚨 Ошибка сохранения: {e}")
 
     with tab_wh:
-        # Универсальная логика визуализации склада
-        render_warehouse_logic(entry_id, updated_items)
+        try:
+            from config_topology import render_warehouse_logic 
+            render_warehouse_logic(entry_id, updated_items)
+        except Exception as e:
+            st.warning(f"Логика склада недоступна: {e}")
         
 @st.dialog("🔍 Просмотр дополнения", width="large")
 def show_extra_details_modal(extra_id):
     from database import supabase
     import pandas as pd
+    import pytz
+    from datetime import datetime
+
+    # --- Вспомогательная функция для времени Молдовы ---
+    def format_to_moldova_time(date_str):
+        if not date_str:
+            return "---"
+        try:
+            # Конвертируем UTC из БД в часовой пояс Кишинева
+            dt = pd.to_datetime(date_str).astimezone(pytz.timezone('Europe/Chisinau'))
+            return dt.strftime('%d.%m.%Y %H:%M:%S')
+        except Exception:
+            return str(date_str)
 
     # --- 1. ЗАГРУЗКА АКТУАЛЬНЫХ ДАННЫХ ИЗ БД (SUPABASE) ---
     try:
@@ -1463,30 +1544,45 @@ def show_extra_details_modal(extra_id):
             val_sum = 0.0
         st.markdown(f"**💰 Сумма заявки:**\n{val_sum:,.2f}")
 
-    # Причина
-    st.warning(f"**❓ Причина (Почему):** {db_row.get('reason', 'Не указана')}")
+    # Причина (выделяем блоком)
+    st.info(f"**❓ Причина (Почему):** {db_row.get('reason', 'Не указана')}")
+
+    st.divider()
+
+    # --- 3. БЛОК ФОТОФИКСАЦИИ (Cloudinary) ---
+    photo_url = db_row.get('photo_url')
+    if photo_url:
+        with st.expander("🖼️ ПОСМОТРЕТЬ ПРИКРЕПЛЕННОЕ ФОТО", expanded=True):
+            display_photo = photo_url
+            if "cloudinary" in str(photo_url):
+                # Оптимизируем изображение для просмотра
+                display_photo = photo_url.replace("/upload/", "/upload/q_auto,f_auto,w_1000/")
+            
+            st.image(display_photo, caption=f"Фото к документу {extra_id}", use_container_width=True)
+            st.markdown(f'<a href="{photo_url}" target="_blank">🔗 Открыть фото в оригинальном размере</a>', unsafe_allow_html=True)
+    else:
+        st.caption("📷 Фотофиксация отсутствует.")
 
     st.divider()
     
-    # --- 3. ТАБЛИЦА ТОВАРОВ ---
+    # --- 4. ТАБЛИЦА ТОВАРОВ ---
     count_pos = db_row.get('items_count', len(items_df))
     st.markdown(f"### 📦 Состав позиций (Всего: {count_pos})")
     
     if not items_df.empty:
-        st.dataframe(items_df, use_container_width=True)
+        st.dataframe(items_df, use_container_width=True, hide_index=True)
     else:
         st.info("Спецификация товаров пуста.")
 
-    # --- 4. ЖУРНАЛ ИЗМЕНЕНИЙ (MOLDOVA TIME) ---
-    st.write("") # Небольшой отступ
+    # --- 5. ЖУРНАЛ ИЗМЕНЕНИЙ (MOLDOVA TIME) ---
+    st.write("") 
     exp_c1, exp_c2 = st.columns([1, 1])
     
     with exp_c1:
-        st.caption(f"Системный ID: {db_row.get('id')}")
+        st.caption(f"Системный GUID: {db_row.get('id')}")
 
     with exp_c2:
         with st.expander("🕒 Журнал изменений (Moldova Time)"):
-            # Конвертируем технические даты Supabase
             created = format_to_moldova_time(db_row.get('created_at'))
             updated = format_to_moldova_time(db_row.get('updated_at'))
             
@@ -1496,7 +1592,7 @@ def show_extra_details_modal(extra_id):
 
     st.divider()
 
-    # --- 5. КНОПКА ЗАКРЫТИЯ ---
+    # --- 6. КНОПКА ЗАКРЫТИЯ ---
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.rerun()
         
@@ -1504,8 +1600,15 @@ def show_extra_details_modal(extra_id):
 def show_extra_print_modal(extra_id):
     from database import supabase
     import pandas as pd
+    from datetime import datetime
+    import pytz
+    import streamlit.components.v1 as components
 
-    # --- 1. ПОЛУЧЕНИЕ ДАННЫХ ИЗ ОБЛАКА ---
+    # --- 1. ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ВРЕМЕНИ МОЛДОВЫ ---
+    def get_now_md():
+        return datetime.now(pytz.timezone('Europe/Chisinau'))
+
+    # --- 2. ПОЛУЧЕНИЕ ДАННЫХ ИЗ ОБЛАКА ---
     try:
         response = supabase.table("extras").select("*").eq("id", extra_id).execute()
         
@@ -1517,11 +1620,15 @@ def show_extra_print_modal(extra_id):
         # Загружаем товары напрямую из JSONB
         items_list = row.get('items_data', [])
         items_df = pd.DataFrame(items_list) if items_list else pd.DataFrame(columns=["Товар", "Кол-во"])
+        
+        # Ссылка на фото (если есть)
+        photo_url = row.get('photo_url')
+        
     except Exception as e:
         st.error(f"Ошибка связи с базой данных: {e}")
         return
 
-    # --- 2. ПОДГОТОВКА ТАБЛИЦЫ ТОВАРОВ ---
+    # --- 3. ПОДГОТОВКА ТАБЛИЦЫ ТОВАРОВ ---
     if not items_df.empty:
         # Оставляем только нужные для печати колонки
         cols = [c for c in ['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес'] if c in items_df.columns]
@@ -1531,65 +1638,130 @@ def show_extra_print_modal(extra_id):
 
     items_html = print_df.to_html(index=False, border=1, classes='items-table')
 
-    # --- 3. ГЕНЕРАЦИЯ HTML ---
+    # --- 4. ЛОГИКА ФОТО ДЛЯ ПЕЧАТИ ---
+    photo_html_block = ""
+    if photo_url:
+        print_photo_url = photo_url
+        if "cloudinary" in str(photo_url):
+            print_photo_url = photo_url.replace("/upload/", "/upload/c_limit,w_1000,q_auto,f_auto/")
+        
+        photo_html_block = f"""
+        <div class="page-break"></div>
+        <div style="margin-top: 30px;">
+            <h3 style="border-left: 5px solid #fb8c00; padding-left: 10px;">📷 ФОТОФИКСАЦИЯ К ПРИЛОЖЕНИЮ</h3>
+            <div style="text-align: center; margin-top: 20px;">
+                <img src="{print_photo_url}" style="max-width: 100%; border: 1px solid #ccc; border-radius: 8px;">
+            </div>
+        </div>
+        """
+
+    # --- 5. ГЕНЕРАЦИЯ HTML (с защитой CSS {{ }}) ---
     full_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
     <style>
-        @media print {{ .no-print {{ display: none !important; }} }}
-        body {{ font-family: 'Segoe UI', sans-serif; padding: 30px; line-height: 1.6; color: #333; }}
-        .print-card {{ border: 2px solid #333; padding: 25px; border-radius: 10px; max-width: 850px; margin: auto; }}
-        .doc-header {{ text-align: center; border-bottom: 2px solid #333; margin-bottom: 20px; padding-bottom: 10px; }}
-        .info-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }}
+        @media print {{
+            @page {{ size: A4; margin: 15mm; }}
+            .no-print {{ display: none !important; }}
+            body {{ background: white; padding: 0; }}
+            .print-card {{ border: none; box-shadow: none; width: 100%; }}
+            .page-break {{ page-break-before: always; }}
+        }}
+        body {{ font-family: 'Segoe UI', Arial, sans-serif; padding: 20px; line-height: 1.6; color: #333; }}
+        .print-card {{ 
+            border: 1px solid #ddd; padding: 30px; border-radius: 5px; 
+            max-width: 800px; margin: auto; background: #fff;
+            box-shadow: 0 0 10px rgba(0,0,0,0.05);
+        }}
+        .doc-header {{ 
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 3px solid #fb8c00; margin-bottom: 25px; padding-bottom: 15px; 
+        }}
+        .info-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px; }}
+        .info-item b {{ font-size: 11px; color: #777; text-transform: uppercase; display: block; }}
+        
         .items-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-        .items-table th, .items-table td {{ border: 1px solid #333; padding: 10px; text-align: left; font-size: 13px; }}
-        .items-table th {{ background-color: #f2f2f2; }}
-        .footer {{ margin-top: 50px; font-style: italic; font-size: 12px; }}
-        .signature-section {{ display: flex; justify-content: space-between; margin-top: 40px; font-weight: bold; }}
+        .items-table th, .items-table td {{ border: 1px solid #444; padding: 10px; text-align: left; font-size: 13px; }}
+        .items-table th {{ background-color: #f8f8f8; font-weight: bold; }}
+        
+        .reason-box {{ 
+            background: #fff3e0; padding: 15px; border-left: 5px solid #fb8c00; 
+            margin-bottom: 25px; font-style: italic; 
+        }}
+        .signature-section {{ display: grid; grid-template-columns: 1fr 1fr; gap: 50px; margin-top: 50px; }}
+        .sig-line {{ border-bottom: 1px solid #333; margin-top: 35px; }}
     </style>
     </head>
     <body>
-        <button class="no-print" onclick="window.print()" style="width:100%; padding:15px; background:#fb8c00; color:white; border:none; border-radius:5px; font-weight:bold; cursor:pointer; margin-bottom:20px;">
-            🖨️ ОТПРАВИТЬ НА ПЕЧАТЬ / СОХРАНИТЬ В PDF
+        <button class="no-print" onclick="window.print()" style="width:100%; padding:15px; background:#fb8c00; color:white; border:none; border-radius:5px; font-weight:bold; cursor:pointer; margin-bottom:20px; font-size: 16px;">
+            🖨️ ПЕЧАТЬ ПРИЛОЖЕНИЯ / PDF
         </button>
+
         <div class="print-card">
             <div class="doc-header">
-                <h1 style="margin:0;">ПРИЛОЖЕНИЕ К ДОКУМЕНТУ №{extra_id}</h1>
-                <p>К основному документу: <b>{row.get('parent_id', row.get('Связь с ID', '_______'))}</b></p>
-            </div>
-            <div class="info-grid">
                 <div>
-                    <b>Суть корректировки:</b> {row.get('subject', row.get('Что именно', '---'))}<br>
-                    <b>Контрагент/Одобрил:</b> {row.get('approved_by', row.get('Кто одобрил', '---'))}
+                    <h1 style="margin:0; font-size: 22px; color: #333;">ПРИЛОЖЕНИЕ №{extra_id}</h1>
+                    <div style="color:#666; font-size: 13px;">Дата печати: {get_now_md().strftime('%d.%m.%Y %H:%M:%S')}</div>
                 </div>
                 <div style="text-align: right;">
-                    <b>Дата корректировки:</b> {row.get('event_date', row.get('Когда', '---'))}<br>
-                    <b>Статус:</b> {row.get('status', row.get('Статус', '---'))}
+                    <div style="font-weight: bold; font-size: 18px; color: #fb8c00;">IMPERIA WMS</div>
+                    <div style="font-size: 10px; letter-spacing: 1px;">КОРРЕКТИРОВКА СКЛАДА</div>
+                </div>
+            </div>
+
+            <div class="info-grid">
+                <div class="info-item">
+                    <b>🔗 Основной документ (ID)</b>
+                    <span style="font-size: 16px; font-weight: bold;">{row.get('parent_id', '---')}</span>
+                </div>
+                <div class="info-item" style="text-align: right;">
+                    <b>📅 Дата корректировки</b>
+                    <span>{row.get('event_date', '---')}</span>
+                </div>
+                <div class="info-item">
+                    <b>👤 Контрагент / Одобрил</b>
+                    <span>{row.get('approved_by', '---')}</span>
+                </div>
+                <div class="info-item" style="text-align: right;">
+                    <b>📊 Текущий статус</b>
+                    <span>{row.get('status', '---')}</span>
                 </div>
             </div>
             
-            <div style="background: #f9f9f9; padding: 10px; border-left: 4px solid #fb8c00; margin-bottom: 20px;">
-                <b>Причина:</b> {row.get('reason', row.get('Почему (Причина)', 'Не указана'))}
+            <div class="reason-box">
+                <b>Суть и причина изменений:</b><br>
+                {row.get('subject', '---')} — {row.get('reason', 'Причина не указана')}
             </div>
 
-            <h3>ПЕРЕЧЕНЬ ИЗМЕНЕНИЙ / ДОПОЛНИТЕЛЬНЫХ ПОЗИЦИЙ</h3>
+            <h3 style="font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 5px;">ПЕРЕЧЕНЬ ИЗМЕНЕНИЙ ПОЗИЦИЙ</h3>
             {items_html}
 
-            <div class="footer">
-                <p>Данное дополнение является неотъемлемой частью основного складского документа. Сведения актуальны на момент печати.</p>
-                <div class="signature-section">
-                    <div>Ответственное лицо: _________________</div>
-                    <div>Контрагент: _________________</div>
+            <div class="signature-section">
+                <div>
+                    <b>Ответственное лицо (Склад):</b>
+                    <div class="sig-line"></div>
+                    <div style="font-size: 10px; margin-top: 5px;">Подпись / ФИО</div>
                 </div>
-                <p style="text-align:center; margin-top:30px; color:#aaa;">IMPERIA WMS | Система управления складом</p>
+                <div>
+                    <b>Представитель контрагента:</b>
+                    <div class="sig-line"></div>
+                    <div style="font-size: 10px; margin-top: 5px;">Подпись / ФИО</div>
+                </div>
             </div>
+
+            <div style="text-align:center; margin-top:50px; color:#aaa; font-size: 10px; border-top: 1px dashed #eee; padding-top: 10px;">
+                Документ сформирован в системе IMPERIA WMS. Является юридически значимым дополнением к основному ордеру.
+            </div>
+
+            {photo_html_block}
         </div>
     </body>
     </html>
     """
-    components.html(full_html, height=850, scrolling=True)
+    components.html(full_html, height=900, scrolling=True)
 
+    st.markdown("---")
     if st.button("❌ ЗАКРЫТЬ", use_container_width=True):
         st.session_state.active_print_modal = None
         st.rerun()
@@ -2142,6 +2314,7 @@ def show_defect_print_modal(defect_id):
     st.divider()
     if st.button("⬅️ ВЕРНУТЬСЯ В РЕЕСТР", use_container_width=True):
         st.rerun()
+
 
 
 
