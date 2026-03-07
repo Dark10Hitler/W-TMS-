@@ -423,26 +423,21 @@ import numpy as np
 import uuid
 import time
 import pytz
-import requests  # Для прямой отправки в Cloudinary
 from datetime import datetime
+# ИМПОРТИРУЕМ ВАШ ЗАГРУЗЧИК
+from uploader import upload_to_cloudinary 
 
 @st.dialog("➕ Регистрация Дополнительного События/Услуги", width="large")
 def create_extras_modal(*args, **kwargs):
-    from database import supabase  # Подключение к Supabase
+    from database import supabase 
     
-    # --- КОНФИГУРАЦИЯ CLOUDINARY ---
-    # Рекомендуется вынести в st.secrets
-    CLOUD_NAME = "ваш_cloud_name"
-    UPLOAD_PRESET = "ваш_unsigned_preset" 
-    CLOUDINARY_URL = f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/image/upload"
-
     # 0. ИНИЦИАЛИЗАЦИЯ ИМЕНИ ОПЕРАТОРА
     try:
         operator_name = st.session_state.profile_data.iloc[0]['Значение']
     except Exception:
         operator_name = "Системный администратор"
 
-    st.subheader("🛠️ Фиксация доп. работ и услуг (Cloudinary Sync)")
+    st.subheader("🛠️ Фиксация доп. работ и услуг")
     st.info(f"👤 **Регистрирует:** {operator_name}")
     
     with st.form("extras_detailed_form", clear_on_submit=False):
@@ -489,7 +484,7 @@ def create_extras_modal(*args, **kwargs):
         cost = r4_c2.number_input("Сумма (MDL/₽)", min_value=0.0, value=0.0)
         link_id = r4_c3.text_input("🔗 ID Заявки (если есть)")
 
-        st.markdown("### 📸 Подтверждающее фото (Cloudinary)")
+        st.markdown("### 📸 Подтверждающее фото")
         uploaded_file = st.file_uploader("Загрузите фото работы/материалов", type=['png', 'jpg', 'jpeg'])
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -504,24 +499,16 @@ def create_extras_modal(*args, **kwargs):
         extra_id = f"EXT-{str(uuid.uuid4())[:6].upper()}"
         photo_url = None
 
-        # 1. ЗАГРУЗКА В CLOUDINARY (если файл есть)
+        # 1. ЗАГРУЗКА В CLOUDINARY ЧЕРЕЗ UPLOADER.PY
         if uploaded_file:
-            try:
-                with st.spinner("☁️ Отправка фото в Cloudinary..."):
-                    files = {"file": uploaded_file.getvalue()}
-                    data = {
-                        "upload_preset": UPLOAD_PRESET,
-                        "public_id": f"extras/{extra_id}", # Красивая структура папок
-                        "tags": "wms_extra_service"
-                    }
-                    res = requests.post(CLOUDINARY_URL, files=files, data=data)
-                    if res.status_code == 200:
-                        photo_url = res.json().get("secure_url")
-                    else:
-                        st.warning(f"⚠️ Фото не загружено: {res.json().get('error', {}).get('message')}")
-            except Exception as e:
-                st.error(f"🚨 Ошибка Cloudinary: {e}")
-                return
+            with st.spinner("☁️ Загрузка фото в облако..."):
+                # Используем твою функцию, которая берет ключи из st.secrets
+                photo_url = upload_to_cloudinary(uploaded_file, folder_name="extras")
+            
+            if not photo_url:
+                st.warning("⚠️ Не удалось загрузить фото. Проверьте настройки Cloudinary.")
+                # Мы не прерываем выполнение, если фото не критично, 
+                # но если нужно обязательно — добавьте return
 
         # 2. ПОДГОТОВКА PAYLOAD ДЛЯ SUPABASE
         supabase_payload = {
@@ -538,36 +525,43 @@ def create_extras_modal(*args, **kwargs):
             "quantity": float(qty),
             "total_sum": float(cost),
             "linked_order_id": link_id,
-            "photo_url": photo_url, # Та самая прямая ссылка
+            "photo_url": photo_url,
             "created_at": now_md.isoformat()
         }
 
-        # 3. ОТПРАВКА В ОБЛАКО
+        # 3. ОТПРАВКА В БД
         try:
-            with st.spinner("💾 Сохранение записи..."):
+            with st.spinner("💾 Сохранение записи в базу..."):
                 supabase.table("extras").insert(supabase_payload).execute()
         except Exception as e:
             st.error(f"🚨 Ошибка Supabase: {e}")
             return
 
-        # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО ИНТЕРФЕЙСА
+        # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО ИНТЕРФЕЙСА (Session State)
         ui_extra_data = {
-            "📝 Ред.": "⚙️", "id": extra_id, "Кто одобрил": approved_by,
-            "Что именно": subject_type, "На чем": resource_used,
+            "📝 Ред.": "⚙️", 
+            "id": extra_id, 
+            "Кто одобрил": approved_by,
+            "Что именно": subject_type, 
+            "На чем": resource_used,
             "Когда": selected_date.strftime("%Y-%m-%d"), 
             "Время": selected_time.strftime("%H:%M"),
-            "Почему (Причина)": reason, "Статус": status, "Кол-во": qty,
-            "Сумма заявки": float(cost), "Фото": photo_url,
-            "🔍 Просмотр": "👀", "🖨️ Печать": False
+            "Почему (Причина)": reason, 
+            "Статус": status, 
+            "Кол-во": qty,
+            "Сумма заявки": float(cost), 
+            "Фото": photo_url,
+            "🔍 Просмотр": "👀", 
+            "🖨️ Печать": False
         }
 
-        # Обновляем реестр extras
+        # Обновляем реестр extras в памяти
         if "extras" not in st.session_state or st.session_state["extras"] is None:
             st.session_state["extras"] = pd.DataFrame([ui_extra_data])
         else:
             st.session_state["extras"] = pd.concat([st.session_state["extras"], pd.DataFrame([ui_extra_data])], ignore_index=True)
 
-        # 5. ЗЕРКАЛИРОВАНИЕ В MAIN
+        # 5. ЗЕРКАЛИРОВАНИЕ В ГЛАВНЫЙ ЖУРНАЛ (Main)
         if "main" in st.session_state and st.session_state["main"] is not None:
             main_entry = ui_extra_data.copy()
             main_entry["Тип документа"] = "ДОП.УСЛУГА"
@@ -575,13 +569,14 @@ def create_extras_modal(*args, **kwargs):
             main_entry["Описание"] = f"Услуга: {subject_type}. Причина: {reason}"
             main_entry["Статус"] = f"🛠️ {status}"
             
+            # Приведение к формату главной таблицы
             main_row_df = pd.DataFrame([main_entry])
             main_row_df = main_row_df.reindex(columns=st.session_state["main"].columns, fill_value="")
             st.session_state["main"] = pd.concat([st.session_state["main"], main_row_df], ignore_index=True)
 
-        st.success(f"✅ Услуга {extra_id} сохранена со ссылкой на Cloudinary!")
+        st.success(f"✅ Услуга {extra_id} зафиксирована!")
         st.balloons()
-        time.sleep(1.2)
+        time.sleep(1)
         st.rerun()
         
 import streamlit as st
@@ -709,6 +704,7 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
                 
             except Exception as e:
                 st.error(f"🚨 Ошибка Supabase: {e}")
+
 
 
 
