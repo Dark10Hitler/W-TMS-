@@ -277,20 +277,15 @@ import numpy as np
 import uuid
 import time
 import pytz
-import requests
 from datetime import datetime
+# ИМПОРТИРУЕМ ТВОЙ ЗАГРУЗЧИК
+from uploader import upload_to_cloudinary 
 
 @st.dialog("📥 Регистрация нового Прихода (Поставка)", width="large")
 def create_arrival_modal(table_key="arrivals", *args, **kwargs):
     from database import supabase 
     
-    # --- КОНФИГУРАЦИЯ CLOUDINARY ---
-    # Убедитесь, что вставили свои реальные данные сюда
-    CLOUD_NAME = "ваш_cloud_name"
-    UPLOAD_PRESET = "ваш_preset"
-    CLOUDINARY_URL = f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/image/upload"
-
-    # Инициализация списка водителей, если его нет
+    # Инициализация списка водителей
     if "drivers" not in st.session_state:
         st.session_state.drivers = pd.DataFrame(columns=["Фамилия", "Имя"])
 
@@ -310,151 +305,116 @@ def create_arrival_modal(table_key="arrivals", *args, **kwargs):
 
     if uploaded_file:
         try:
-            # Чтение файла
             df = pd.read_excel(uploaded_file) if "xls" in uploaded_file.name else pd.read_csv(uploaded_file)
-            
-            # Поиск колонки с названием товара
             name_col = next((c for c in df.columns if any(k in str(c).lower() for k in ['товар', 'назван', 'артикул', 'наимен'])), None)
             if name_col:
                 df = df.rename(columns={name_col: 'Название товара'})
-                
-                # Поиск колонки с количеством
                 qty_col = next((c for c in df.columns if any(k in str(c).lower() for k in ['кол', 'qty', 'количество'])), None)
                 if qty_col:
-                    # ВАЖНО: Синхронизируем с редактором (он использует 'Кол-во')
+                    # СИНХРОНИЗАЦИЯ: Редактор ждет 'Кол-во'
                     df = df.rename(columns={qty_col: 'Кол-во'})
                 
-                # Добавляем недостающие для редактора колонки
-                if 'Объем (м3)' not in df.columns:
-                    df['Объем (м3)'] = 0.0
-                if 'Адрес' not in df.columns:
-                    df['Адрес'] = "НЕ УКАЗАНО"
+                # Колонки для полной совместимости с edit_arrival_modal
+                if 'Объем (м3)' not in df.columns: df['Объем (м3)'] = 0.0
+                if 'Адрес' not in df.columns: df['Адрес'] = "НЕ УКАЗАНО"
                 
-                # Оставляем только нужные колонки для items_data
                 parsed_items_df = df[['Название товара', 'Кол-во', 'Объем (м3)', 'Адрес']]
-                st.success(f"✅ Файл обработан. Товаров: {len(df)}")
+                st.success(f"✅ Товаров в файле: {len(df)}")
         except Exception as e:
-            st.error(f"❌ Ошибка парсинга файла: {e}")
+            st.error(f"❌ Ошибка парсинга: {e}")
 
-    # --- 2. ФОРМА ВВОДА ---
-    with st.form("arrival_form_sync", clear_on_submit=False):
+    # --- 2. ФОРМА ---
+    with st.form("arrival_form_sync_final", clear_on_submit=False):
         col1, col2, col3 = st.columns([2, 1, 1])
-        # Используем имена переменных, соответствующие ключам в редакторе
-        client_name = col1.text_input("🏢 Поставщик*", placeholder="Введите название")
+        # Ключи client_name, doc_number — как в базе и редакторе
+        client_name = col1.text_input("🏢 Поставщик*", placeholder="Название компании")
         doc_num = col2.text_input("📄 № Накладной*")
-        a_type = col3.selectbox("📦 Тип поставки", ["Полная", "Частичная", "Возврат"])
+        a_type = col3.selectbox("📦 Тип", ["Полная", "Частичная", "Возврат"])
 
         r2_c1, r2_c2, r2_c3 = st.columns(3)
         driver_val = r2_c1.selectbox("👤 Водитель", ["Внешний перевозчик"] + (st.session_state.drivers["Фамилия"].tolist() if not st.session_state.drivers.empty else []))
         vehicle_val = r2_c2.text_input("🚛 Госномер ТС")
-        # load_address в БД соответствует "Складу приемки" в редакторе
+        # load_address — это "Склад приемки" в редакторе
         load_addr_val = r2_c3.text_input("🚪 Склад приемки", value="Склад №1")
 
         st.divider()
-        st.markdown("### 📸 Фотофиксация документов")
-        arrival_photo = st.file_uploader("Прикрепите фото накладной (обязательно)*", type=['png', 'jpg', 'jpeg'])
+        st.markdown("### 📸 Фотофиксация")
+        arrival_photo = st.file_uploader("Фото накладной или груза*", type=['png', 'jpg', 'jpeg'])
         
-        comments_val = st.text_area("📝 Заметки к приходу")
-        
+        comments_val = st.text_area("📝 Заметки")
         submitted = st.form_submit_button("📥 ЗАРЕГИСТРИРОВАТЬ ПРИХОД", use_container_width=True)
 
-    # --- 3. ЛОГИКА СОХРАНЕНИЯ ---
+    # --- 3. СОХРАНЕНИЕ ---
     if submitted:
-        # Валидация
         if not client_name or not doc_num or not arrival_photo:
-            st.error("❌ Ошибка: Поставщик, номер накладной и фото — обязательны!")
+            st.error("❌ Заполните Поставщика, № Документа и прикрепите ФОТО!")
             return
 
-        # Настройка времени
         moldova_tz = pytz.timezone('Europe/Chisinau')
         now_md = datetime.now(moldova_tz)
         arrival_id = f"IN-{uuid.uuid4().hex[:6].upper()}"
         
-        # 1. Загрузка фото в Cloudinary
+        # --- ИСПОЛЬЗУЕМ ТВОЙ UPLOADER.PY ---
         photo_url = None
-        try:
-            with st.spinner("☁️ Отправка фото в облако..."):
-                files = {"file": arrival_photo.getvalue()}
-                upload_params = {
-                    "upload_preset": UPLOAD_PRESET, 
-                    "public_id": f"arrivals/{arrival_id}"
-                }
-                res = requests.post(CLOUDINARY_URL, files=files, data=upload_params)
-                if res.status_code == 200:
-                    photo_url = res.json().get("secure_url")
-                else:
-                    st.error(f"Cloudinary Error: {res.text}")
-                    return
-        except Exception as e:
-            st.error(f"🚨 Критическая ошибка Cloudinary: {e}")
+        with st.spinner("☁️ Загрузка в Cloudinary через uploader.py..."):
+            photo_url = upload_to_cloudinary(arrival_photo, folder_name="arrivals")
+        
+        if not photo_url:
+            st.error("🚨 Не удалось загрузить фото. Проверьте st.secrets!")
             return
 
-        # 2. Подготовка данных для основной таблицы (СИНХРОНИЗИРОВАНО С РЕДАКТОРОМ)
-        # Превращаем DataFrame в список словарей, заменяя NaN на None для корректного JSON
-        items_list = parsed_items_df.replace({np.nan: None}).to_dict(orient='records') if not parsed_items_df.empty else []
-        
-        # Расчет общего объема для синхронизации
+        # Подготовка данных (ПОЛНАЯ СИНХРОНИЗАЦИЯ С РЕДАКТОРОМ)
+        items_list = parsed_items_df.replace({np.nan: None}).to_dict(orient='records')
         try:
-            total_vol_calc = round(float(parsed_items_df['Объем (м3)'].sum()), 3) if not parsed_items_df.empty else 0.0
+            total_vol = round(float(parsed_items_df['Объем (м3)'].sum()), 3) if not parsed_items_df.empty else 0.0
         except:
-            total_vol_calc = 0.0
+            total_vol = 0.0
 
         payload = {
             "id": arrival_id,
-            "status": "ПРИЕМКА",               # Начальный статус
-            "client_name": client_name,        # Совпадает с редактором
-            "doc_number": doc_num,             # Совпадает с редактором
-            "driver": driver_val,              # Совпадает с редактором (вместо driver_name)
-            "vehicle": vehicle_val,            # Совпадает с редактором (вместо vehicle_number)
+            "status": "ПРИЕМКА",
+            "client_name": client_name,
+            "doc_number": doc_num,
+            "driver": driver_val,
+            "vehicle": vehicle_val,
             "arrival_type": a_type,
-            "photo_url": photo_url,            # Совпадает с редактором
-            "items_data": items_list,          # Совпадает по ключам внутри (Кол-во, Объем)
-            "load_address": load_addr_val,     # Совпадает с редактором
+            "photo_url": photo_url,           # Теперь ссылка точно есть
+            "items_data": items_list,
+            "load_address": load_addr_val,
             "receiver_name": operator_name,
-            "total_volume": total_vol_calc,    # Совпадает с редактором
+            "total_volume": total_vol,
             "items_count": len(items_list),
             "comments": comments_val,
-            "has_certificate": "Да",           # Значение по умолчанию для редактора
+            "has_certificate": "Да",
             "created_at": now_md.isoformat()
         }
 
-        # 3. Запись в Supabase
         try:
-            with st.spinner("💾 Синхронизация с базой данных..."):
-                # Сохраняем основную запись
+            with st.spinner("💾 Сохранение в базу..."):
                 supabase.table("arrivals").insert(payload).execute()
                 
-                # Если есть товары, создаем записи в Inventory (остатки)
+                # Синхронизация с Inventory
                 if items_list:
-                    inv_payload = []
+                    inv_rows = []
                     for i in items_list:
-                        raw_qty = i.get('Кол-во')
-                        try:
-                            # Безопасное приведение к числу
-                            valid_qty = float(raw_qty) if raw_qty is not None else 0.0
-                        except (ValueError, TypeError):
-                            valid_qty = 0.0
-
-                        inv_payload.append({
+                        inv_rows.append({
                             "doc_id": arrival_id,
                             "item_name": str(i.get('Название товара') or 'Неизвестно'),
-                            "quantity": valid_qty,
-                            "warehouse_id": "Зона приемки", # Или парсим из load_addr_val
+                            "quantity": float(i.get('Кол-во') or 0.0),
+                            "warehouse_id": "1",
                             "cell_address": load_addr_val,
                             "status": "ПРИНЯТО",
                             "created_at": now_md.isoformat()
                         })
-                    
-                    if inv_payload:
-                        supabase.table("inventory").upsert(inv_payload, on_conflict="doc_id,item_name").execute()
+                    supabase.table("inventory").upsert(inv_rows, on_conflict="doc_id,item_name").execute()
 
-            st.success(f"✅ Приход {arrival_id} успешно создан!")
+            st.success(f"✅ Приход {arrival_id} оформлен!")
             st.balloons()
             time.sleep(1)
             st.rerun()
 
         except Exception as e:
-            st.error(f"🚨 Ошибка базы данных Supabase: {e}")
+            st.error(f"🚨 Ошибка Supabase: {e}")
         
     
 import streamlit as st
@@ -749,6 +709,7 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
                 
             except Exception as e:
                 st.error(f"🚨 Ошибка Supabase: {e}")
+
 
 
 
