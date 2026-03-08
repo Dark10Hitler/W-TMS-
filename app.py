@@ -312,37 +312,58 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
         return False, None
 
 
-# ИСПОЛЬЗУЕМ ВНЕШНИЙ URL ТУННЕЛЯ, чтобы облако видело твой ПК
-TRACCAR_URL = "https://pollution-istanbul-portable-propecia.trycloudflare.com"
+import requests
+import streamlit as st
+
+# 1. СЮДА ВСТАВЛЯЕШЬ СВОЙ АКТУАЛЬНЫЙ АДРЕС (NGROK ИЛИ CLOUDFLARE)
+TRACCAR_URL = "https://bronchiolar-dichromatic-abdul.ngrok-free.dev" 
 TRACCAR_AUTH = ("denis.masliuc.speak23dev@gmail.com", "qwert12345")
 
 @st.cache_data(ttl=10)
 def get_detailed_traccar_data(endpoint="devices", params=None):
-    api_base = f"{TRACCAR_URL.rstrip('/')}/api" 
-    headers = {'ngrok-skip-browser-warning': 'true'}
+    # Чистим URL от лишних слэшей в конце и добавляем /api
+    api_base = f"{TRACCAR_URL.strip().rstrip('/')}/api"
     
-    # Если запрашиваем устройства (стандартный вызов без аргументов)
+    # Заголовок, чтобы NGROK не показывал страницу-предупреждение
+    headers = {
+        'ngrok-skip-browser-warning': 'true',
+        'Accept': 'application/json'
+    }
+    
+    # --- СЦЕНАРИЙ 1: ЗАПРОС УСТРОЙСТВ И ПОЗИЦИЙ ---
     if endpoint == "devices":
         try:
+            # Делаем два параллельных запроса
             dev_resp = requests.get(f"{api_base}/devices", auth=TRACCAR_AUTH, headers=headers, timeout=10)
             pos_resp = requests.get(f"{api_base}/positions", auth=TRACCAR_AUTH, headers=headers, timeout=10)
             
             if dev_resp.status_code == 200 and pos_resp.status_code == 200:
-                devices = {d['id']: d for d in dev_resp.json()}
-                return devices, pos_resp.json()
-            return {}, []
+                devices_list = dev_resp.json()
+                positions_list = pos_resp.json()
+                
+                # Превращаем список в словарь {id: данные}, чтобы удобнее искать
+                devices_dict = {d['id']: d for d in devices_list}
+                return devices_dict, positions_list
+            
+            else:
+                st.sidebar.warning(f"⚠️ Статус API: Dev({dev_resp.status_code}) Pos({pos_resp.status_code})")
+                return {}, []
+                
         except Exception as e:
             st.sidebar.error(f"📡 Ошибка связи (devices): {e}")
             return {}, []
     
-    # Если запрашиваем отчеты (вызов с параметрами)
+    # --- СЦЕНАРИЙ 2: ЗАПРОС ОТЧЕТОВ (С ПАРАМЕТРАМИ) ---
     else:
         try:
             resp = requests.get(f"{api_base}/{endpoint}", auth=TRACCAR_AUTH, headers=headers, params=params, timeout=15)
             if resp.status_code == 200:
                 return resp.json()
+            elif resp.status_code == 401:
+                st.error("🔒 Ошибка авторизации: проверь логин/пароль Traccar")
+                return []
             else:
-                st.error(f"Ошибка API: {resp.status_code}")
+                st.error(f"❌ Ошибка API ({endpoint}): {resp.status_code}")
                 return []
         except Exception as e:
             st.error(f"📡 Ошибка связи (reports): {e}")
@@ -2059,6 +2080,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
