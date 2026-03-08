@@ -318,7 +318,7 @@ TRACCAR_AUTH = ("denis.masliuc.speak23dev@gmail.com", "qwert12345")
 
 @st.cache_data(ttl=10)
 def get_detailed_traccar_data(endpoint="devices", params=None):
-    api_base = f"{TRACCAR_URL.rstrip('/')}/api"
+    api_base = f"{TRACCAR_URL.rstrip('/')}"
     headers = {'ngrok-skip-browser-warning': 'true'}
     
     # Если запрашиваем устройства (стандартный вызов без аргументов)
@@ -2059,6 +2059,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
