@@ -316,7 +316,7 @@ import requests
 import streamlit as st
 
 # 1. СЮДА ВСТАВЛЯЕШЬ СВОЙ АКТУАЛЬНЫЙ АДРЕС (NGROK ИЛИ CLOUDFLARE)
-TRACCAR_URL = "posttarsal-tanisha-nondisastrous.ngrok-free.dev" 
+TRACCAR_URL = "https://posttarsal-tanisha-nondisastrous.ngrok-free.dev" 
 TRACCAR_AUTH = ("denis.masliuc.speak23dev@gmail.com", "qwert12345")
 
 @st.cache_data(ttl=10)
@@ -2080,6 +2080,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
