@@ -313,12 +313,12 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
 
 
 # ИСПОЛЬЗУЕМ ВНЕШНИЙ URL ТУННЕЛЯ, чтобы облако видело твой ПК
-TRACCAR_URL = "https://pictures-continent-tip-corrections.trycloudflare.com"
+TRACCAR_URL = "https://pictures-continent-tip-corrections.trycloudflare.com/api/osmand"
 TRACCAR_AUTH = ("denis.masliuc.speak23dev@gmail.com", "qwert12345")
 
 @st.cache_data(ttl=10)
 def get_detailed_traccar_data(endpoint="devices", params=None):
-    api_base = f"{TRACCAR_URL.rstrip('/')}"
+    api_base = f"{TRACCAR_URL.rstrip('/')}/api" 
     headers = {'ngrok-skip-browser-warning': 'true'}
     
     # Если запрашиваем устройства (стандартный вызов без аргументов)
@@ -2059,6 +2059,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
