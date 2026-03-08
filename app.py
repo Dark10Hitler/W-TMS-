@@ -313,7 +313,7 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
 
 
 # ИСПОЛЬЗУЕМ ВНЕШНИЙ URL ТУННЕЛЯ, чтобы облако видело твой ПК
-TRACCAR_URL = "http://127.0.0.1:8082/api"
+TRACCAR_URL = "https://pictures-continent-tip-corrections.trycloudflare.com"
 TRACCAR_AUTH = ("denis.masliuc.speak23dev@gmail.com", "qwert12345")
 
 @st.cache_data(ttl=10)
@@ -2059,6 +2059,7 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
 
 
 
