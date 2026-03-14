@@ -399,6 +399,10 @@ def create_arrival_modal(table_key="arrivals", *args, **kwargs):
         except:
             total_vol = 0.0
 
+        # --- ИСПРАВЛЕННЫЙ PAYLOAD ---
+        # Конвертируем "Да" в True для корректной записи в Boolean колонку
+        db_certificate = True 
+
         payload = {
             "id": arrival_id,
             "status": "ПРИЕМКА",
@@ -407,22 +411,23 @@ def create_arrival_modal(table_key="arrivals", *args, **kwargs):
             "driver": driver_val,
             "vehicle": vehicle_val,
             "arrival_type": a_type,
-            "photo_url": photo_url,           # Теперь ссылка точно есть
+            "photo_url": photo_url,
             "items_data": items_list,
             "load_address": load_addr_val,
             "receiver_name": operator_name,
             "total_volume": total_vol,
             "items_count": len(items_list),
             "comments": comments_val,
-            "has_certificate": "Да",
+            "has_certificate": db_certificate,  # ТЕПЕРЬ True ВМЕСТО "Да"
             "created_at": now_md.isoformat()
         }
 
         try:
             with st.spinner("💾 Сохранение в базу..."):
+                # 1. Запись в arrivals
                 supabase.table("arrivals").insert(payload).execute()
                 
-                # Синхронизация с Inventory
+                # 2. Синхронизация с Inventory (используем insert для новых записей)
                 if items_list:
                     inv_rows = []
                     for i in items_list:
@@ -433,9 +438,12 @@ def create_arrival_modal(table_key="arrivals", *args, **kwargs):
                             "warehouse_id": "1",
                             "cell_address": load_addr_val,
                             "status": "ПРИНЯТО",
-                            "created_at": now_md.isoformat()
+                            "created_at": now_md.isoformat(),
+                            "updated_at": now_md.isoformat()
                         })
-                    supabase.table("inventory").upsert(inv_rows, on_conflict="doc_id,item_name").execute()
+                    
+                    # Используем insert или upsert (проверь наличие constraint в базе)
+                    supabase.table("inventory").insert(inv_rows).execute()
 
             st.success(f"✅ Приход {arrival_id} оформлен!")
             st.balloons()
@@ -444,7 +452,6 @@ def create_arrival_modal(table_key="arrivals", *args, **kwargs):
 
         except Exception as e:
             st.error(f"🚨 Ошибка Supabase: {e}")
-        
     
 import streamlit as st
 import pandas as pd
@@ -733,6 +740,7 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
                 
             except Exception as e:
                 st.error(f"🚨 Ошибка Supabase: {e}")
+
 
 
 
