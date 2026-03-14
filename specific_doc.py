@@ -165,7 +165,9 @@ def create_modal(table_key):
             st.error("❌ Укажите клиента!")
             return
 
-        # ВРЕМЯ МОЛДОВЫ
+        # --- 1. ВРЕМЯ И ИДЕНТИФИКАТОРЫ ---
+        import cloudinary.uploader  # Импорт внутри для надежности
+        
         moldova_tz = pytz.timezone('Europe/Chisinau')
         now_md = datetime.now(moldova_tz)
         iso_time = now_md.isoformat()
@@ -173,28 +175,38 @@ def create_modal(table_key):
         order_id = f"ORD-{str(uuid.uuid4())[:6].upper()}"
         efficiency = (total_vol / v_max_vol) * 100 if v_max_vol > 0 else 0
 
-        # Функция загрузки фото
-        def upload_to_storage(file_obj, prefix="photo"):
-            if not file_obj: return None
+        # --- 2. НОВАЯ ФУНКЦИЯ ЗАГРУЗКИ (CLOUDINARY) ---
+        def upload_to_cloudinary(file_obj, prefix="photo"):
+            if not file_obj: 
+                return None
             try:
-                ext = file_obj.name.split('.')[-1]
-                fname = f"{prefix}_{order_id}_{int(time.time())}.{ext}"
-                supabase.storage.from_("order-photos").upload(fname, file_obj.getvalue())
-                return supabase.storage.from_("order-photos").get_public_url(fname)
+                # Загружаем файл напрямую в Cloudinary
+                # folder="logistics" создаст папку в твоем облаке Cloudinary
+                upload_result = cloudinary.uploader.upload(
+                    file_obj, 
+                    folder="logistics",
+                    public_id=f"{prefix}_{order_id}_{int(time.time())}"
+                )
+                return upload_result.get("secure_url") # Возвращаем HTTPS ссылку
             except Exception as e:
-                st.warning(f"Ошибка загрузки фото: {e}")
+                st.warning(f"Ошибка Cloudinary ({prefix}): {e}")
                 return None
 
-        # Загружаем медиа
-        final_photo_url = upload_to_storage(uploaded_photo, "cargo")
-        final_invoice_url = upload_to_storage(uploaded_invoice_photo, "invoice")
+        # --- 3. ЗАГРУЗКА МЕДИА ---
+        with st.spinner("📤 Загрузка фото в облако Cloudinary..."):
+            final_photo_url = upload_to_cloudinary(uploaded_photo, "cargo")
+            final_invoice_url = upload_to_cloudinary(uploaded_invoice_photo, "invoice")
 
-        # JSON товаров
+        # --- 4. ПОДГОТОВКА ДАННЫХ ---
+        # Конвертируем "Да"/"Нет" в настоящий Boolean для базы данных
+        cert_boolean = True if has_certificate == "Да" else False
+
+        # JSON товаров (с обработкой пустых значений)
         items_json = []
         if not parsed_items_df.empty:
             items_json = parsed_items_df.replace({np.nan: None}).to_dict(orient='records')
 
-        # PAYLOAD ДЛЯ ORDERS
+        # PAYLOAD ДЛЯ ТАБЛИЦЫ ORDERS
         supabase_payload = {
             "id": order_id,
             "status": selected_status,
@@ -206,7 +218,7 @@ def create_modal(table_key):
             "delivery_address": input_address,
             "phone": input_phone,
             "load_address": input_loading_addr,
-            "has_certificate": has_certificate,
+            "has_certificate": cert_boolean,  # Теперь передаем True/False, а не "Да"/"Нет"
             "driver": input_driver,
             "vehicle": input_ts,
             "description": input_desc,
@@ -219,10 +231,11 @@ def create_modal(table_key):
         }
 
         try:
-            # 1. Запись в orders
+            # --- 5. СОХРАНЕНИЕ В SUPABASE ---
+            # 1. Запись в основную таблицу orders
             supabase.table("orders").insert(supabase_payload).execute()
 
-            # 2. Синхронизация с inventory (Распаковка)
+            # 2. Синхронизация с inventory (Распаковка позиций)
             if items_json:
                 inventory_payload = []
                 for item in items_json:
@@ -241,26 +254,42 @@ def create_modal(table_key):
                     })
                 
                 if inventory_payload:
-                    supabase.table("inventory").upsert(inventory_payload, on_conflict="doc_id,item_name").execute()
+                    supabase.table("inventory").upsert(
+                        inventory_payload, 
+                        on_conflict="doc_id,item_name"
+                    ).execute()
 
-            # 3. Обновление UI
+            # --- 6. ОБНОВЛЕНИЕ ИНТЕРФЕЙСА (Session State) ---
             ui_row = {
-                "📝 Ред.": "⚙️", "id": order_id, "🔍 Просмотр": "👀 Посмотреть",
-                "Статус": selected_status, "Клиент": input_client, "Кол-во позиций": len(parsed_items_df),
-                "Общий объем (м3)": round(total_vol, 3), "Сумма заявки": float(total_sum),
-                "КПД загрузки": f"{efficiency:.1f}%", "Адрес клиента": input_address,
-                "Телефон": input_phone, "Адрес загрузки": input_loading_addr,
-                "Сертификат": has_certificate, "Водитель": input_driver, "ТС": input_ts,
-                "Дата создания": now_md.strftime("%Y-%m-%d"), "Время создания": now_md.strftime("%H:%M:%S"),
+                "📝 Ред.": "⚙️", 
+                "id": order_id, 
+                "🔍 Просмотр": "👀 Посмотреть",
+                "Статус": selected_status, 
+                "Клиент": input_client, 
+                "Кол-во позиций": len(parsed_items_df),
+                "Общий объем (м3)": round(total_vol, 3), 
+                "Сумма заявки": float(total_sum),
+                "КПД загрузки": f"{efficiency:.1f}%", 
+                "Адрес клиента": input_address,
+                "Телефон": input_phone, 
+                "Адрес загрузки": input_loading_addr,
+                "Сертификат": has_certificate, # Для UI оставляем "Да"/"Нет"
+                "Водитель": input_driver, 
+                "ТС": input_ts,
+                "Дата создания": now_md.strftime("%Y-%m-%d"), 
+                "Время создания": now_md.strftime("%H:%M:%S"),
                 "Последнее изменение": f"{operator_name} ({now_md.strftime('%H:%M')})",
                 "Фото": "✅" if final_photo_url else "❌",
                 "Фото фактуры": "✅" if final_invoice_url else "❌",
-                "Описание": input_desc, "Допуск": input_dopusk, "🖨️ Печать": False
+                "Описание": input_desc, 
+                "Допуск": input_dopusk, 
+                "🖨️ Печать": False
             }
 
             if table_key not in st.session_state:
                 st.session_state[table_key] = pd.DataFrame()
             
+            # Добавляем новую строку в локальную таблицу для мгновенного отображения
             st.session_state[table_key] = pd.concat([st.session_state[table_key], pd.DataFrame([ui_row])], ignore_index=True)
 
             st.success(f"✅ Документ {order_id} успешно сохранен!")
@@ -704,6 +733,7 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
                 
             except Exception as e:
                 st.error(f"🚨 Ошибка Supabase: {e}")
+
 
 
 
