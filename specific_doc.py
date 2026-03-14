@@ -674,31 +674,25 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
 
         moldova_tz = pytz.timezone('Europe/Chisinau')
         now_md = datetime.now(moldova_tz)
+        defect_id = f"DEF-{uuid.uuid4().hex[:6].upper()}"
 
+        # --- 1. ЗАГРУЗКА ЧЕРЕЗ ТВОЙ СТАНДАРТНЫЙ UPLOADER ---
+        photo_url = None
         with st.spinner("☁️ Загрузка изображения в Cloudinary..."):
-            defect_id = f"DEF-{uuid.uuid4().hex[:6].upper()}"
-            photo_url = None
-            
-            # --- ЛОГИКА CLOUDINARY ---
             try:
-                files = {"file": uploaded_photo.getvalue()}
-                data = {
-                    "upload_preset": UPLOAD_PRESET,
-                    "public_id": f"defects/{defect_id}", # Организуем папку в Cloudinary
-                    "tags": "wms_defect"
-                }
-                response = requests.post(CLOUDINARY_URL, files=files, data=data)
-                res_json = response.json()
-                
-                if response.status_code == 200:
-                    photo_url = res_json.get("secure_url") # Получаем ту самую прямую ссылку
-                else:
-                    st.error(f" Ошибка Cloudinary: {res_json.get('error', {}).get('message')}")
-                    return
+                # Мы используем ту же функцию, что и в Arrivals
+                # Она сама возьмет API_KEY и CLOUD_NAME из st.secrets
+                from uploader import upload_to_cloudinary 
+                photo_url = upload_to_cloudinary(uploaded_photo, folder_name="defects")
             except Exception as cloud_err:
-                st.error(f"🚨 Ошибка связи с Cloudinary: {cloud_err}")
+                st.error(f"🚨 Ошибка загрузки: {cloud_err}")
                 return
 
+        if not photo_url:
+            st.error("🚨 Не удалось получить ссылку на фото. Проверьте настройки Cloudinary!")
+            return
+
+        # --- 2. ЗАПИСЬ В БАЗУ ДАННЫХ ---
         with st.spinner("💾 Запись в базу данных..."):
             payload = {
                 "id": defect_id,
@@ -711,35 +705,42 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
                 "responsible_party": reporter.strip(),
                 "decision": decision,
                 "status": "ОБНАРУЖЕНО",
-                "photo_url": photo_url, # Ссылка из Cloudinary
+                "photo_url": photo_url,
                 "linked_doc_id": linked_doc_input.strip() if linked_doc_input else None
             }
 
             try:
                 supabase.table("defects").insert(payload).execute()
                 
-                # Обновляем UI
+                # Обновляем UI таблицу в памяти
                 ui_row = {
-                    "📝 Ред.": "⚙️", "id": defect_id, "Товар": item_name_input.strip(),
-                    "Кол-во": defect_qty, "Тип дефекта": d_type, "Зона": q_zone,
-                    "Решение": decision, "Выявил": reporter.strip(),
-                    "Дата": now_md.strftime("%Y-%m-%d"), "Время": now_md.strftime("%H:%M"),
-                    "Фото": photo_url, # Теперь здесь настоящая ссылка
-                    "🔍 Просмотр": "👀", "🖨️ Печать": False
+                    "📝 Ред.": "⚙️", 
+                    "id": defect_id, 
+                    "Товар": item_name_input.strip(),
+                    "Кол-во": defect_qty, 
+                    "Тип дефекта": d_type, 
+                    "Зона": q_zone,
+                    "Решение": decision, 
+                    "Выявил": reporter.strip(),
+                    "Дата": now_md.strftime("%Y-%m-%d"), 
+                    "Время": now_md.strftime("%H:%M"),
+                    "Фото": "✅", 
+                    "🔍 Просмотр": "👀", 
+                    "🖨️ Печать": False
                 }
 
-                # Пушим в session_state
                 if "defects" not in st.session_state:
                     st.session_state["defects"] = pd.DataFrame([ui_row])
                 else:
                     st.session_state["defects"] = pd.concat([st.session_state["defects"], pd.DataFrame([ui_row])], ignore_index=True)
 
-                st.success(f"✅ Акт {defect_id} создан. Ссылка на фото сохранена!")
+                st.success(f"✅ Акт {defect_id} создан!")
                 time.sleep(1.5)
                 st.rerun()
                 
             except Exception as e:
                 st.error(f"🚨 Ошибка Supabase: {e}")
+
 
 
 
