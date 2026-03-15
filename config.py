@@ -413,7 +413,7 @@ def edit_order_modal(entry_id, table_key="orders"):
                         "vehicle": row['ТС'],
                         "load_address": row['Адрес загрузки'],
                         "approval_by": row['Допуск'],           # СОХРАНЕНИЕ: Кто одобрил
-                        "has_certificate": row['Сертификат'],   # СОХРАНЕНИЕ: Сертификация
+                        "has_certificate": True if row['Сертификат'] == "Да" else False,   # СОХРАНЕНИЕ: Сертификация
                         "description": row['Описание'],         # СОХРАНЕНИЕ: Заметка
                         "items_data": updated_items.replace({np.nan: None}).to_dict(orient='records'),
                         "photo_url": final_photo_url,
