@@ -1871,11 +1871,7 @@ function(params) {
                             "zone": str(wh_id),
                             "last_updated": datetime.now().isoformat()
                         }
-        
-        # Мы просто делаем upsert. 
-        # Если в базе уже есть индекс (Шаг 1), Supabase поймет это по умолчанию.
-                        supabase.table("product_locations").upsert(payload).execute()
-        
+                        supabase.table("product_locations").upsert(payload, on_conflict="doc_id,product").execute()
                         st.cache_data.clear()
                         st.success(f"✅ Успешно: {selected_cell}")
                         st.balloons()
