@@ -1721,141 +1721,156 @@ elif selected == "Аналитика":
             
 import streamlit as st
 import qrcode
+import time
 from io import BytesIO
 from datetime import datetime
+from streamlit_option_menu import option_menu
 
-# --- 0. НАСТРОЙКА СТРАНИЦЫ ---
+# --- 0. КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(
-    page_title="W-TMS | Terminal",
+    page_title="W-TMS | Warehouse Management",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# Импорты твоих модулей (проверь наличие файлов)
+# Импорты (убедись, что файлы database.py и config_topology.py на месте)
 try:
     from database import supabase
     from config_topology import get_warehouse_figure, get_actual_cells
     from constants import WAREHOUSE_MAP
 except ImportError:
-    st.error("Ошибка: Проверь наличие database.py и config_topology.py")
+    st.error("Критическая ошибка: Проверь наличие вспомогательных .py файлов!")
 
-# Стилизация: Убираем отступы сверху и прячем лишние элементы Streamlit
-st.markdown("""
-    <style>
-        [data-testid="stSidebar"] { display: none !important; }
-        [data-testid="stHeader"] { display: none !important; }
-        footer { visibility: hidden; }
-        .block-container { padding-top: 1rem !important; }
-        .product-card {
-            background: #ffffff;
-            border-radius: 12px;
-            border: 1px solid #e0e0e0;
-            padding: 12px;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        }
-        .product-title {
-            font-size: 1.1em;
-            font-weight: 700;
-            color: #1a1a1a;
-            margin-bottom: 4px;
-        }
-        .product-meta {
-            font-size: 0.85em;
-            color: #666;
-            margin-bottom: 8px;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-# --- 1. ЛОГИКА ОПРЕДЕЛЕНИЯ РЕЖИМА ---
+# --- 1. ЖЕСТКИЙ ПЕРЕХВАТ (КТО СКАНЕРОВАЛ — ТОТ ВИДИТ ВИТРИНУ) ---
 query_params = st.query_params
-is_worker_mode = "shelf" in query_params
 
-if is_worker_mode:
-    # --- РЕЖИМ ВИТРИНЫ (ГРУЗЧИК) ---
+if "shelf" in query_params:
     scanned_shelf = query_params["shelf"].strip()
     
+    # Прячем всё лишнее через CSS, чтобы грузчик ничего не нажал
+    st.markdown("""
+        <style>
+            [data-testid="stSidebar"] { display: none !important; }
+            [data-testid="stHeader"] { display: none !important; }
+            footer { visibility: hidden; }
+            .block-container { padding-top: 1rem !important; }
+            .worker-card {
+                background: white; padding: 15px; border-radius: 12px;
+                border-left: 10px solid #ff4b4b; box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+                margin-bottom: 15px;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Шапка ячейки
     st.markdown(f"""
-        <div style="background: #1a1a1a; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
-            <h2 style="color: white; margin: 0; font-size: 1.2em;">📍 ЯЧЕЙКА: {scanned_shelf}</h2>
+        <div style="background: #1a1a1a; padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 20px;">
+            <h1 style="color: white; margin: 0; font-size: 1.5em;">📦 ЯЧЕЙКА: {scanned_shelf}</h1>
         </div>
     """, unsafe_allow_html=True)
 
     try:
+        # Поиск товаров в ячейке
         res = supabase.table("global_inventory").select("*").eq("cell", scanned_shelf).execute()
         items = res.data
         
-        # Вывод топологии (где находится эта ячейка)
         if items:
+            # ТOПОЛОГИЯ (Карта)
+            st.write("### 📍 Местоположение:")
             wh_name = items[0]['warehouse']
             fig = get_warehouse_figure(wh_name, highlighted_cell=scanned_shelf)
-            fig.update_layout(height=300, margin=dict(l=0, r=0, t=0, b=0))
+            fig.update_layout(height=350, margin=dict(l=0, r=0, t=0, b=0))
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            
             st.divider()
-
-        if not items:
-            st.info("В этой ячейке нет товаров.")
-        else:
-            # Компактный вывод товаров
+            
+            # СПИСОК ТОВАРОВ (Только просмотр!)
+            st.write("### 📋 Содержимое ячейки:")
             for item in items:
                 st.markdown(f"""
-                    <div class="product-card">
-                        <div class="product-title">{item['name']}</div>
-                        <div class="product-meta">Склад: {item['warehouse']}</div>
+                    <div class="worker-card">
+                        <div style="font-size: 1.3em; font-weight: bold;">{item['name']}</div>
+                        <div style="color: #666;">Склад: {item['warehouse']}</div>
                     </div>
                 """, unsafe_allow_html=True)
                 
-                img_url = item.get('image_url') or "https://via.placeholder.com/400x300?text=Нет+фото"
+                # Фото товара крупно
+                img_url = item.get('image_url') or "https://via.placeholder.com/600x400?text=Нет+фото"
                 st.image(img_url, use_container_width=True)
                 st.markdown("<br>", unsafe_allow_html=True)
-
+        else:
+            st.warning("В этой ячейке пусто.")
+            
     except Exception as e:
-        st.error(f"Ошибка БД: {e}")
-    
-    st.stop()  # Жесткая остановка, админка не загрузится
+        st.error(f"Ошибка базы данных: {e}")
 
-else:
-    # --- РЕЖИМ УПРАВЛЕНИЯ (ТОЛЬКО БАЗА ДАННЫХ) ---
-    st.markdown("<h2 style='text-align: center;'>📦 Управление Складом</h2>", unsafe_allow_html=True)
+    # БЛОКИРОВКА: Грузчик дальше этого места не пройдет ни при каких условиях
+    st.stop()
+
+
+# --- 2. АДМИН-ПАНЕЛЬ (ДЛЯ ТЕБЯ) ---
+# Сюда попадешь только ты, если зайдешь без ?shelf= в ссылке
+
+with st.sidebar:
+    st.title("W-TMS ADM")
+    selected = option_menu(
+        "Навигация", ["Главная", "База Данных"], 
+        icons=['house', 'database'], 
+        default_index=1
+    )
+
+if selected == "Главная":
+    st.title("Добро пожаловать в систему")
+    st.info("Перейдите в раздел 'База Данных' для управления складом.")
+
+elif selected == "База Данных":
+    st.markdown("<h2 style='text-align: center;'>📂 Глобальный Реестр Склада</h2>", unsafe_allow_html=True)
     
-    # Поиск и Кнопки в одну строку для компактности
-    search = st.text_input("🔍 Поиск по названию или полке...")
-    
-    col_btns = st.columns(2)
-    with col_btns[0]:
-        if st.button("➕ Добавить товар", use_container_width=True):
-            # Здесь твоя функция st.dialog для добавления
-            st.toast("Функция добавления")
-    with col_btns[1]:
-        if st.button("🖨 Создать QR", use_container_width=True):
-            # Здесь твоя функция st.dialog для QR
-            st.toast("Генератор QR")
+    # Поиск
+    search_query = st.text_input("🔍 Найти товар или ячейку...", placeholder="Введите название...")
+
+    # Кнопки действий
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("➕ ДОБАВИТЬ ТОВАР", use_container_width=True, type="primary"):
+            st.toast("Тут логика добавления (через диалог)")
+    with c2:
+        if st.button("🖨 ПЕЧАТЬ QR", use_container_width=True):
+            st.toast("Тут генератор QR")
 
     st.divider()
 
-    # Загрузка данных
+    # Вывод реестра
     try:
         data = supabase.table("global_inventory").select("*").order("name").execute().data
-    except:
-        data = []
+        
+        if search_query:
+            data = [i for i in data if search_query.lower() in i['name'].lower() or search_query.lower() in i['cell'].lower()]
 
-    if search:
-        data = [i for i in data if search.lower() in i['name'].lower() or search.lower() in i['cell'].lower()]
+        if data:
+            # Заголовки таблицы
+            t_col1, t_col2, t_col3 = st.columns([1, 4, 1])
+            t_col1.write("**Фото**")
+            t_col2.write("**Описание**")
+            t_col3.write("**Опции**")
+            st.markdown("<hr style='margin: 0; border: 1px solid #ff4b4b;'>", unsafe_allow_html=True)
 
-    # Таблица реестра
-    for p in data:
-        with st.container():
-            c1, c2, c3 = st.columns([1, 4, 1])
-            with c1:
-                st.image(p['image_url'] or "https://via.placeholder.com/100", width=60)
-            with c2:
-                st.markdown(f"**{p['name']}**")
-                st.caption(f"Ячейка: {p['cell']} | {p['warehouse']}")
-            with c3:
-                if st.button("⚙️", key=f"edit_{p['id']}"):
-                    st.toast(f"Правка {p['id']}")
-        st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
+            for p in data:
+                with st.container():
+                    r_img, r_txt, r_opt = st.columns([1, 4, 1])
+                    with r_img:
+                        st.image(p['image_url'] or "https://via.placeholder.com/100", width=70)
+                    with r_txt:
+                        st.markdown(f"**{p['name']}**")
+                        st.caption(f"📍 {p['cell']} | {p['warehouse']}")
+                    with r_opt:
+                        pop = st.popover("⚙️")
+                        if pop.button("Удалить", key=f"del_{p['id']}", use_container_width=True):
+                            supabase.table("global_inventory").delete().eq("id", p['id']).execute()
+                            st.rerun()
+                st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Ошибка загрузки реестра: {e}")
                         
 elif selected == "Карта": show_map()
 elif selected == "Настройки":
