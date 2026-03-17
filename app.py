@@ -1875,7 +1875,7 @@ elif selected == "База Данных":
                 st.rerun()
 
     # --- 3. МОДАЛЬНОЕ ОКНО: ГЕНЕРАТОР QR ---
-    @st.dialog("🖨 Печать QR-метки")
+@st.dialog("🖨 Печать QR-метки")
     def qr_generator_modal():
         import qrcode
         from io import BytesIO
@@ -1887,25 +1887,39 @@ elif selected == "База Данных":
         cells = get_actual_cells(wh)
         cell = st.selectbox("Ячейка", cells, key="qr_cell_sel")
         
-        # Ссылка для QR (динамическая)
-        qr_url = f"https://w-tms.streamlit.app/?shelf={cell}" 
+        # --- ФОРМИРУЕМ ЧИСТУЮ ССЫЛКУ ---
+        # Убедись, что здесь нет лишних пробелов в начале или конце!
+        base_url = "https://w-tms.streamlit.app" 
+        # Добавляем .strip() чтобы убрать любые невидимые пробелы
+        qr_url = f"{base_url.strip()}/?shelf={cell.strip()}" 
+        
+        st.code(qr_url) # Выводим текст ссылки для проверки под картой
         
         fig = get_warehouse_figure(wh, highlighted_cell=cell)
         fig.update_layout(height=200, margin=dict(l=0,r=0,t=0,b=0))
         st.plotly_chart(fig, use_container_width=True)
         
-        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+        # --- НАСТРОЙКА QR ДЛЯ МГНОВЕННОГО РАСПОЗНАВАНИЯ ---
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_H, # Повышаем уровень коррекции (H)
+            box_size=10,
+            border=4,
+        )
         qr.add_data(qr_url)
         qr.make(fit=True)
+        
+        # Делаем QR более контрастным
         img_qr = qr.make_image(fill_color="black", back_color="white")
         
         buf = BytesIO()
         img_qr.save(buf, format="PNG")
         byte_im = buf.getvalue()
         
-        st.image(byte_im, width=200)
+        st.image(byte_im, width=250, caption="Отсканируйте для проверки")
+        
         st.download_button(
-            label="💾 СКАЧАТЬ ДЛЯ ПЕЧАТИ",
+            label="💾 СКАЧАТЬ ДЛЯ ПЕЧАТИ (PNG)",
             data=byte_im,
             file_name=f"QR_{wh}_{cell}.png",
             mime="image/png",
