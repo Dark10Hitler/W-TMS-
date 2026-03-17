@@ -41,6 +41,9 @@ import pytz
 from datetime import datetime
 from uploader import upload_to_cloudinary
 from database import insert_data # Твоя функция Supabase
+import qrcode
+from io import BytesIO
+
 
 def sync_to_inventory(doc_id, items_list, doc_type):
     """
