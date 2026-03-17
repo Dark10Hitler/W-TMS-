@@ -635,7 +635,7 @@ MIN_LOAD_FACTOR = 0.3
 
 # 2. ИНИЦИАЛИЗАЦИЯ (Один цикл вместо трех)
 if "db_initialized" not in st.session_state:
-    with st.spinner("🚀 Загрузка системы IMPERIA..."):
+    with st.spinner("🚀 Загрузка системы..."):
         st.session_state.items_registry = {}
         st.session_state.active_modal = None
         
@@ -1091,7 +1091,7 @@ def show_map():
 
     folium.Marker(
         base_coords, 
-        popup="🏢 <b>IMPERIA LOGISTICS HQ</b>",
+        popup="🏢 <b>LOGISTICS WAREHOUSE</b>",
         icon=folium.Icon(color="darkred", icon="home", prefix="fa")
     ).add_to(m)
 
@@ -1455,13 +1455,13 @@ def delete_entry(table_key, entry_id):
     except Exception as e:
         st.error(f"❌ Ошибка при удалении из базы данных: {e}")
         
-if selected == "Main": render_aggrid_table("main", "Основной Реестр")
+if selected == "Созданные документы": render_aggrid_table("main", "Основной Реестр")
 elif selected == "Заявки": render_aggrid_table("orders", "Заявки")
 elif selected == "Приходы": render_aggrid_table("arrivals", "Приходы")
 elif selected == "Брак": render_aggrid_table("defects", "Журнал Брака")
 elif selected == "Дополнения": render_aggrid_table("extras", "Дополнения")
 elif selected == "Аналитика":
-    st.title("🛡️ Logistics Intelligence & Tech Audit")
+    st.title("Транспортный анализ")
     
     # --- 1. ФУНКЦИЯ СИНХРОНИЗАЦИИ (Автоматический период: последние 24 часа) ---
     def get_traccar_reports_sync(v_id):
@@ -1880,7 +1880,7 @@ function(params) {
                     except Exception as e:
                         st.error(f"Ошибка сохранения: {e}")
                         
-elif selected == "Карта": show_map()
+elif selected == "Карта транспорта": show_map()
 elif selected == "Настройки":
     st.markdown("<h1 class='section-head'>⚙️ Системные настройки</h1>", unsafe_allow_html=True)
     
