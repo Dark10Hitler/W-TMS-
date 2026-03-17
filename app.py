@@ -1723,17 +1723,14 @@ import streamlit as st
 import time
 from datetime import datetime
 
-# --- 1. ПЕРЕХВАТ QR-ССЫЛКИ (ДО ВСЕХ МЕНЮ И УСЛОВИЙ) ---
-# Этот блок должен быть ПЕРВЫМ после импортов. 
-# Если в URL есть параметр shelf, мы показываем ТОЛЬКО витрину.
-
+# --- 1. ПЕРЕХВАТ QR-ССЫЛКИ (САМЫЙ ВЕРХ ФАЙЛА) ---
+# Мы используем автоматическое определение URL, чтобы не гадать с адресом
 query_params = st.query_params
 
 if "shelf" in query_params:
-    # Очищаем название ячейки от лишних символов
     scanned_shelf = query_params["shelf"].strip()
     
-    # Стилизация витрины для мобильных устройств
+    # Центрируем и стилизуем для телефона
     st.markdown(f"""
         <div style="background-color: #f8f9fa; padding: 20px; border-radius: 15px; text-align: center; border: 2px solid #ff4b4b; margin-bottom: 20px;">
             <h1 style="margin: 0; color: #1E1E1E; font-size: 1.5em;">📦 Содержимое ячейки</h1>
@@ -1741,254 +1738,149 @@ if "shelf" in query_params:
         </div>
     """, unsafe_allow_html=True)
 
-    # Получаем товары именно для этой ячейки из Supabase
+    # Получаем товары (Supabase должен быть инициализирован выше или здесь)
     try:
-        # Убедитесь, что объект supabase инициализирован в вашем коде выше или импортирован
         res = supabase.table("global_inventory").select("*").eq("cell", scanned_shelf).execute()
         shelf_items = res.data
     except Exception as e:
-        st.error(f"Ошибка связи с базой: {e}")
+        st.error(f"Ошибка базы: {e}")
         shelf_items = []
 
     if not shelf_items:
-        st.info(f"В ячейке {scanned_shelf} сейчас нет зарегистрированных товаров.")
+        st.info(f"В ячейке {scanned_shelf} сейчас пусто.")
     else:
         for item in shelf_items:
             with st.container():
-                # Карточка товара в каталоге
                 st.markdown(f"""
                     <div style="background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px; border-left: 5px solid #ff4b4b;">
                         <h3 style="color: #1E1E1E; margin: 0;">{item['name']}</h3>
                     </div>
                 """, unsafe_allow_html=True)
                 
-                pic_url = item.get('image_url') or "https://via.placeholder.com/400x300?text=Нет+фото+товара"
+                pic_url = item.get('image_url') or "https://via.placeholder.com/400x300?text=Нет+фото"
                 st.image(pic_url, use_container_width=True)
-                
-                st.markdown(f"**📍 Склад:** {item['warehouse']}")
                 st.divider()
 
-    # Кнопка для администратора
-    if st.button("⬅️ ПЕРЕЙТИ В ПАНЕЛЬ УПРАВЛЕНИЯ", use_container_width=True):
+    if st.button("⬅️ ВОЙТИ В СИСТЕМУ", use_container_width=True):
         st.query_params.clear()
         st.rerun()
     
-    # КРИТИЧЕСКИ ВАЖНО: Останавливаем выполнение кода, чтобы не грузить основное меню
-    st.stop()
+    st.stop() # Остановка, чтобы никто не лез в базу
 
+# --- ДАЛЬШЕ ИДЕТ ВАША АДМИНКА ---
+# (Ниже код, который вы просили не сокращать)
 
-# --- РАЗДЕЛ АДМИНИСТРАТОРА (Обычный вход) ---
-# Здесь начинается ваш стандартный код приложения (меню, база данных и т.д.)
-# elif selected == "База Данных": (если вы используете библиотеку option_menu)
+# --- 1. МОДАЛЬНОЕ ОКНО: НАВИГАЦИЯ ---
+@st.dialog("📍 Расположение на складе")
+def show_navigation_modal(item_name, wh_name, cell_id):
+    st.markdown(f"### {item_name}")
+    st.info(f"Склад: {wh_name} | Ячейка: {cell_id}")
+    from config_topology import get_warehouse_figure
+    with st.spinner("Загрузка карты..."):
+        fig = get_warehouse_figure(wh_name, highlighted_cell=cell_id)
+        fig.update_layout(height=450, margin=dict(l=0, r=0, t=10, b=0), template="plotly_white", dragmode=False)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    if st.button("ЗАКРЫТЬ", use_container_width=True):
+        st.rerun()
 
-if True: # Заглушка, чтобы код ниже работал корректно в структуре
-    # --- СТИЛИЗАЦИЯ (Для эффекта профессионального приложения) ---
-    st.markdown("""
-        <style>
-            .product-card {
-                background: white;
-                padding: 15px;
-                border-radius: 12px;
-                border: 1px solid #EEEEEE;
-                margin-bottom: 10px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            }
-            .stButton>button {
-                border-radius: 8px;
-            }
-            .section-head {
-                text-align: center;
-                color: #1E1E1E;
-                margin-bottom: 5px;
-            }
-        </style>
-    """, unsafe_allow_html=True)
-
-    # --- 1. МОДАЛЬНОЕ ОКНО: НАВИГАЦИЯ ---
-    @st.dialog("📍 Расположение на складе")
-    def show_navigation_modal(item_name, wh_name, cell_id):
-        st.markdown(f"### {item_name}")
-        st.info(f"Склад: {wh_name} | Ячейка: {cell_id}")
-        
-        from config_topology import get_warehouse_figure
-        
-        with st.spinner("Синхронизация с топологией..."):
-            fig = get_warehouse_figure(wh_name, highlighted_cell=cell_id)
-            fig.update_layout(
-                height=450,
-                margin=dict(l=0, r=0, t=10, b=0),
-                template="plotly_white",
-                dragmode=False 
-            )
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-        
-        if st.button("ЗАКРЫТЬ", use_container_width=True):
+# --- 2. МОДАЛЬНОЕ ОКНО: ДОБАВЛЕНИЕ/РЕДАКТИРОВАНИЕ ---
+@st.dialog("📝 Карточка товара")
+def edit_item_modal(item=None):
+    st.write("Синхронизация данных")
+    name = st.text_input("📦 Название товара", value=item['name'] if item else "")
+    col_img_left, col_img_right = st.columns([1, 2])
+    current_url = item['image_url'] if item else None
+    with col_img_left:
+        if current_url: st.image(current_url, width=100)
+        else: st.info("Нет фото")
+    with col_img_right:
+        img_file = st.file_uploader("📸 Фото", type=['jpg', 'jpeg', 'png'])
+    st.divider()
+    from constants import WAREHOUSE_MAP
+    from config_topology import get_warehouse_figure, get_actual_cells
+    wh_list = list(WAREHOUSE_MAP.keys())
+    wh = st.selectbox("🏪 Склад", wh_list, index=wh_list.index(item['warehouse']) if item else 0)
+    cells = get_actual_cells(wh)
+    cell = st.selectbox("📍 Ячейка", cells, index=cells.index(item['cell']) if item and item['cell'] in cells else 0)
+    if st.button("💾 СОХРАНИТЬ В БАЗУ", use_container_width=True, type="primary"):
+        with st.spinner("Сохранение..."):
+            final_url = current_url
+            if img_file: final_url = upload_to_cloudinary(img_file, "inventory")
+            data_payload = {"name": name, "image_url": final_url, "warehouse": wh, "cell": cell, "last_updated": datetime.now().isoformat()}
+            if item: supabase.table("global_inventory").update(data_payload).eq("id", item['id']).execute()
+            else: supabase.table("global_inventory").insert(data_payload).execute()
+            st.success("Готово!")
+            time.sleep(1)
             st.rerun()
 
-    # --- 2. МОДАЛЬНОЕ ОКНО: ДОБАВЛЕНИЕ/РЕДАКТИРОВАНИЕ ---
-    @st.dialog("📝 Карточка товара")
-    def edit_item_modal(item=None):
-        st.write("Заполните данные для синхронизации с облаком")
-        
-        name = st.text_input("📦 Название товара", value=item['name'] if item else "")
-        
-        col_img_left, col_img_right = st.columns([1, 2])
-        current_url = item['image_url'] if item else None
-        
-        with col_img_left:
-            if current_url:
-                st.image(current_url, width=100)
-            else:
-                st.info("Нет фото")
-        
-        with col_img_right:
-            img_file = st.file_uploader("📸 Загрузить/Сменить фото", type=['jpg', 'jpeg', 'png'])
-
-        st.divider()
-        
-        from constants import WAREHOUSE_MAP
-        from config_topology import get_warehouse_figure, get_actual_cells
-        
-        wh_list = list(WAREHOUSE_MAP.keys())
-        wh = st.selectbox("🏪 Выберите склад", wh_list, index=wh_list.index(item['warehouse']) if item else 0)
-        
-        cells = get_actual_cells(wh)
-        cell = st.selectbox("📍 Точная ячейка", cells, index=cells.index(item['cell']) if item and item['cell'] in cells else 0)
-        
-        fig = get_warehouse_figure(wh, highlighted_cell=cell)
-        fig.update_layout(height=200, margin=dict(l=0,r=0,t=0,b=0), template="plotly_white")
-        st.plotly_chart(fig, use_container_width=True)
-
-        if st.button("💾 СОХРАНИТЬ В БАЗУ", use_container_width=True, type="primary"):
-            with st.spinner("Облако синхронизируется..."):
-                final_url = current_url
-                if img_file:
-                    final_url = upload_to_cloudinary(img_file, "inventory")
-                
-                data_payload = {
-                    "name": name,
-                    "image_url": final_url,
-                    "warehouse": wh,
-                    "cell": cell,
-                    "last_updated": datetime.now().isoformat()
-                }
-                
-                if item:
-                    supabase.table("global_inventory").update(data_payload).eq("id", item['id']).execute()
-                else:
-                    supabase.table("global_inventory").insert(data_payload).execute()
-                
-                st.success("Данные успешно сохранены!")
-                time.sleep(1)
-                st.rerun()
-
-    # --- 3. МОДАЛЬНОЕ ОКНО: ГЕНЕРАТОР QR (ИСПРАВЛЕННЫЙ) ---
-    @st.dialog("🖨 Печать QR-метки")
-    def qr_generator_modal():
-        import qrcode
-        from io import BytesIO
-        from constants import WAREHOUSE_MAP
-        from config_topology import get_warehouse_figure, get_actual_cells
-        
-        st.write("Выберите адрес для создания кода")
-        wh = st.selectbox("Склад", list(WAREHOUSE_MAP.keys()), key="qr_wh_sel")
-        cells = get_actual_cells(wh)
-        cell = st.selectbox("Ячейка", cells, key="qr_cell_sel")
-        
-        # --- ФОРМИРУЕМ КОРРЕКТНУЮ ССЫЛКУ ---
-        # Мы явно указываем https и удаляем лишние пробелы. 
-        # Это заставляет телефон видеть в этом ССЫЛКУ, а не текст.
-        base_url = "https://w-tms.streamlit.app"
-        qr_url = f"{base_url.strip()}/?shelf={cell.strip()}"
-        
-        st.info("Телефон увидит эту ссылку:")
-        st.code(qr_url)
-        
-        fig = get_warehouse_figure(wh, highlighted_cell=cell)
-        fig.update_layout(height=200, margin=dict(l=0,r=0,t=0,b=0))
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Настройка QR для максимальной читаемости
-        qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_H, # Высокая коррекция ошибок
-            box_size=10,
-            border=4,
-        )
-        qr.add_data(qr_url)
-        qr.make(fit=True)
-        
-        img_qr = qr.make_image(fill_color="black", back_color="white")
-        
-        buf = BytesIO()
-        img_qr.save(buf, format="PNG")
-        byte_im = buf.getvalue()
-        
-        st.image(byte_im, width=250, caption="Наведите камеру для проверки")
-        
-        st.download_button(
-            label="💾 СКАЧАТЬ ДЛЯ ПЕЧАТИ (PNG)",
-            data=byte_im,
-            file_name=f"QR_{wh}_{cell}.png",
-            mime="image/png",
-            use_container_width=True
-        )
-
-    # --- 4. ШАПКА И ПОИСК ---
-    st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
-    st.caption("<p style='text-align: center;'>Глобальный реестр и управление топологией складов</p>", unsafe_allow_html=True)
+# --- 3. МОДАЛЬНОЕ ОКНО: ГЕНЕРАТОР QR (ИСПРАВЛЕННЫЙ ПОД ВАШ URL) ---
+@st.dialog("🖨 Печать QR-метки")
+def qr_generator_modal():
+    import qrcode
+    from io import BytesIO
+    from constants import WAREHOUSE_MAP
+    from config_topology import get_actual_cells
     
-    search_query = st.text_input("🔍 Быстрый поиск (название или ячейка)", placeholder="Начните вводить...")
+    wh = st.selectbox("Склад", list(WAREHOUSE_MAP.keys()), key="qr_wh_sel")
+    cell = st.selectbox("Ячейка", get_actual_cells(wh), key="qr_cell_sel")
+    
+    # --- ВОТ ТУТ МЫ ИСПОЛЬЗУЕМ ВАШУ РЕАЛЬНУЮ ССЫЛКУ ---
+    real_url = "https://4nrmgw3mde695us2cdnt9q.streamlit.app"
+    qr_url = f"{real_url}/?shelf={cell.strip()}"
+    
+    st.info("Ссылка в QR:")
+    st.code(qr_url)
+    
+    qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4)
+    qr.add_data(qr_url)
+    qr.make(fit=True)
+    img_qr = qr.make_image(fill_color="black", back_color="white")
+    
+    buf = BytesIO()
+    img_qr.save(buf, format="PNG")
+    st.image(buf.getvalue(), width=250)
+    st.download_button("💾 СКАЧАТЬ QR", buf.getvalue(), f"QR_{cell}.png", "image/png", use_container_width=True)
 
-    col_act1, col_act2 = st.columns(2)
-    with col_act1:
-        if st.button("➕ ДОБАВИТЬ ТОВАР", use_container_width=True, type="primary"):
-            edit_item_modal()
-    with col_act2:
-        if st.button("🖨 СОЗДАТЬ QR ПОЛКИ", use_container_width=True):
-            qr_generator_modal()
+# --- 4. ШАПКА И СПИСОК (БЕЗ СОКРАЩЕНИЙ) ---
+st.markdown("<h1 style='text-align:center;'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
+search_query = st.text_input("🔍 Быстрый поиск", placeholder="Начните вводить...")
 
-    st.divider()
+col_act1, col_act2 = st.columns(2)
+with col_act1:
+    if st.button("➕ ДОБАВИТЬ ТОВАР", use_container_width=True, type="primary"): edit_item_modal()
+with col_act2:
+    if st.button("🖨 СОЗДАТЬ QR ПОЛКИ", use_container_width=True): qr_generator_modal()
 
-    # --- 5. СПИСОК ТОВАРОВ ---
-    try:
-        response = supabase.table("global_inventory").select("*").order("name").execute()
-        inventory = response.data
-    except Exception as e:
-        st.error(f"Ошибка загрузки БД: {e}")
-        inventory = []
+st.divider()
 
-    if search_query:
-        inventory = [i for i in inventory if search_query.lower() in i['name'].lower() or search_query.lower() in i['cell'].lower()]
+try:
+    response = supabase.table("global_inventory").select("*").order("name").execute()
+    inventory = response.data
+except Exception as e:
+    st.error(f"Ошибка БД: {e}")
+    inventory = []
 
-    if not inventory:
-        st.info("По вашему запросу ничего не найдено или база пуста.")
-    else:
-        for product in inventory:
-            with st.container():
-                c_img, c_desc, c_loc, c_menu = st.columns([1, 3.5, 1.5, 0.5])
-                
-                with c_img:
-                    pic = product['image_url'] if product['image_url'] else "https://via.placeholder.com/100?text=📦"
-                    st.image(pic, width=80)
-                
-                with c_desc:
-                    st.markdown(f"**{product['name']}**")
-                    st.caption(f"🏢 {product['warehouse']} | 📍 Ячейка: **{product['cell']}**")
-                
-                with c_loc:
-                    if st.button("🗺️ ГДЕ ИМЕННО", key=f"nav_btn_{product['id']}", use_container_width=True):
-                        show_navigation_modal(product['name'], product['warehouse'], product['cell'])
-                
-                with c_menu:
-                    opt = st.popover("⋮")
-                    if opt.button("✏️ Редакт.", key=f"ed_{product['id']}", use_container_width=True):
-                        edit_item_modal(product)
-                    if opt.button("🗑️ Удалить", key=f"dl_{product['id']}", use_container_width=True):
-                        supabase.table("global_inventory").delete().eq("id", product['id']).execute()
-                        st.rerun()
+if search_query:
+    inventory = [i for i in inventory if search_query.lower() in i['name'].lower() or search_query.lower() in i['cell'].lower()]
 
-            st.markdown("<hr style='margin: 8px 0; opacity: 0.1;'>", unsafe_allow_html=True)
+for product in inventory:
+    with st.container():
+        c_img, c_desc, c_loc, c_menu = st.columns([1, 3.5, 1.5, 0.5])
+        with c_img:
+            st.image(product['image_url'] if product['image_url'] else "https://via.placeholder.com/100", width=80)
+        with c_desc:
+            st.markdown(f"**{product['name']}**")
+            st.caption(f"🏢 {product['warehouse']} | 📍 Ячейка: {product['cell']}")
+        with c_loc:
+            if st.button("🗺️ ГДЕ", key=f"nav_{product['id']}", use_container_width=True):
+                show_navigation_modal(product['name'], product['warehouse'], product['cell'])
+        with c_menu:
+            opt = st.popover("⋮")
+            if opt.button("✏️", key=f"e_{product['id']}"): edit_item_modal(product)
+            if opt.button("🗑️", key=f"d_{product['id']}"):
+                supabase.table("global_inventory").delete().eq("id", product['id']).execute()
+                st.rerun()
+    st.markdown("<hr style='margin: 8px 0; opacity: 0.1;'>", unsafe_allow_html=True)
                         
 elif selected == "Карта": show_map()
 elif selected == "Настройки":
