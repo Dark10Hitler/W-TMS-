@@ -1717,168 +1717,185 @@ elif selected == "Аналитика":
             
             
 elif selected == "База Данных":
-    st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
+    # --- СТИЛИЗАЦИЯ (Для эффекта "Приложения") ---
+    st.markdown("""
+        <style>
+            .product-card {
+                background: white;
+                padding: 15px;
+                border-radius: 12px;
+                border: 1px solid #EEEEEE;
+                margin-bottom: 10px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            }
+            .stButton>button {
+                border-radius: 8px;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # --- 1. ШАПКА И ПОИСК ---
+    st.markdown("<h1 style='text-align: center; margin-bottom: 0;'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
+    st.caption("<p style='text-align: center;'>Глобальный реестр и управление топологией складов</p>", unsafe_allow_html=True)
     
-    with st.spinner("Синхронизация товарных позиций..."):
-        # 1. Получаем основной список товаров через твою функцию
-        inventory_df = get_full_inventory_df() 
-        
-        # 2. Актуализируем адреса из product_locations (твоя логика мерджа)
-        locations_res = supabase.table("product_locations").select("doc_id, product, address").execute()
-        if locations_res.data:
-            loc_df = pd.DataFrame(locations_res.data)
-            inventory_df = inventory_df.merge(
-                loc_df, 
-                left_on=['ID Документа', 'Название товара'], 
-                right_on=['doc_id', 'product'], 
-                how='left'
-            )
-            if 'address' in inventory_df.columns:
-                inventory_df['Адрес'] = inventory_df['address'].fillna(inventory_df['Адрес'])
-                inventory_df.drop(columns=['doc_id', 'product', 'address'], inplace=True)
+    # Жирный поиск - сердце системы
+    search_query = st.text_input("🔍 Быстрый поиск (название или артикул)", placeholder="Начните вводить...")
 
-    if inventory_df is None or inventory_df.empty:
-        st.info("📦 В документах пока нет товаров.")
-    else:
-        # --- ПАНЕЛЬ АНАЛИТИКИ ---
-        c1, c2, c3 = st.columns(3)
-        total_in = inventory_df[inventory_df['Тип'] == "📦 ПРИХОД"]['Количество'].sum() if 'Количество' in inventory_df.columns else 0
-        unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО']) if 'Адрес' in inventory_df.columns else 0
+    # --- 2. ГЛАВНЫЕ КНОПКИ ДЕЙСТВИЙ ---
+    col_act1, col_act2 = st.columns(2)
+    
+    # --- МОДАЛЬНОЕ ОКНО: ДОБАВЛЕНИЕ/РЕДАКТИРОВАНИЕ ---
+    @st.dialog("📝 Карточка товара")
+    def edit_item_modal(item=None):
+        st.write("Заполните данные для синхронизации с облаком")
         
-        c1.metric("Всего поступило (ед.)", f"{int(total_in)} шт")
-        c2.metric("Требуют размещения", unassigned, delta=f"{unassigned} поз.", delta_color="inverse")
-        c3.metric("Уникальных строк", len(inventory_df))
+        name = st.text_input("📦 Название товара", value=item['name'] if item else "")
+        
+        # Фото-блок
+        col_img_left, col_img_right = st.columns([1, 2])
+        current_url = item['image_url'] if item else None
+        
+        with col_img_left:
+            if current_url:
+                st.image(current_url, width=100)
+            else:
+                st.info("Нет фото")
+        
+        with col_img_right:
+            img_file = st.file_uploader("📸 Загрузить/Сменить фото", type=['jpg', 'jpeg', 'png'])
 
-        # --- ТАБЛИЦА AG-GRID ---
-        gb = GridOptionsBuilder.from_dataframe(inventory_df)
-        gb.configure_default_column(resizable=True, filterable=True, sortable=True, floatingFilter=True)
-        gb.configure_selection(selection_mode="single", use_checkbox=True)
+        st.divider()
         
-        cellsytle_jscode = JsCode("""
-function(params) {
-    if (params.value === 'НЕ НАЗНАЧЕНО') {
-        return {'color': '#c42b1c', 'backgroundColor': '#fde7e9', 'fontWeight': '600', 'borderRadius': '4px'}; 
-    } else if (params.value === '🚚 В ЗАКАЗЕ') {
-        return {'color': '#0067c0', 'backgroundColor': '#e5f1fb', 'fontWeight': '600', 'borderRadius': '4px'};
-    } else {
-        return {'color': '#0f7b0f', 'backgroundColor': '#dff6dd', 'fontWeight': '600', 'borderRadius': '4px'};
-    }
-};
-        """)
-        gb.configure_column("Адрес", cellStyle=cellsytle_jscode, pinned='left', width=180)
+        # Топология
+        from constants import WAREHOUSE_MAP
+        from config_topology import get_warehouse_figure, get_actual_cells
         
-        grid_res = AgGrid(
-            inventory_df,
-            gridOptions=gb.build(),
-            height=500,
-            theme='alpine',
-            allow_unsafe_jscode=True,
-            update_on=['selectionChanged'], 
-            key="global_inventory_grid"
+        wh_list = list(WAREHOUSE_MAP.keys())
+        wh = st.selectbox("🏪 Выберите склад", wh_list, index=wh_list.index(item['warehouse']) if item else 0)
+        
+        cells = get_actual_cells(wh)
+        cell = st.selectbox("📍 Точная ячейка", cells, index=cells.index(item['cell']) if item and item['cell'] in cells else 0)
+        
+        # Мини-карта для проверки
+        fig = get_warehouse_figure(wh, highlighted_cell=cell)
+        fig.update_layout(height=200, margin=dict(l=0,r=0,t=0,b=0), template="plotly_white")
+        st.plotly_chart(fig, use_container_width=True)
+
+        if st.button("💾 СОХРАНИТЬ В БАЗУ", use_container_width=True, type="primary"):
+            with st.spinner("Облако Cloudinary синхронизируется..."):
+                final_url = current_url
+                if img_file:
+                    final_url = upload_to_cloudinary(img_file, "inventory")
+                
+                data_payload = {
+                    "name": name,
+                    "image_url": final_url,
+                    "warehouse": wh,
+                    "cell": cell,
+                    "last_updated": datetime.now().isoformat()
+                }
+                
+                if item:
+                    supabase.table("global_inventory").update(data_payload).eq("id", item['id']).execute()
+                else:
+                    supabase.table("global_inventory").insert(data_payload).execute()
+                
+                st.success("Данные успешно сохранены!")
+                time.sleep(1)
+                st.rerun()
+
+    # --- МОДАЛЬНОЕ ОКНО: ГЕНЕРАТОР QR ---
+    @st.dialog("🖨 Печать QR-метки полки")
+    def qr_generator_modal():
+        from constants import WAREHOUSE_MAP
+        from config_topology import get_warehouse_figure, get_actual_cells
+        
+        st.write("Выберите адрес для создания кода")
+        wh = st.selectbox("Склад", list(WAREHOUSE_MAP.keys()), key="qr_wh_sel")
+        cells = get_actual_cells(wh)
+        cell = st.selectbox("Ячейка", cells, key="qr_cell_sel")
+        
+        # Ссылка, которую будет считывать телефон (замени на свой домен)
+        qr_url = f"https://your-app-url.streamlit.app/?shelf={cell}"
+        
+        # Визуал карты
+        fig = get_warehouse_figure(wh, highlighted_cell=cell)
+        fig.update_layout(height=200, margin=dict(l=0,r=0,t=0,b=0))
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Генерация изображения QR
+        qr = qrcode.QRCode(box_size=10, border=2)
+        qr.add_data(qr_url)
+        qr.make(fit=True)
+        img_qr = qr.make_image(fill_color="black", back_color="white")
+        
+        buf = BytesIO()
+        img_qr.save(buf, format="PNG")
+        
+        st.image(buf, width=200, use_column_width=False)
+        st.download_button(
+            label="💾 СКАЧАТЬ ДЛЯ ПЕЧАТИ",
+            data=buf.getvalue(),
+            file_name=f"QR_{wh}_{cell}.png",
+            mime="image/png",
+            use_container_width=True
         )
 
-        sel_row = grid_res.get('selected_rows')
-        
-        if sel_row is not None and len(sel_row) > 0:
-            item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
-            
-            # Подготовка данных
-            doc_id = str(item.get('ID Документа', item.get('id')))
-            item_name = item.get('Название товара')
-            
-            # --- ИМПОРТЫ ИЗ ТВОИХ ФАЙЛОВ ---
-            from constants import WAREHOUSE_MAP
-            from config_topology import get_warehouse_figure, get_actual_cells
-            
-            warehouse_list = list(WAREHOUSE_MAP.keys())
-            
-            # Проверка текущего места в БД
-            try:
-                db_data = supabase.table("product_locations").select("*").eq("doc_id", doc_id).eq("product", item_name).execute()
-                if db_data.data:
-                    current_addr = db_data.data[0].get('address', 'НЕ НАЗНАЧЕНО')
-                    saved_zone = str(db_data.data[0].get('zone', warehouse_list[0]))
-                else:
-                    current_addr = "НЕ НАЗНАЧЕНО"
-                    saved_zone = warehouse_list[0]
-            except:
-                current_addr = "НЕ НАЗНАЧЕНО"
-                saved_zone = warehouse_list[0]
+    # Отрисовка кнопок вызова модалок
+    with col_act1:
+        if st.button("➕ ДОБАВИТЬ ТОВАР", use_container_width=True, type="primary"):
+            edit_item_modal()
+    with col_act2:
+        if st.button("🖨 СОЗДАТЬ QR ПОЛКИ", use_container_width=True):
+            qr_generator_modal()
 
-            st.divider()
-            
-            col_info, col_location = st.columns([1, 1.2])
-            
-            with col_info:
-                # Замени HTML-код внутри st.markdown в col_info на этот:
-                st.markdown(f"""
-<div style="background: #FFFFFF; padding: 20px; border-radius: 12px; border: 1px solid #E5E5E5; box-shadow: 0 4px 6px rgba(0,0,0,0.02);">
-    <b style="color: #1B1B1B; font-size: 1.1rem;">📋 Детали товара:</b><br>
-    <div style="margin-top: 10px; color: #666;">
-        - ID: <code style="color: #0067c0;">{doc_id}</code><br>
-        - Товар: <b style="color: #1B1B1B;">{item_name}</b><br>
-        - Текущий адрес: <span style="padding: 2px 8px; border-radius: 4px; background: {'#fde7e9' if current_addr == 'НЕ НАЗНАЧЕНО' else '#dff6dd'}; color: {'#c42b1c' if current_addr == 'НЕ НАЗНАЧЕНО' else '#0f7b0f'}; font-weight: 600;">{current_addr}</span>
-    </div>
-</div>
-                """, unsafe_allow_html=True)
+    st.divider()
+
+    # --- 3. СПИСОК ТОВАРОВ (БЕРИ И РАБОТАЙ) ---
+    # Получаем данные
+    try:
+        response = supabase.table("global_inventory").select("*").order("name").execute()
+        inventory = response.data
+    except:
+        inventory = []
+
+    # Фильтрация поиском
+    if search_query:
+        inventory = [i for i in inventory if search_query.lower() in i['name'].lower()]
+
+    if not inventory:
+        st.info("По вашему запросу ничего не найдено или база пуста.")
+    else:
+        for product in inventory:
+            # Создаем "Полоску" товара
+            with st.container():
+                # Разметка колонок для карточки
+                c_img, c_desc, c_loc, c_menu = st.columns([1, 3.5, 1.5, 0.5])
                 
-                # Метрики внутри инфо-блока
-                st.write("")
-                m1, m2 = st.columns(2)
-                m1.metric("Количество", f"{item.get('Количество', 0)} шт")
-                m2.metric("Тип", item.get('Тип', 'Н/Д'))
+                with c_img:
+                    pic = product['image_url'] if product['image_url'] else "https://via.placeholder.com/100?text=📦"
+                    st.image(pic, width=80)
                 
-                st.info("💡 Выберите склад и ячейку справа. Карта Plotly обновится автоматически.")
-
-            with col_location:
-                # Замени HTML-код заголовка в col_location на этот:
-                st.markdown("""<div style="color: #1B1B1B; font-weight: 600; font-size: 1.1rem; margin-bottom: 15px;">🏪 Управление локацией:</div>""", unsafe_allow_html=True)
-
-                # Выбор склада
-                wh_id = st.selectbox("🏪 Выберите склад:", warehouse_list, index=warehouse_list.index(saved_zone) if saved_zone in warehouse_list else 0, key=f"wh_db_{doc_id}")
-
-                # Получение ячеек через твою функцию
-                all_cells = get_actual_cells(wh_id)
-                if not all_cells: all_cells = [current_addr] if current_addr != "НЕ НАЗНАЧЕНО" else ["Список пуст"]
-
-                # Выбор ячейки
-                selected_cell = st.selectbox("📍 Выберите ячейку:", options=all_cells, index=all_cells.index(current_addr) if current_addr in all_cells else 0, key=f"cell_db_{doc_id}")
-
-                # --- ТВОЯ ВИЗУАЛИЗАЦИЯ PLOTLY ---
-                try:
-                    fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
-                    fig.update_layout(
-                        template="plotly_white", # ПРИНУДИТЕЛЬНО СВЕТЛАЯ ТЕМА КАРТЫ
-                        paper_bgcolor='rgba(0,0,0,0)', 
-                        plot_bgcolor='rgba(0,0,0,0)',
-                        margin=dict(l=0, r=0, b=0, t=30), 
-                        height=400
-                        )
-                    st.plotly_chart(fig, use_container_width=True)
-                except Exception as e:
-                    st.warning(f"Карта Plotly временно недоступна: {e}")
-
-                # Кнопка сохранения
-                btn_label = "💾 НАЗНАЧИТЬ МЕСТО" if current_addr == "НЕ НАЗНАЧЕНО" else "🔄 ИЗМЕНИТЬ ПОЗИЦИЮ"
+                with c_desc:
+                    st.markdown(f"**{product['name']}**")
+                    st.caption(f"📍 {product['warehouse']} | Ячейка: {product['cell']}")
                 
-                if st.button(btn_label, use_container_width=True, type="primary", key=f"save_db_{doc_id}"):
-                    try:
-                        from datetime import datetime
-                        payload = {
-                            "doc_id": str(doc_id),
-                            "product": str(item_name),
-                            "address": str(selected_cell),
-                            "zone": str(wh_id),
-                            "last_updated": datetime.now().isoformat()
-                        }
-                        supabase.table("product_locations").upsert(payload, on_conflict="doc_id,product").execute()
-                        st.cache_data.clear()
-                        st.success(f"✅ Успешно: {selected_cell}")
-                        st.balloons()
-                        time.sleep(1)
+                with c_loc:
+                    # Кнопка быстрой помощи
+                    if st.button("🗺️ ГДЕ?", key=f"where_{product['id']}", use_container_width=True):
+                        st.toast(f"Товар находится: {product['warehouse']} -> {product['cell']}", icon="📍")
+                
+                with c_menu:
+                    # ТРИ ТОЧКИ (Действия)
+                    opt = st.popover("⋮")
+                    if opt.button("✏️ Изменить", key=f"edit_btn_{product['id']}", use_container_width=True):
+                        edit_item_modal(product)
+                    if opt.button("🗑️ Удалить", key=f"del_btn_{product['id']}", use_container_width=True):
+                        supabase.table("global_inventory").delete().eq("id", product['id']).execute()
                         st.rerun()
-                    except Exception as e:
-                        st.error(f"Ошибка сохранения: {e}")
+            
+            # Тонкий разделитель для scannability
+            st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
                         
 elif selected == "Карта": show_map()
 elif selected == "Настройки":
