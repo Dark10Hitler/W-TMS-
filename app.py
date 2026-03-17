@@ -1724,118 +1724,233 @@ import time
 from datetime import datetime
 import qrcode
 from io import BytesIO
+from streamlit_option_menu import option_menu
 
-# --- 1. ЖЕСТКИЙ ПЕРЕХВАТ ДЛЯ ГРУЗЧИКА (БЕЗ МЕНЮ) ---
-# Этот блок стоит ВНЕ любых условий и до выбора меню.
-# Если в ссылке есть ?shelf=, то грузчик увидит ТОЛЬКО этот блок и НИЧЕГО больше.
+# --- 0. ИНИЦИАЛИЗАЦИЯ (Настройка страницы) ---
+st.set_page_config(page_title="W-TMS | Warehouse Management", layout="wide", initial_sidebar_state="collapsed")
 
-if "shelf" in st.query_params:
-    scanned_shelf = st.query_params["shelf"].strip()
+# ПРЕДПОЛАГАЕМЫЕ ИМПОРТЫ (Убедись, что эти файлы у тебя есть)
+# from database import supabase 
+# from tools import upload_to_cloudinary
+
+# --- 1. РЕЖИМ ГРУЗЧИКА (ВИТРИНА) ---
+# Этот блок стоит ПЕРВЫМ. Он перехватывает QR-код и блокирует остальной сайт.
+query_params = st.query_params
+
+if "shelf" in query_params:
+    scanned_shelf = query_params["shelf"].strip()
     
-    # Стилизация витрины (чисто информационная панель)
+    # Красивая шапка витрины
     st.markdown(f"""
-        <div style="background-color: #1E1E1E; padding: 25px; border-radius: 15px; text-align: center; border: 3px solid #ff4b4b; margin-bottom: 25px;">
-            <h1 style="margin: 0; color: white; font-size: 1.8em;">📦 СОДЕРЖИМОЕ ЯЧЕЙКИ</h1>
-            <h2 style="color: #ff4b4b; margin: 10px 0;">{scanned_shelf}</h2>
+        <div style="background-color: #1a1a1a; padding: 30px; border-radius: 20px; text-align: center; border: 4px solid #ff4b4b; margin-bottom: 25px;">
+            <h1 style="margin: 0; color: white; letter-spacing: 2px;">📦 СКЛАДСКАЯ ЯЧЕЙКА</h1>
+            <h2 style="color: #ff4b4b; margin: 10px 0; font-family: monospace;">{scanned_shelf}</h2>
+            <p style="color: #888; font-size: 0.9em;">Режим просмотра для персонала</p>
         </div>
     """, unsafe_allow_html=True)
 
     try:
-        # Поиск товаров в Supabase
+        # Запрос товаров именно в этой ячейке
         res = supabase.table("global_inventory").select("*").eq("cell", scanned_shelf).execute()
         shelf_items = res.data
     except Exception as e:
-        st.error("Ошибка связи с базой данных")
+        st.error(f"Ошибка базы данных: {e}")
         shelf_items = []
 
     if not shelf_items:
-        st.info(f"Ячейка {scanned_shelf} пуста.")
+        st.warning(f"⚠️ В ячейке {scanned_shelf} сейчас пусто.")
     else:
+        st.write(f"Найдено позиций: {len(shelf_items)}")
         for item in shelf_items:
             with st.container():
                 st.markdown(f"""
-                    <div style="background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin-bottom: 15px; border-left: 8px solid #ff4b4b;">
-                        <h2 style="color: #1E1E1E; margin: 0;">{item['name']}</h2>
+                    <div style="background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 10px solid #ff4b4b;">
+                        <h2 style="color: #1E1E1E; margin: 0; font-size: 1.5em;">{item['name']}</h2>
+                        <p style="color: #666; font-weight: bold; margin-top: 5px;">📍 Склад: {item['warehouse']}</p>
                     </div>
                 """, unsafe_allow_html=True)
                 
-                pic_url = item.get('image_url') or "https://via.placeholder.com/400x300?text=Нет+фото"
-                st.image(pic_url, use_container_width=True)
+                # Фото товара
+                pic_url = item.get('image_url') or "https://via.placeholder.com/600x400?text=НЕТ+ФОТО+ТОВАРA"
+                st.image(pic_url, use_container_width=True, caption=f"Визуальное подтверждение: {item['name']}")
                 st.divider()
 
-    # Скрытая возможность вернуться (только если нажать кнопку)
-    if st.button("🔌 ВЫЙТИ ИЗ РЕЖИМА ПРОСМОТРА"):
+    # Кнопка возврата (только для админа, если он сам тестирует QR)
+    if st.button("⬅️ ВЕРНУТЬСЯ В АДМИН-ПАНЕЛЬ", use_container_width=True):
         st.query_params.clear()
         st.rerun()
     
-    # !!! САМОЕ ВАЖНОЕ !!!
-    # Эта команда останавливает код здесь. Грузчик НЕ увидит боковое меню и НЕ сможет зайти в БД.
+    # СТРОЖАЙШАЯ ОСТАНОВКА. Грузчик дальше этого места не пройдет.
     st.stop()
 
 
-# --- 2. КОД ДЛЯ АДМИНИСТРАТОРА (ВЫПОЛНЯЕТСЯ ТОЛЬКО ЕСЛИ НЕТ ?shelf=) ---
+# --- 2. ПАНЕЛЬ УПРАВЛЕНИЯ (ТОЛЬКО ДЛЯ АДМИНА) ---
 
-# Здесь твоё меню (option_menu или что ты используешь)
-# selected = option_menu(...)
+with st.sidebar:
+    st.image("https://via.placeholder.com/150?text=W-TMS", width=150)
+    selected = option_menu(
+        "Навигация", 
+        ["Главная", "База Данных", "Топология", "Настройки"],
+        icons=['house', 'database', 'map', 'gear'], 
+        menu_icon="cast", 
+        default_index=1
+    )
 
 if selected == "База Данных":
-    st.markdown("<h1 style='text-align:center;'>📋 Управление Складом (АДМИН)</h1>", unsafe_allow_html=True)
     
-    # Твои диалоговые окна (модалки)
-    @st.dialog("🖨 Печать QR-метки")
+    # CSS стили для админки
+    st.markdown("""
+        <style>
+            .stButton>button { border-radius: 10px; height: 3em; transition: 0.3s; }
+            .stButton>button:hover { background-color: #ff4b4b; color: white; border: none; }
+            .product-card { background: #ffffff; padding: 15px; border-radius: 12px; border: 1px solid #eee; margin-bottom: 10px; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # --- МОДАЛКИ (DIALOGS) ---
+
+    @st.dialog("📍 Карта склада")
+    def show_navigation_modal(item_name, wh_name, cell_id):
+        st.subheader(f"Где лежит: {item_name}")
+        st.info(f"Склад: {wh_name} | Стеллаж/Ячейка: {cell_id}")
+        from config_topology import get_warehouse_figure
+        with st.spinner("Рисуем карту..."):
+            fig = get_warehouse_figure(wh_name, highlighted_cell=cell_id)
+            fig.update_layout(height=450, margin=dict(l=0, r=0, t=0, b=0))
+            st.plotly_chart(fig, use_container_width=True)
+        if st.button("ПОНЯТНО", use_container_width=True):
+            st.rerun()
+
+    @st.dialog("📝 Редактирование товара")
+    def edit_item_modal(item=None):
+        st.write("### Данные о товаре")
+        name = st.text_input("Название", value=item['name'] if item else "")
+        
+        col1, col2 = st.columns([1, 2])
+        curr_img = item['image_url'] if item else None
+        with col1:
+            if curr_img: st.image(curr_img, width=100)
+            else: st.write("Нет фото")
+        with col2:
+            new_img = st.file_uploader("Загрузить фото", type=['png', 'jpg', 'jpeg'])
+
+        from constants import WAREHOUSE_MAP
+        from config_topology import get_actual_cells
+        wh_list = list(WAREHOUSE_MAP.keys())
+        wh = st.selectbox("Склад", wh_list, index=wh_list.index(item['warehouse']) if item else 0)
+        cells = get_actual_cells(wh)
+        cell = st.selectbox("Ячейка", cells, index=cells.index(item['cell']) if item and item['cell'] in cells else 0)
+
+        if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
+            with st.spinner("Синхронизация..."):
+                final_url = curr_img
+                if new_img:
+                    # final_url = upload_to_cloudinary(new_img, "inventory")
+                    pass # Твоя логика загрузки в Cloudinary
+                
+                payload = {
+                    "name": name, "image_url": final_url, 
+                    "warehouse": wh, "cell": cell, 
+                    "last_updated": datetime.now().isoformat()
+                }
+                
+                if item:
+                    supabase.table("global_inventory").update(payload).eq("id", item['id']).execute()
+                else:
+                    supabase.table("global_inventory").insert(payload).execute()
+                
+                st.success("Данные обновлены!")
+                time.sleep(1)
+                st.rerun()
+
+    @st.dialog("🖨 Печать QR-кода")
     def qr_generator_modal():
         from constants import WAREHOUSE_MAP
         from config_topology import get_actual_cells
         
-        wh = st.selectbox("Склад", list(WAREHOUSE_MAP.keys()))
-        cell = st.selectbox("Ячейка", get_actual_cells(wh))
+        st.write("### Выберите полку для генерации")
+        wh_sel = st.selectbox("Склад", list(WAREHOUSE_MAP.keys()), key="wh_qr")
+        cell_sel = st.selectbox("Ячейка", get_actual_cells(wh_sel), key="cell_qr")
         
-        # ТВОЙ РЕАЛЬНЫЙ ТЕХНИЧЕСКИЙ АДРЕС (из настроек, которые ты скинул)
+        # ТВОЙ РЕАЛЬНЫЙ URL (ЖЕСТКО ПРОПИСАН)
         app_url = "https://4nrmgw3mde695us2cdnt9q.streamlit.app"
-        qr_link = f"{app_url}/?shelf={cell.strip()}"
+        final_link = f"{app_url}/?shelf={cell_sel.strip()}"
         
-        st.code(qr_link, language="text")
+        st.info("Ссылка для грузчика:")
+        st.code(final_link)
         
         qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4)
-        qr.add_data(qr_link)
+        qr.add_data(final_link)
         qr.make(fit=True)
         img = qr.make_image(fill_color="black", back_color="white")
         
         buf = BytesIO()
         img.save(buf, format="PNG")
-        st.image(buf.getvalue(), width=250)
-        st.download_button("💾 СКАЧАТЬ QR", buf.getvalue(), f"QR_{cell}.png", "image/png", use_container_width=True)
+        st.image(buf.getvalue(), width=250, caption=f"QR для ячейки {cell_sel}")
+        st.download_button("📥 СКАЧАТЬ PNG", buf.getvalue(), f"QR_{cell_sel}.png", "image/png", use_container_width=True)
 
-    # Кнопки управления
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("➕ ДОБАВИТЬ ТОВАР", use_container_width=True):
-            # Твоя функция добавления
-            pass
-    with col2:
-        if st.button("🖨 СОЗДАТЬ QR ПОЛКИ", use_container_width=True):
+    # --- ГЛАВНЫЙ ИНТЕРФЕЙС БАЗЫ ДАННЫХ ---
+    st.markdown("<h1 style='text-align: center; color: #1E1E1E;'>📦 Глобальный Реестр Склада</h1>", unsafe_allow_html=True)
+    
+    # Поиск
+    search = st.text_input("🔍 Поиск по названию товара или номеру ячейки", placeholder="Например: Бойлер или A-10...")
+
+    # Кнопки действий
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("➕ ДОБАВИТЬ НОВЫЙ ТОВАР", use_container_width=True, type="primary"):
+            edit_item_modal()
+    with c2:
+        if st.button("🖨 ГЕНЕРАТОР QR-МЕТОК", use_container_width=True):
             qr_generator_modal()
 
     st.divider()
 
-    for product in inventory:
-        with st.container():
-            c_img, c_desc, c_loc, c_menu = st.columns([1, 3.5, 1.5, 0.5])
-            with c_img:
-                st.image(product['image_url'] if product['image_url'] else "https://via.placeholder.com/100", width=80)
-            with c_desc:
-                st.markdown(f"**{product['name']}**")
-                st.caption(f"🏢 {product['warehouse']} | 📍 Ячейка: {product['cell']}")
-            with c_loc:
-                if st.button("🗺️ ГДЕ", key=f"nav_{product['id']}", use_container_width=True):
-                    show_navigation_modal(product['name'], product['warehouse'], product['cell'])
-            with c_menu:
-                opt = st.popover("⋮")
-                if opt.button("✏️", key=f"e_{product['id']}"): edit_item_modal(product)
-                if opt.button("🗑️", key=f"d_{product['id']}"):
-                    supabase.table("global_inventory").delete().eq("id", product['id']).execute()
-                    st.rerun()
-        st.markdown("<hr style='margin: 8px 0; opacity: 0.1;'>", unsafe_allow_html=True)
+    # Загрузка данных
+    try:
+        data = supabase.table("global_inventory").select("*").order("name").execute().data
+    except:
+        data = []
+
+    if search:
+        data = [i for i in data if search.lower() in i['name'].lower() or search.lower() in i['cell'].lower()]
+
+    if not data:
+        st.info("Товары не найдены. Добавьте первый товар или измените поисковый запрос.")
+    else:
+        # Заголовки таблицы
+        h_col1, h_col2, h_col3, h_col4 = st.columns([1, 3, 1.5, 1])
+        h_col1.write("**Фото**")
+        h_col2.write("**Наименование / Локация**")
+        h_col3.write("**Навигация**")
+        h_col4.write("**Действия**")
+        st.markdown("<hr style='margin: 0; border: 1px solid #ff4b4b;'>", unsafe_allow_html=True)
+
+        for p in data:
+            with st.container():
+                col_img, col_txt, col_map, col_btns = st.columns([1, 3, 1.5, 1])
+                
+                with col_img:
+                    url = p['image_url'] if p['image_url'] else "https://via.placeholder.com/100"
+                    st.image(url, width=80)
+                
+                with col_txt:
+                    st.markdown(f"**{p['name']}**")
+                    st.caption(f"🏪 {p['warehouse']} | 📍 Ячейка: {p['cell']}")
+                
+                with col_map:
+                    if st.button("🗺️ ГДЕ ЭТО?", key=f"map_{p['id']}", use_container_width=True):
+                        show_navigation_modal(p['name'], p['warehouse'], p['cell'])
+                
+                with col_btns:
+                    menu = st.popover("⚙️")
+                    if menu.button("✏️ Изменить", key=f"edit_{p['id']}", use_container_width=True):
+                        edit_item_modal(p)
+                    if menu.button("🗑️ Удалить", key=f"del_{p['id']}", use_container_width=True):
+                        supabase.table("global_inventory").delete().eq("id", p['id']).execute()
+                        st.success("Удалено")
+                        st.rerun()
+            st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
 
 # --- ПРОЧИЕ ЭЛИФЫ (ДЛЯ ПРИМЕРА) ---
 elif selected == "Главная":
