@@ -15,3 +15,5 @@ openpyxl
 geopy
 xlsxwriter
 cloudinary
+qrcode[pil]
+Pillow
