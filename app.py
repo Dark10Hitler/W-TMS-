@@ -1719,6 +1719,56 @@ elif selected == "Аналитика":
         st.info("🔍 Данные аудита еще не сформированы. Запустите проверку.")
             
             
+import streamlit as st
+import time
+from datetime import datetime
+
+# --- РЕЖИМ ОТКРЫТОЙ ВИТРИНЫ (КАТАЛОГ ПО QR) ---
+# Этот блок должен идти ПЕРВЫМ в коде, чтобы перехватить сканирование
+query_params = st.query_params
+if "shelf" in query_params:
+    scanned_shelf = query_params["shelf"]
+    
+    # Стилизация витрины
+    st.markdown(f"""
+        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 15px; text-align: center; border: 2px solid #e0e0e0; margin-bottom: 20px;">
+            <h1 style="margin: 0; color: #1E1E1E;">📦 Содержимое ячейки</h1>
+            <h2 style="color: #ff4b4b; margin: 5px 0;">{scanned_shelf}</h2>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Получаем товары именно для этой ячейки
+    try:
+        res = supabase.table("global_inventory").select("*").eq("cell", scanned_shelf).execute()
+        shelf_items = res.data
+    except Exception:
+        shelf_items = []
+
+    if not shelf_items:
+        st.info(f"В ячейке {scanned_shelf} сейчас пусто.")
+    else:
+        for item in shelf_items:
+            with st.container():
+                # Карточка товара в каталоге
+                st.markdown(f"""
+                    <div style="background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px;">
+                        <h3 style="color: #1E1E1E; margin: 0;">{item['name']}</h3>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                pic_url = item.get('image_url') or "https://via.placeholder.com/400x300?text=Нет+фото"
+                st.image(pic_url, use_container_width=True)
+                st.divider()
+
+    if st.button("⬅️ ПЕРЕЙТИ В ГЛАВНОЕ МЕНЮ", use_container_width=True):
+        st.query_params.clear()
+        st.rerun()
+    
+    # Останавливаем код, чтобы посторонний видел только витрину
+    st.stop()
+
+
+# --- РАЗДЕЛ АДМИНИСТРАТОРА: БАЗА ДАННЫХ ---
 elif selected == "База Данных":
     # --- СТИЛИЗАЦИЯ (Для эффекта профессионального приложения) ---
     st.markdown("""
@@ -1751,14 +1801,14 @@ elif selected == "База Данных":
         from config_topology import get_warehouse_figure
         
         with st.spinner("Синхронизация с топологией..."):
-            # Генерируем карту. Стрелочка убрана внутри функции или через CSS/Plotly настройки
+            # Генерируем карту. Подсветка включена, стрелочка убрана для чистоты
             fig = get_warehouse_figure(wh_name, highlighted_cell=cell_id)
             
             fig.update_layout(
                 height=450,
                 margin=dict(l=0, r=0, t=10, b=0),
                 template="plotly_white",
-                dragmode=False # Чтобы карта не дергалась при касании
+                dragmode=False 
             )
             
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
@@ -1805,7 +1855,6 @@ elif selected == "База Данных":
             with st.spinner("Облако Cloudinary синхронизируется..."):
                 final_url = current_url
                 if img_file:
-                    # Функция загрузки в Cloudinary (должна быть определена в коде)
                     final_url = upload_to_cloudinary(img_file, "inventory")
                 
                 data_payload = {
@@ -1821,7 +1870,7 @@ elif selected == "База Данных":
                 else:
                     supabase.table("global_inventory").insert(data_payload).execute()
                 
-                st.success("Данные сохранены!")
+                st.success("Данные успешно сохранены!")
                 time.sleep(1)
                 st.rerun()
 
@@ -1838,6 +1887,7 @@ elif selected == "База Данных":
         cells = get_actual_cells(wh)
         cell = st.selectbox("Ячейка", cells, key="qr_cell_sel")
         
+        # Ссылка для QR (динамическая)
         qr_url = f"https://w-tms.streamlit.app/?shelf={cell}" 
         
         fig = get_warehouse_figure(wh, highlighted_cell=cell)
@@ -1864,11 +1914,10 @@ elif selected == "База Данных":
 
     # --- 4. ШАПКА И ПОИСК ---
     st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
-    st.caption("<p style='text-align: center;'>Центральный узел управления запасами</p>", unsafe_allow_html=True)
+    st.caption("<p style='text-align: center;'>Глобальный реестр и управление топологией складов</p>", unsafe_allow_html=True)
     
-    search_query = st.text_input("🔍 Поиск по названию или ячейке", placeholder="Начните ввод...")
+    search_query = st.text_input("🔍 Быстрый поиск (название или ячейка)", placeholder="Начните вводить...")
 
-    # Кнопки управления
     col_act1, col_act2 = st.columns(2)
     with col_act1:
         if st.button("➕ ДОБАВИТЬ ТОВАР", use_container_width=True, type="primary"):
@@ -1891,11 +1940,11 @@ elif selected == "База Данных":
         inventory = [i for i in inventory if search_query.lower() in i['name'].lower() or search_query.lower() in i['cell'].lower()]
 
     if not inventory:
-        st.info("База пуста или ничего не найдено.")
+        st.info("По вашему запросу ничего не найдено или база пуста.")
     else:
         for product in inventory:
             with st.container():
-                # Разметка карточки товара
+                # Разметка карточки
                 c_img, c_desc, c_loc, c_menu = st.columns([1, 3.5, 1.5, 0.5])
                 
                 with c_img:
@@ -1907,12 +1956,10 @@ elif selected == "База Данных":
                     st.caption(f"🏢 {product['warehouse']} | 📍 Ячейка: **{product['cell']}**")
                 
                 with c_loc:
-                    # Кнопка открытия МОДАЛЬНОГО ОКНА с картой
                     if st.button("🗺️ ГДЕ ИМЕННО", key=f"nav_btn_{product['id']}", use_container_width=True):
                         show_navigation_modal(product['name'], product['warehouse'], product['cell'])
                 
                 with c_menu:
-                    # Всплывающее меню действий
                     opt = st.popover("⋮")
                     if opt.button("✏️ Редакт.", key=f"ed_{product['id']}", use_container_width=True):
                         edit_item_modal(product)
@@ -1920,7 +1967,6 @@ elif selected == "База Данных":
                         supabase.table("global_inventory").delete().eq("id", product['id']).execute()
                         st.rerun()
 
-            # Красивый тонкий разделитель
             st.markdown("<hr style='margin: 8px 0; opacity: 0.1;'>", unsafe_allow_html=True)
                         
 elif selected == "Карта": show_map()
