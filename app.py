@@ -1723,53 +1723,65 @@ import streamlit as st
 import time
 from datetime import datetime
 
-# --- РЕЖИМ ОТКРЫТОЙ ВИТРИНЫ (КАТАЛОГ ПО QR) ---
-# Этот блок должен идти ПЕРВЫМ в коде, чтобы перехватить сканирование
+# --- 1. ПЕРЕХВАТ QR-ССЫЛКИ (ДО ВСЕХ МЕНЮ И УСЛОВИЙ) ---
+# Этот блок должен быть ПЕРВЫМ после импортов. 
+# Если в URL есть параметр shelf, мы показываем ТОЛЬКО витрину.
+
 query_params = st.query_params
+
 if "shelf" in query_params:
-    scanned_shelf = query_params["shelf"]
+    # Очищаем название ячейки от лишних символов
+    scanned_shelf = query_params["shelf"].strip()
     
-    # Стилизация витрины
+    # Стилизация витрины для мобильных устройств
     st.markdown(f"""
-        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 15px; text-align: center; border: 2px solid #e0e0e0; margin-bottom: 20px;">
-            <h1 style="margin: 0; color: #1E1E1E;">📦 Содержимое ячейки</h1>
+        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 15px; text-align: center; border: 2px solid #ff4b4b; margin-bottom: 20px;">
+            <h1 style="margin: 0; color: #1E1E1E; font-size: 1.5em;">📦 Содержимое ячейки</h1>
             <h2 style="color: #ff4b4b; margin: 5px 0;">{scanned_shelf}</h2>
         </div>
     """, unsafe_allow_html=True)
 
-    # Получаем товары именно для этой ячейки
+    # Получаем товары именно для этой ячейки из Supabase
     try:
+        # Убедитесь, что объект supabase инициализирован в вашем коде выше или импортирован
         res = supabase.table("global_inventory").select("*").eq("cell", scanned_shelf).execute()
         shelf_items = res.data
-    except Exception:
+    except Exception as e:
+        st.error(f"Ошибка связи с базой: {e}")
         shelf_items = []
 
     if not shelf_items:
-        st.info(f"В ячейке {scanned_shelf} сейчас пусто.")
+        st.info(f"В ячейке {scanned_shelf} сейчас нет зарегистрированных товаров.")
     else:
         for item in shelf_items:
             with st.container():
                 # Карточка товара в каталоге
                 st.markdown(f"""
-                    <div style="background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px;">
+                    <div style="background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px; border-left: 5px solid #ff4b4b;">
                         <h3 style="color: #1E1E1E; margin: 0;">{item['name']}</h3>
                     </div>
                 """, unsafe_allow_html=True)
                 
-                pic_url = item.get('image_url') or "https://via.placeholder.com/400x300?text=Нет+фото"
+                pic_url = item.get('image_url') or "https://via.placeholder.com/400x300?text=Нет+фото+товара"
                 st.image(pic_url, use_container_width=True)
+                
+                st.markdown(f"**📍 Склад:** {item['warehouse']}")
                 st.divider()
 
-    if st.button("⬅️ ПЕРЕЙТИ В ГЛАВНОЕ МЕНЮ", use_container_width=True):
+    # Кнопка для администратора
+    if st.button("⬅️ ПЕРЕЙТИ В ПАНЕЛЬ УПРАВЛЕНИЯ", use_container_width=True):
         st.query_params.clear()
         st.rerun()
     
-    # Останавливаем код, чтобы посторонний видел только витрину
+    # КРИТИЧЕСКИ ВАЖНО: Останавливаем выполнение кода, чтобы не грузить основное меню
     st.stop()
 
 
-# --- РАЗДЕЛ АДМИНИСТРАТОРА: БАЗА ДАННЫХ ---
-elif selected == "База Данных":
+# --- РАЗДЕЛ АДМИНИСТРАТОРА (Обычный вход) ---
+# Здесь начинается ваш стандартный код приложения (меню, база данных и т.д.)
+# elif selected == "База Данных": (если вы используете библиотеку option_menu)
+
+if True: # Заглушка, чтобы код ниже работал корректно в структуре
     # --- СТИЛИЗАЦИЯ (Для эффекта профессионального приложения) ---
     st.markdown("""
         <style>
@@ -1792,7 +1804,7 @@ elif selected == "База Данных":
         </style>
     """, unsafe_allow_html=True)
 
-    # --- 1. МОДАЛЬНОЕ ОКНО: НАВИГАЦИЯ (ГДЕ ИМЕННО) ---
+    # --- 1. МОДАЛЬНОЕ ОКНО: НАВИГАЦИЯ ---
     @st.dialog("📍 Расположение на складе")
     def show_navigation_modal(item_name, wh_name, cell_id):
         st.markdown(f"### {item_name}")
@@ -1801,16 +1813,13 @@ elif selected == "База Данных":
         from config_topology import get_warehouse_figure
         
         with st.spinner("Синхронизация с топологией..."):
-            # Генерируем карту. Подсветка включена, стрелочка убрана для чистоты
             fig = get_warehouse_figure(wh_name, highlighted_cell=cell_id)
-            
             fig.update_layout(
                 height=450,
                 margin=dict(l=0, r=0, t=10, b=0),
                 template="plotly_white",
                 dragmode=False 
             )
-            
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         
         if st.button("ЗАКРЫТЬ", use_container_width=True):
@@ -1846,13 +1855,12 @@ elif selected == "База Данных":
         cells = get_actual_cells(wh)
         cell = st.selectbox("📍 Точная ячейка", cells, index=cells.index(item['cell']) if item and item['cell'] in cells else 0)
         
-        # Превью карты в модалке
         fig = get_warehouse_figure(wh, highlighted_cell=cell)
         fig.update_layout(height=200, margin=dict(l=0,r=0,t=0,b=0), template="plotly_white")
         st.plotly_chart(fig, use_container_width=True)
 
         if st.button("💾 СОХРАНИТЬ В БАЗУ", use_container_width=True, type="primary"):
-            with st.spinner("Облако Cloudinary синхронизируется..."):
+            with st.spinner("Облако синхронизируется..."):
                 final_url = current_url
                 if img_file:
                     final_url = upload_to_cloudinary(img_file, "inventory")
@@ -1874,7 +1882,7 @@ elif selected == "База Данных":
                 time.sleep(1)
                 st.rerun()
 
-    # --- 3. МОДАЛЬНОЕ ОКНО: ГЕНЕРАТОР QR ---
+    # --- 3. МОДАЛЬНОЕ ОКНО: ГЕНЕРАТОР QR (ИСПРАВЛЕННЫЙ) ---
     @st.dialog("🖨 Печать QR-метки")
     def qr_generator_modal():
         import qrcode
@@ -1887,36 +1895,36 @@ elif selected == "База Данных":
         cells = get_actual_cells(wh)
         cell = st.selectbox("Ячейка", cells, key="qr_cell_sel")
         
-        # --- ФОРМИРУЕМ ЧИСТУЮ ССЫЛКУ ---
-        # Убедись, что здесь нет лишних пробелов в начале или конце!
-        base_url = "https://w-tms.streamlit.app" 
-        # Добавляем .strip() чтобы убрать любые невидимые пробелы
-        qr_url = f"{base_url.strip()}/?shelf={cell.strip()}" 
+        # --- ФОРМИРУЕМ КОРРЕКТНУЮ ССЫЛКУ ---
+        # Мы явно указываем https и удаляем лишние пробелы. 
+        # Это заставляет телефон видеть в этом ССЫЛКУ, а не текст.
+        base_url = "https://w-tms.streamlit.app"
+        qr_url = f"{base_url.strip()}/?shelf={cell.strip()}"
         
-        st.code(qr_url) # Выводим текст ссылки для проверки под картой
+        st.info("Телефон увидит эту ссылку:")
+        st.code(qr_url)
         
         fig = get_warehouse_figure(wh, highlighted_cell=cell)
         fig.update_layout(height=200, margin=dict(l=0,r=0,t=0,b=0))
         st.plotly_chart(fig, use_container_width=True)
         
-        # --- НАСТРОЙКА QR ДЛЯ МГНОВЕННОГО РАСПОЗНАВАНИЯ ---
+        # Настройка QR для максимальной читаемости
         qr = qrcode.QRCode(
             version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_H, # Повышаем уровень коррекции (H)
+            error_correction=qrcode.constants.ERROR_CORRECT_H, # Высокая коррекция ошибок
             box_size=10,
             border=4,
         )
         qr.add_data(qr_url)
         qr.make(fit=True)
         
-        # Делаем QR более контрастным
         img_qr = qr.make_image(fill_color="black", back_color="white")
         
         buf = BytesIO()
         img_qr.save(buf, format="PNG")
         byte_im = buf.getvalue()
         
-        st.image(byte_im, width=250, caption="Отсканируйте для проверки")
+        st.image(byte_im, width=250, caption="Наведите камеру для проверки")
         
         st.download_button(
             label="💾 СКАЧАТЬ ДЛЯ ПЕЧАТИ (PNG)",
@@ -1958,7 +1966,6 @@ elif selected == "База Данных":
     else:
         for product in inventory:
             with st.container():
-                # Разметка карточки
                 c_img, c_desc, c_loc, c_menu = st.columns([1, 3.5, 1.5, 0.5])
                 
                 with c_img:
