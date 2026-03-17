@@ -1875,7 +1875,7 @@ elif selected == "База Данных":
                 st.rerun()
 
     # --- 3. МОДАЛЬНОЕ ОКНО: ГЕНЕРАТОР QR ---
-@st.dialog("🖨 Печать QR-метки")
+    @st.dialog("🖨 Печать QR-метки")
     def qr_generator_modal():
         import qrcode
         from io import BytesIO
