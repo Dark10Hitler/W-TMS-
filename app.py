@@ -1880,7 +1880,7 @@ function(params) {
                     except Exception as e:
                         st.error(f"Ошибка сохранения: {e}")
                         
-elif selected == "Карта транспорта": show_map()
+elif selected == "Карта": show_map()
 elif selected == "Настройки":
     st.markdown("<h1 class='section-head'>⚙️ Системные настройки</h1>", unsafe_allow_html=True)
     
