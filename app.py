@@ -1455,7 +1455,7 @@ def delete_entry(table_key, entry_id):
     except Exception as e:
         st.error(f"❌ Ошибка при удалении из базы данных: {e}")
         
-if selected == "Созданные документы": render_aggrid_table("main", "Основной Реестр")
+if selected == "Main": render_aggrid_table("Все документы", "Основной Реестр")
 elif selected == "Заявки": render_aggrid_table("orders", "Заявки")
 elif selected == "Приходы": render_aggrid_table("arrivals", "Приходы")
 elif selected == "Брак": render_aggrid_table("defects", "Журнал Брака")
