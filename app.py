@@ -1808,8 +1808,12 @@ elif selected == "База Данных":
                 st.rerun()
 
     # --- МОДАЛЬНОЕ ОКНО: ГЕНЕРАТОР QR ---
-    @st.dialog("🖨 Печать QR-метки полки")
+@st.dialog("🖨 Печать QR-метки полки")
     def qr_generator_modal():
+        # Добавляем импорты прямо сюда, чтобы точно работало
+        import qrcode
+        from io import BytesIO
+        
         from constants import WAREHOUSE_MAP
         from config_topology import get_warehouse_figure, get_actual_cells
         
@@ -1818,27 +1822,36 @@ elif selected == "База Данных":
         cells = get_actual_cells(wh)
         cell = st.selectbox("Ячейка", cells, key="qr_cell_sel")
         
-        # Ссылка, которую будет считывать телефон (замени на свой домен)
-        qr_url = f"https://your-app-url.streamlit.app/?shelf={cell}"
+        # Ссылка для QR (динамическая)
+        qr_url = f"https://w-tms.streamlit.app/?shelf={cell}" 
         
         # Визуал карты
         fig = get_warehouse_figure(wh, highlighted_cell=cell)
         fig.update_layout(height=200, margin=dict(l=0,r=0,t=0,b=0))
         st.plotly_chart(fig, use_container_width=True)
         
-        # Генерация изображения QR
-        qr = qrcode.QRCode(box_size=10, border=2)
+        # --- ГЕНЕРАЦИЯ ---
+        # Важно: используем QRCode с большой буквы, как в библиотеке
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
         qr.add_data(qr_url)
         qr.make(fit=True)
+        
         img_qr = qr.make_image(fill_color="black", back_color="white")
         
+        # Сохраняем в буфер
         buf = BytesIO()
         img_qr.save(buf, format="PNG")
+        byte_im = buf.getvalue()
         
-        st.image(buf, width=200, use_column_width=False)
+        st.image(byte_im, width=200)
         st.download_button(
             label="💾 СКАЧАТЬ ДЛЯ ПЕЧАТИ",
-            data=buf.getvalue(),
+            data=byte_im,
             file_name=f"QR_{wh}_{cell}.png",
             mime="image/png",
             use_container_width=True
