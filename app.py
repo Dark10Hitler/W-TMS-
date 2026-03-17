@@ -1884,34 +1884,68 @@ elif selected == "База Данных":
     else:
         for product in inventory:
             # Создаем "Полоску" товара
+# --- ВНУТРИ ЦИКЛА for product in inventory: ---
+
             with st.container():
-                # Разметка колонок для карточки
+    # Разметка колонок для карточки
                 c_img, c_desc, c_loc, c_menu = st.columns([1, 3.5, 1.5, 0.5])
-                
-                with c_img:
-                    pic = product['image_url'] if product['image_url'] else "https://via.placeholder.com/100?text=📦"
-                    st.image(pic, width=80)
-                
-                with c_desc:
-                    st.markdown(f"**{product['name']}**")
-                    st.caption(f"📍 {product['warehouse']} | Ячейка: {product['cell']}")
-                
-                with c_loc:
-                    # Кнопка быстрой помощи
-                    if st.button("🗺️ ГДЕ?", key=f"where_{product['id']}", use_container_width=True):
-                        st.toast(f"Товар находится: {product['warehouse']} -> {product['cell']}", icon="📍")
-                
-                with c_menu:
-                    # ТРИ ТОЧКИ (Действия)
-                    opt = st.popover("⋮")
-                    if opt.button("✏️ Изменить", key=f"edit_btn_{product['id']}", use_container_width=True):
-                        edit_item_modal(product)
-                    if opt.button("🗑️ Удалить", key=f"del_btn_{product['id']}", use_container_width=True):
-                        supabase.table("global_inventory").delete().eq("id", product['id']).execute()
-                        st.rerun()
-            
-            # Тонкий разделитель для scannability
-            st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
+    
+            with c_img:
+                pic = product['image_url'] if product['image_url'] else "https://via.placeholder.com/100?text=📦"
+                st.image(pic, width=80)
+    
+            with c_desc:
+                st.markdown(f"**{product['name']}**")
+                st.caption(f"🏢 {product['warehouse']} | 📍 Ячейка: **{product['cell']}**")
+    
+            with c_loc:
+        # Кнопка-триггер для показа карты
+                show_map = st.button("📍 ПОКАЗАТЬ", key=f"map_btn_{product['id']}", use_container_width=True)
+    
+            with c_menu:
+                opt = st.popover("⋮")
+                if opt.button("✏️ Редакт.", key=f"ed_{product['id']}"):
+                    edit_item_modal(product)
+                if opt.button("🗑️ Удалить", key=f"dl_{product['id']}"):
+                    supabase.table("global_inventory").delete().eq("id", product['id']).execute()
+                    st.rerun()
+
+    # --- СЕКЦИЯ ТОЧНОЙ НАВИГАЦИИ (открывается по кнопке) ---
+            if show_map:
+                st.markdown(f"#### 🎯 Навигация: Склад {product['warehouse']}, Ряд {product['cell']}")
+        
+            from config_topology import get_warehouse_figure
+        
+        # Генерируем фигуру с подсветкой конкретной ячейки
+        # Важно: функция get_warehouse_figure должна уметь принимать параметр highlighted_cell
+            fig = get_warehouse_figure(product['warehouse'], highlighted_cell=product['cell'])
+        
+        # Добавляем стрелку-аннотацию через Plotly для "Мертвой точности"
+        # Предполагаем, что координаты ячейки можно вычислить или они заложены в fig
+            fig.add_annotation(
+            x=product['cell'], # Если x - это имя ячейки в твоей топологии
+            text="ЗДЕСЬ!",
+            showarrow=True,
+            arrowhead=2,
+            arrowcolor="red",
+            arrowsize=2,
+            bgcolor="red",
+            font=dict(color="white", size=14),
+            ax=0, ay=-40 # Смещение стрелки вверх
+            )
+        
+            fig.update_layout(
+            height=400, 
+            margin=dict(l=10, r=10, t=30, b=10),
+            paper_bgcolor="#FFF5F5", # Легкий красный фон для акцента
+            )
+        
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        
+            if st.button("❌ Закрыть карту", key=f"close_{product['id']}"):
+                st.rerun()
+
+        st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
                         
 elif selected == "Карта": show_map()
 elif selected == "Настройки":
