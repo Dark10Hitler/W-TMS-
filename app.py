@@ -1719,8 +1719,23 @@ elif selected == "Аналитика":
         st.info("🔍 Данные аудита еще не сформированы. Запустите проверку.")
             
             
+import streamlit as st
+import time
+from datetime import datetime
 import qrcode
 from io import BytesIO
+from streamlit_option_menu import option_menu
+import pandas as pd
+
+# ПРЕДПОЛАГАЕМЫЕ ИМПОРТЫ ТВОИХ МОДУЛЕЙ
+# Если эти файлы лежат в той же папке, всё подтянется автоматически
+try:
+    from database import supabase
+    from tools import upload_to_cloudinary
+    from config_topology import get_warehouse_figure, get_actual_cells
+    from constants import WAREHOUSE_MAP
+except ImportError:
+    st.error("Критическая ошибка: Не найдены файлы database.py, tools.py или config_topology.py!")
 
 # --- 0. КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(
@@ -1962,6 +1977,11 @@ if selected == "База Данных":
                         supabase.table("global_inventory").delete().eq("id", p['id']).execute()
                         st.rerun()
             st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
+
+elif selected == "Главная":
+    st.title("W-TMS | Главная")
+    st.success("Вы авторизованы в системе управления.")
+    st.write("Используйте меню слева для работы с базой данных.")
 
                         
 elif selected == "Карта": show_map()
