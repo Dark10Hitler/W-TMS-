@@ -23,7 +23,6 @@ from constants import ORDER_COLUMNS, ARRIVAL_COLUMNS, EXTRA_COLUMNS, DEFECT_COLU
 from config import edit_arrival_modal, edit_defect_modal, edit_extra_modal, edit_order_modal
 from config import show_extra_details_modal, show_arrival_details_modal, show_defect_details_modal, show_order_details_modal
 from config import show_arrival_print_modal, show_defect_print_modal, show_extra_print_modal, show_print_modal
-from config_topology import get_warehouse_figure
 from specific_doc import create_modal, create_extras_modal, create_arrival_modal, create_defect_modal
 import streamlit as st
 import folium
@@ -35,9 +34,7 @@ from geopy.distance import geodesic
 import json
 from geopy.geocoders import Nominatim # Для получения адреса по координатам
 import math
-from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
-
 import pytz
 from datetime import datetime
 from uploader import upload_to_cloudinary
