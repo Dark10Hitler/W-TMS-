@@ -1832,8 +1832,11 @@ elif selected == "База Данных":
 
     st.markdown("## 🛡️ Управление базой и топологией")
 
-    # ЖИВОЙ ПОИСК
-    search_query = st.text_input("🔍 Быстрый поиск по названию товара", placeholder="Начните вводить...").strip().lower()
+    search_query = st.text_input(
+    "🔍 Быстрый поиск по названию", 
+    placeholder="Введите название (Enter для поиска)...", 
+    key="search_input"
+).strip().lower()
 
     col_btn1, col_btn2 = st.columns(2)
 
@@ -1907,13 +1910,20 @@ elif selected == "База Данных":
     with col_btn2:
         if st.button("🖨 QR И ССЫЛКА ПОЛКИ", use_container_width=True): qr_generator()
 
-    # --- ЗАГРУЗКА ДАННЫХ ---
+    # --- ЗАГРУЗКА И ФИЛЬТРАЦИЯ ---
     try:
-        data = supabase.table("global_inventory").select("*").order("name").execute().data
-        display_items = [i for i in data if search_query in i['name'].lower()] if search_query else data
-    except: display_items = []
-
-    st.divider()
+    # 1. Сначала берем ВСЕ данные из Supabase
+        all_data_response = supabase.table("global_inventory").select("*").order("name").execute()
+        all_data = all_data_response.data
+    
+    # 2. Фильтруем список ПРЯМО ЗДЕСЬ на основе search_query
+        if search_query:
+            display_items = [i for i in all_data if search_query in i['name'].lower()]
+        else:
+            display_items = all_data
+    except Exception as e:
+        st.error(f"Ошибка связи с базой: {e}")
+        display_items = []
     
     for prod in display_items:
         with st.container():
