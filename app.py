@@ -42,6 +42,66 @@ from database import insert_data # Твоя функция Supabase
 import qrcode
 from io import BytesIO
 
+# --- 1. НАСТРОЙКИ СТРАНИЦЫ (СТРОГО ПЕРВЫЙ ВЫЗОВ, ВСЕГДА ВЫПОЛНЯЕТСЯ) ---
+st.set_page_config(
+    page_title="IMPERIA LOGISTICS", 
+    layout="wide", 
+    initial_sidebar_state="expanded"
+)
+
+# --- 2. ЛОГИКА ПАРАМЕТРОВ URL ---
+query_params = st.query_params
+shelf_id = query_params.get("shelf")
+
+# --- 3. РЕЖИМ ВИТРИНЫ (QR-код) ---
+if shelf_id:
+    # Если в ссылке есть shelf, скрываем меню через CSS и показываем витрину
+    st.markdown("""
+        <style>
+            #MainMenu {visibility: hidden;} 
+            [data-testid="stSidebar"] {display: none !important;}
+            [data-testid="stSidebarNav"] {display: none !important;}
+            footer {visibility: hidden;}
+            .product-card {
+                background: #f9f9f9;
+                padding: 15px;
+                border-radius: 10px;
+                margin-bottom: 10px;
+                border: 1px solid #eee;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown(f"<h1 style='text-align: center;'>📍 Стеллаж: {shelf_id}</h1>", unsafe_allow_html=True)
+    st.divider()
+
+    st.write("### 📦 Товары в этой ячейке:")
+    
+    try:
+        items = supabase.table("global_inventory").select("*").eq("cell", shelf_id).execute().data
+    except Exception as e:
+        st.error("Ошибка подключения к базе данных")
+        items = []
+
+    if not items:
+        st.warning("В данной ячейке товаров не обнаружено.")
+    else:
+        for item in items:
+            with st.container():
+                c1, c2 = st.columns([1, 2])
+                with c1:
+                    pic = item['image_url'] if item['image_url'] else "https://via.placeholder.com/150"
+                    st.image(pic, use_container_width=True)
+                with c2:
+                    st.subheader(item['name'])
+                    st.info(f"Склад: {item['warehouse']}")
+                    st.caption(f"📅 Дата обновления: {item['last_updated'][:10]}")
+                st.divider()
+    
+    # ПРЕКРАЩАЕМ ВЫПОЛНЕНИЕ, чтобы админка не загрузилась под витриной
+    st.stop()
+
+
 def sync_to_inventory(doc_id, items_list, doc_type):
     """
     doc_id: ID документа (например, ORD-101, ARR-202, EXT-303)
@@ -1374,7 +1434,7 @@ def show_profile():
 with st.sidebar:
     st.markdown("""
         <div style='padding: 10px 0px;'>
-            <h2 style='color: #1E1E1E; font-family: "Segoe UI", Tahoma, Geneva, sans-serif; font-size: 22px; font-weight: 600;'>
+            <h2 style='color: #1E1E1E; font-family: "Segoe UI"; font-size: 22px; font-weight: 600;'>
                 📦 LOGISTICS W&TMS
             </h2>
             <p style='color: #666; font-size: 12px; margin-top: -10px;'>Warehouse Management System</p>
@@ -1382,41 +1442,13 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     selected = option_menu(
-        menu_title=None, # Убираем заголовок меню для минимализма
-        options=[
-            "Main", "База Данных", "Заявки", "Приходы", 
-            "Дополнения", "Брак", "Карта", "Аналитика", "Настройки"
-        ],
-        icons=[
-            "house", "database-fill", "clipboard2-check", "box-arrow-in-down", 
-            "plus-circle", "exclamation-octagon", "map", "graph-up-arrow", "gear"
-        ],
-        menu_icon="cast",
+        menu_title=None,
+        options=["Main", "База Данных", "Заявки", "Приходы", "Дополнения", "Брак", "Карта", "Аналитика", "Настройки"],
+        icons=["house", "database-fill", "clipboard2-check", "box-arrow-in-down", "plus-circle", "exclamation-octagon", "map", "graph-up-arrow", "gear"],
         default_index=0,
         styles={
-            "container": {
-                "padding": "0!important", 
-                "background-color": "#FFFFFF", # Чистый белый фон
-                "border-radius": "0px"
-            },
-            "icon": {
-                "color": "#5F6368", # Спокойный серый для иконок
-                "font-size": "18px"
-            },
-            "nav-link": {
-                "font-size": "14px", 
-                "text-align": "left", 
-                "margin": "0px", 
-                "color": "#3C4043", # Цвет текста Windows Light
-                "font-family": "Segoe UI",
-                "--hover-color": "#F1F3F4" # Светло-серый при наведении
-            },
-            "nav-link-selected": {
-                "background-color": "#E8F0FE", # Нежно-голубой фон (как в Windows/Google)
-                "color": "#1A73E8", # Акцентный синий цвет текста
-                "font-weight": "600",
-                "border-left": "4px solid #1A73E8" # Полоска слева для акцента
-            },
+            "container": {"padding": "0!important", "background-color": "#FFFFFF"},
+            "nav-link-selected": {"background-color": "#E8F0FE", "color": "#1A73E8", "border-left": "4px solid #1A73E8"}
         }
     )
     
