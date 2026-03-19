@@ -1772,60 +1772,6 @@ elif selected == "Аналитика":
     else:
         st.info("🔍 Данные аудита еще не сформированы. Запустите проверку.")
             
-            
-# --- 1. РЕЖИМ ВИТРИНЫ (Для всех, кто сканирует QR) ---
-if "shelf" in st.query_params:
-    shelf_id = st.query_params["shelf"]
-    st.set_page_config(page_title=f"Ячейка {shelf_id}", layout="wide", initial_sidebar_state="collapsed")
-    
-    # CSS: Прячем меню, чтобы грузчик видел только товар
-    st.markdown("<style>#MainMenu {visibility: hidden;} [data-testid='stSidebar'] {display: none;}</style>", unsafe_allow_html=True)
-    
-    st.markdown(f"<h2 style='text-align: center; color: #FF4B4B;'>📍 Стеллаж: {shelf_id}</h2>", unsafe_allow_html=True)
-    
-    # --- АВТО-ОПРЕДЕЛЕНИЕ СКЛАДА И ТОПОЛОГИЯ ---
-    from config_topology import get_warehouse_figure
-    from constants import WAREHOUSE_MAP
-
-    # Пытаемся найти, к какому складу принадлежит эта ячейка
-    detected_wh = "Основной" # Значение по умолчанию
-    for wh_name, layout in WAREHOUSE_MAP.items():
-        if any(shelf_id in row for row in layout):
-            detected_wh = wh_name
-            break
-
-    st.write("### 🗺️ Точное местоположение:")
-    fig_worker = get_warehouse_figure(detected_wh, highlighted_cell=shelf_id)
-    
-    # ДОБАВЛЯЕМ СТРЕЛКУ "ВЫ ЗДЕСЬ"
-    fig_worker.add_annotation(
-        x=shelf_id, y=0.5, text="ВЫ ЗДЕСЬ",
-        showarrow=True, arrowhead=2, arrowsize=2, arrowcolor="red",
-        ax=0, ay=-50, bgcolor="red", font=dict(color="white", size=14)
-    )
-    fig_worker.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0))
-    st.plotly_chart(fig_worker, use_container_width=True, config={'displayModeBar': False})
-
-    st.divider()
-    st.write("### 📦 Товары на этой полке:")
-    
-    try:
-        items = supabase.table("global_inventory").select("*").eq("cell", shelf_id).execute().data
-    except: items = []
-
-    if not items:
-        st.info("Ячейка пуста.")
-    else:
-        for item in items:
-            c1, c2 = st.columns([1, 3])
-            with c1: 
-                st.image(item['image_url'] if item['image_url'] else "https://via.placeholder.com/150", use_container_width=True)
-            with c2:
-                st.subheader(item['name'])
-                st.caption(f"📅 Обновлено: {item['last_updated'][:10]}")
-            st.divider()
-    st.stop()
-
 # --- 2. АДМИН-ПАНЕЛЬ (БАЗА ДАННЫХ) ---
 elif selected == "База Данных":
     BASE_URL = "https://4nrmgw3mde695us2cdnt9q.streamlit.app/"
