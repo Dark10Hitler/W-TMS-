@@ -45,6 +45,13 @@ from database import insert_data # Твоя функция Supabase
 import qrcode
 from io import BytesIO
 
+# 1. САМЫЙ ВЕРХ ФАЙЛА (ДО ВСЕХ IF)
+st.set_page_config(
+    page_title="LOGISTICS W&TMS", 
+    layout="wide", 
+    initial_sidebar_state="expanded" # По умолчанию меню открыто
+)
+
 # В начале файла!
 query_params = st.query_params
 shelf_from_url = query_params.get("shelf")
