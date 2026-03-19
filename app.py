@@ -42,13 +42,6 @@ from database import insert_data # Твоя функция Supabase
 import qrcode
 from io import BytesIO
 
-# --- 1. КРИТИЧЕСКИЙ КОНФИГ (СТРОГО ОДИН РАЗ В НАЧАЛЕ) ---
-st.set_page_config(
-    page_title="LOGISTICS W&TMS",
-    layout="wide",
-    initial_sidebar_state="expanded"  # Это принудительно открывает меню
-)
-
 # --- 2. ПРОВЕРКА QR-РЕЖИМА (БЕЗ ОШИБОК) ---
 # Получаем параметры БЕЗ принудительной остановки для админа
 shelf_id = st.query_params.get("shelf")
@@ -539,6 +532,8 @@ def save_new_location(product_name, location):
         supabase.table("product_locations").upsert(payload, on_conflict="product").execute()
     except Exception as e:
         st.error(f"Ошибка сохранения топологии: {e}")
+
+st.set_page_config(layout="wide", page_title="W&TMS", page_icon="🏛️")
 
 st.markdown("""
 <style>
