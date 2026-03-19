@@ -540,8 +540,6 @@ def save_new_location(product_name, location):
     except Exception as e:
         st.error(f"Ошибка сохранения топологии: {e}")
 
-st.set_page_config(layout="wide", page_title="W&TMS", page_icon="🏛️")
-
 st.markdown("""
 <style>
     /* 1. ПОЛНОЕ УДАЛЕНИЕ ВЕРХНЕЙ ПОЛОСЫ И ДЕКОРАЦИЙ */
