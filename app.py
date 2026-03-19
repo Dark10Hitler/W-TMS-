@@ -45,34 +45,27 @@ from database import insert_data # Твоя функция Supabase
 import qrcode
 from io import BytesIO
 
-# 1. САМЫЙ ВЕРХ ФАЙЛА (ДО ВСЕХ IF)
+# --- 1. САМЫЙ ВЕРХ ФАЙЛА (СТРОГО ОДИН РАЗ) ---
 st.set_page_config(
     page_title="LOGISTICS W&TMS", 
     layout="wide", 
-    initial_sidebar_state="expanded" # По умолчанию меню открыто
+    initial_sidebar_state="expanded" 
 )
 
-# В начале файла!
+# --- 2. ЛОГИКА QR-ВИТРИНЫ ---
 query_params = st.query_params
-shelf_from_url = query_params.get("shelf")
-# --- РЕЖИМ ВИТРИНЫ (Для всех, кто сканирует QR) ---
-if "shelf" in st.query_params:
-    shelf_id = st.query_params["shelf"]
-    st.set_page_config(page_title=f"Ячейка {shelf_id}", layout="wide", initial_sidebar_state="collapsed")
-    
-    # CSS: Максимально чистый интерфейс
+shelf_id = query_params.get("shelf")
+
+if shelf_id:
+    # Если зашли через QR, скрываем сайдбар через CSS
     st.markdown("""
         <style>
             #MainMenu {visibility: hidden;} 
-            [data-testid="stSidebar"] {display: none;}
+            /* Скрываем боковое меню ТОЛЬКО в режиме QR */
+            [data-testid="stSidebar"] {display: none !important;}
+            [data-testid="stSidebarNav"] {display: none !important;}
             footer {visibility: hidden;}
-            .product-card {
-                background: #f9f9f9;
-                padding: 15px;
-                border-radius: 10px;
-                margin-bottom: 10px;
-                border: 1px solid #eee;
-            }
+            .block-container {padding-top: 2rem;}
         </style>
     """, unsafe_allow_html=True)
     
@@ -82,7 +75,6 @@ if "shelf" in st.query_params:
     st.write("### 📦 Товары в этой ячейке:")
     
     try:
-        # Получаем товары именно для этой полки
         items = supabase.table("global_inventory").select("*").eq("cell", shelf_id).execute().data
     except Exception as e:
         st.error("Ошибка подключения к базе данных")
@@ -103,7 +95,8 @@ if "shelf" in st.query_params:
                     st.caption(f"📅 Дата обновления: {item['last_updated'][:10]}")
                 st.divider()
     
-    st.stop() # Важно: прерываем код, чтобы админка не подгрузилась ниже
+    # Останавливаем код, чтобы админка не грузилась для внешних пользователей
+    st.stop()
 
 
 def sync_to_inventory(doc_id, items_list, doc_type):
