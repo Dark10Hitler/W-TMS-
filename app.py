@@ -45,6 +45,93 @@ from database import insert_data # Твоя функция Supabase
 import qrcode
 from io import BytesIO
 
+import streamlit as st
+
+# --- 1. CONFIG ---
+st.set_page_config(
+    page_title="LOGISTICS W&TMS",
+    page_icon="🚀",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# --- 2. MOBILE CSS (Адаптация под телефон) ---
+st.markdown("""
+    <style>
+        /* Скрываем стандартный сайдбар совсем */
+        [data-testid="stSidebar"] {display: none;}
+        
+        /* Убираем лишние отступы сверху */
+        .block-container {
+            padding-top: 1rem;
+            padding-bottom: 5rem;
+        }
+
+        /* Стиль кнопок навигации */
+        div.stButton > button {
+            width: 100%;
+            height: 3.5rem;
+            border-radius: 10px;
+            font-size: 16px;
+            margin-bottom: 5px;
+            border: 1px solid #ddd;
+            background-color: white;
+            color: black;
+            text-align: left;
+            padding-left: 20px;
+        }
+        
+        /* Стиль активной кнопки (опционально) */
+        div.stButton > button:active, div.stButton > button:focus {
+            background-color: #f0f2f6;
+            border-color: #ff4b4b;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- 3. ЛОГИКА БУРГЕР-МЕНЮ ---
+if 'menu_open' not in st.session_state:
+    st.session_state.menu_open = False
+if 'selected_page' not in st.session_state:
+    st.session_state.selected_page = "Main"
+
+# Верхняя панель с кнопкой Бургера
+header_col1, header_col2 = st.columns([1, 8])
+with header_col1:
+    if st.button("☰"): # Символ бургера
+        st.session_state.menu_open = not st.session_state.menu_open
+
+with header_col2:
+    st.markdown(f"### LOGISTICS W&TMS / {st.session_state.selected_page}")
+
+# Если меню открыто — показываем список разделов
+if st.session_state.menu_open:
+    with st.container():
+        st.markdown("---")
+        # Список твоих разделов
+        pages = {
+            "🏠 Main": "Main",
+            "📦 База Данных": "База Данных",
+            "📝 Заявки": "Заявки",
+            "🚛 Приходы": "Приходы",
+            "➕ Дополнения": "Дополнения",
+            "🗑️ Брак": "Брак",
+            "🗺️ Карта": "Карта",
+            "📈 Аналитика": "Аналитика",
+            "⚙️ Настройки": "Настройки"
+        }
+        
+        # Создаем кнопки меню
+        for label, page_key in pages.items():
+            if st.button(label, key=f"nav_{page_key}"):
+                st.session_state.selected_page = page_key
+                st.session_state.menu_open = False # Закрываем меню после выбора
+                st.rerun()
+    st.markdown("---")
+
+# --- 4. ОТОБРАЖЕНИЕ КОНТЕНТА ---
+selected = st.session_state.selected_page
+
 # В начале файла!
 query_params = st.query_params
 shelf_from_url = query_params.get("shelf")
