@@ -45,7 +45,6 @@ from database import insert_data # Твоя функция Supabase
 import qrcode
 from io import BytesIO
 
-import streamlit as st
 # В начале файла!
 query_params = st.query_params
 shelf_from_url = query_params.get("shelf")
