@@ -15,6 +15,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 import streamlit.components.v1 as components
+from config_topology import get_warehouse_figure, get_actual_cells
 import os
 import plotly.graph_objects as go
 from constants import WAREHOUSE_MAP, TABLE_STRUCT, DRIVER_COLUMNS, VEHICLE_COLUMNS, NOMENCLATURE_COLUMNS
