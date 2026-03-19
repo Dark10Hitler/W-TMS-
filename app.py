@@ -1959,35 +1959,73 @@ elif selected == "Настройки":
         "💾 Обслуживание системы"
     ])
 
-    # --- ТАБ 1: СКЛАД (без изменений) ---
+    # --- ТАБ 1: СКЛАД (СВЯЗАННЫЙ С GLOBAL_INVENTORY) ---
     with tab1:
         st.subheader("📍 Конфигурация зон хранения")
+        
         col_map, col_cfg = st.columns([2, 1])
+        
         with col_map:
+            # Выбор склада
             wh_to_show = st.selectbox("Выберите склад для просмотра", list(WAREHOUSE_MAP.keys()))
+            
             try:
-                inv_data = supabase.table("product_locations").select("product, address").eq("zone", str(wh_to_show)).execute()
+                # 1. ЗАГРУЖАЕМ ВСЕ ТОВАРЫ ИЗ GLOBAL_INVENTORY ДЛЯ ВЫБРАННОГО СКЛАДА
+                raw_data = supabase.table("global_inventory").select("name, cell").eq("warehouse", str(wh_to_show)).execute()
+                
+                # 2. ГРУППИРУЕМ ТОВАРЫ ПО ЯЧЕЙКАМ (чтобы в одной ячейке было несколько товаров)
                 inv_dict = {}
-                for row in inv_data.data:
-                    cell = row['address']
-                    if cell not in inv_dict: inv_dict[cell] = []
-                    inv_dict[cell].append(row['product'])
+                for row in raw_data.data:
+                    cell_id = str(row['cell']).strip()
+                    product_name = row['name']
+                    
+                    if cell_id not in inv_dict:
+                        inv_dict[cell_id] = []
+                    inv_dict[cell_id].append(product_name)
+                
+                # 3. ПОЛУЧАЕМ ГРАФИКУ СКЛАДА
+                fig = get_warehouse_figure(wh_to_show)
+                
+                # 4. ПРИВЯЗЫВАЕМ ДАННЫЕ К КАРТЕ (Hover эффекты)
+                for trace in fig.data:
+                    # trace.name — это обычно ID ячейки на твоей Plotly карте
+                    current_cell = str(trace.name).strip()
+                    items_in_cell = inv_dict.get(current_cell, [])
+                    
+                    if items_in_cell:
+                        # Формируем список товаров (не более 10 для компактности)
+                        limit = 10
+                        items_list = "<br>• ".join(items_in_cell[:limit])
+                        if len(items_in_cell) > limit:
+                            items_list += f"<br>... и еще {len(items_in_cell) - limit}"
+                        
+                        hover_text = (
+                            f"<b>Ячейка: {current_cell}</b><br>"
+                            f"📦 Товары ({len(items_in_cell)} шт):<br>"
+                            f"• {items_list}"
+                        )
+                    else:
+                        hover_text = f"<b>Ячейка: {current_cell}</b><br><i style='color:gray;'>Свободно</i>"
+                    
+                    # Применяем текст к шаблону наведения Plotly
+                    trace.hovertemplate = hover_text + "<extra></extra>"
+                
+                # Отображаем карту
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                
             except Exception as e:
-                st.error(f"Ошибка загрузки: {e}")
-                inv_dict = {}
-            fig = get_warehouse_figure(wh_to_show)
-            for trace in fig.data:
-                cell_id = trace.name
-                items = inv_dict.get(str(cell_id).strip(), [])
-                if items:
-                    items_list = "<br>• ".join(items[:5])
-                    hover_text = f"<b>Ячейка: {cell_id}</b><br>📦 Товары:<br>• {items_list}"
-                else:
-                    hover_text = f"<b>Ячейка: {cell_id}</b><br><i>Пусто</i>"
-                trace.hovertemplate = hover_text + "<extra></extra>"
-            st.plotly_chart(fig, use_container_width=True)
+                st.error(f"Ошибка синхронизации карты с базой: {e}")
+                
         with col_cfg:
-            st.info("💡 Наведите на ячейку на карте.")
+            st.info("💡 **Интерактивная карта:**")
+            st.write("Наведите курсор на ячейку склада, чтобы увидеть список всех товаров, закрепленных за ней в Базе Данных.")
+            
+            # Статистика склада для удобства
+            if 'inv_dict' in locals():
+                total_cells = len(get_actual_cells(wh_to_show))
+                occupied_cells = len(inv_dict.keys())
+                st.metric("Занято ячеек", f"{occupied_cells} из {total_cells}")
+                st.metric("Всего товаров на складе", sum(len(v) for v in inv_dict.values()))
 
     # --- ТАБ 2: КОМАНДА (без изменений) ---
     with tab2:
