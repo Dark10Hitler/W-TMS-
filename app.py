@@ -46,83 +46,6 @@ import qrcode
 from io import BytesIO
 
 import streamlit as st
-
-# --- 1. CONFIG & STYLES ---
-st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
-
-# Прячем стандартный сайдбар и настраиваем отступы для мобилок
-st.markdown("""
-    <style>
-        [data-testid="stSidebar"] {display: none;}
-        .block-container {padding-top: 1rem !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important;}
-        
-        /* Стиль для выпадающего меню (Бургера) */
-        .stSelectbox div[data-baseweb="select"] {
-            transform: scale(1.05);
-            margin-bottom: 20px;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-# --- 2. ГЛАВНОЕ МЕНЮ (БУРГЕР) ---
-# Создаем список всех твоих разделов
-menu_options = [
-    "🏠 Main", "📝 Заявки", "🚛 Приходы", 
-    "➕ Дополнения", "🗑️ Брак", "📦 База Данных", 
-    "🗺️ Карта", "📈 Аналитика", "⚙️ Настройки"
-]
-
-# Выпадающий список вместо кнопок — работает идеально на мобилках
-st.write("### 🏛 LOGISTICS W&TMS")
-selected_label = st.selectbox(
-    "Меню разделов:", 
-    menu_options, 
-    label_visibility="collapsed",
-    key="mobile_menu"
-)
-
-# Очищаем название от эмодзи для логики if/elif
-selected = selected_label.split(" ")[1] if " " in selected_label else selected_label
-
-st.divider()
-
-# --- 3. ТВОЯ ЛОГИКА ОТОБРАЖЕНИЯ ---
-if selected == "Main":
-    st.subheader("🚀 Основной Реестр")
-    render_aggrid_table("main", "Основной Реестр")
-
-elif selected == "Заявки":
-    st.subheader("📝 Реестр Заявок")
-    render_aggrid_table("orders", "Заявки")
-
-elif selected == "Приходы":
-    st.subheader("🚛 Поступления")
-    render_aggrid_table("arrivals", "Приходы")
-
-elif selected == "Брак":
-    st.subheader("🗑️ Журнал Брака")
-    render_aggrid_table("defects", "Журнал Брака")
-
-elif selected == "Дополнения":
-    st.subheader("➕ Дополнения")
-    render_aggrid_table("extras", "Дополнения")
-
-elif selected == "База": # Если в списке "📦 База Данных"
-    st.subheader("📦 Управление Базой")
-    # Твой код базы данных (поиск + карточки)
-
-elif selected == "Карта":
-    st.subheader("🗺️ Топология Склада")
-    show_map()
-
-elif selected == "Аналитика":
-    st.subheader("📈 Отчеты")
-    # Твой код аналитики
-
-elif selected == "Настройки":
-    st.subheader("⚙️ Конфигурация")
-    # Твой код настроек
-
 # В начале файла!
 query_params = st.query_params
 shelf_from_url = query_params.get("shelf")
@@ -2334,6 +2257,85 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
+
+
+
+# --- 1. CONFIG & STYLES ---
+st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
+
+# Прячем стандартный сайдбар и настраиваем отступы для мобилок
+st.markdown("""
+    <style>
+        [data-testid="stSidebar"] {display: none;}
+        .block-container {padding-top: 1rem !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important;}
+        
+        /* Стиль для выпадающего меню (Бургера) */
+        .stSelectbox div[data-baseweb="select"] {
+            transform: scale(1.05);
+            margin-bottom: 20px;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- 2. ГЛАВНОЕ МЕНЮ (БУРГЕР) ---
+# Создаем список всех твоих разделов
+menu_options = [
+    "🏠 Main", "📝 Заявки", "🚛 Приходы", 
+    "➕ Дополнения", "🗑️ Брак", "📦 База Данных", 
+    "🗺️ Карта", "📈 Аналитика", "⚙️ Настройки"
+]
+
+# Выпадающий список вместо кнопок — работает идеально на мобилках
+st.write("### 🏛 LOGISTICS W&TMS")
+selected_label = st.selectbox(
+    "Меню разделов:", 
+    menu_options, 
+    label_visibility="collapsed",
+    key="mobile_menu"
+)
+
+# Очищаем название от эмодзи для логики if/elif
+selected = selected_label.split(" ")[1] if " " in selected_label else selected_label
+
+st.divider()
+
+# --- 3. ТВОЯ ЛОГИКА ОТОБРАЖЕНИЯ ---
+if selected == "Main":
+    st.subheader("🚀 Основной Реестр")
+    render_aggrid_table("main", "Основной Реестр")
+
+elif selected == "Заявки":
+    st.subheader("📝 Реестр Заявок")
+    render_aggrid_table("orders", "Заявки")
+
+elif selected == "Приходы":
+    st.subheader("🚛 Поступления")
+    render_aggrid_table("arrivals", "Приходы")
+
+elif selected == "Брак":
+    st.subheader("🗑️ Журнал Брака")
+    render_aggrid_table("defects", "Журнал Брака")
+
+elif selected == "Дополнения":
+    st.subheader("➕ Дополнения")
+    render_aggrid_table("extras", "Дополнения")
+
+elif selected == "База": # Если в списке "📦 База Данных"
+    st.subheader("📦 Управление Базой")
+    # Твой код базы данных (поиск + карточки)
+
+elif selected == "Карта":
+    st.subheader("🗺️ Топология Склада")
+    show_map()
+
+elif selected == "Аналитика":
+    st.subheader("📈 Отчеты")
+    # Твой код аналитики
+
+elif selected == "Настройки":
+    st.subheader("⚙️ Конфигурация")
+    # Твой код настроек
+
 
 
 
