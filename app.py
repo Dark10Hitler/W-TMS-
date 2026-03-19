@@ -1959,22 +1959,23 @@ elif selected == "Настройки":
     tab_team = tabs[1]
     tab_system = tabs[2]
 
+    # ==========================================
+    # ТАБ 1: СКЛАД И ТОПОЛОГИЯ (СВЯЗЬ С БД)
+    # ==========================================
     with tab_topology:
         st.subheader("📍 Интерактивная карта складов")
         
         col_map, col_stats = st.columns([2, 1])
         
         with col_map:
-            # 1. Выбор склада
             wh_list = list(WAREHOUSE_MAP.keys())
             wh_to_show = st.selectbox("Выберите склад для визуализации", wh_list, key="wh_settings_select")
             
             try:
-                # 2. Получаем данные из GLOBAL_INVENTORY
-                # Берем только нужные поля: имя товара и ячейку
+                # 1. Запрос из актуальной базы global_inventory
                 raw_inv = supabase.table("global_inventory").select("name, cell").eq("warehouse", wh_to_show).execute()
                 
-                # Группируем товары по ячейкам: { 'A-01': ['Товар 1', 'Товар 2'], 'B-05': [...] }
+                # 2. Группировка товаров по ячейкам
                 cell_content = {}
                 for row in raw_inv.data:
                     c_id = str(row['cell']).strip()
@@ -1983,16 +1984,14 @@ elif selected == "Настройки":
                         cell_content[c_id] = []
                     cell_content[c_id].append(p_name)
                 
-                # 3. Генерируем фигуру Plotly
+                # 3. Отрисовка карты
                 fig = get_warehouse_figure(wh_to_show)
                 
-                # 4. Обновляем Hover-текст для каждой ячейки на карте
                 for trace in fig.data:
                     cell_name = str(trace.name).strip()
                     products = cell_content.get(cell_name, [])
                     
                     if products:
-                        # Формируем список (максимум 10 позиций для красоты)
                         display_limit = 10
                         p_list_str = "<br>• ".join(products[:display_limit])
                         if len(products) > display_limit:
@@ -2008,7 +2007,6 @@ elif selected == "Настройки":
                     
                     trace.hovertemplate = hover_html + "<extra></extra>"
                 
-                # Отрисовка
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
                 
             except Exception as e:
@@ -2016,107 +2014,143 @@ elif selected == "Настройки":
 
         with col_stats:
             st.info("📊 **Статистика склада**")
-            
             try:
-                # Безопасный вызов функции получения всех ячеек
-                # Если get_actual_cells не определен выше, подставь его импорт в начало файла!
+                # Безопасный расчет статистики (защита от NameError)
                 all_possible_cells = get_actual_cells(wh_to_show)
                 total_count = len(all_possible_cells)
                 occupied_count = len(cell_content.keys())
                 free_count = total_count - occupied_count
                 
+                # Защита от деления на ноль
+                percent_occ = (occupied_count / total_count * 100) if total_count > 0 else 0
+                
                 st.metric("Всего ячеек", total_count)
-                st.metric("Занято", occupied_count, delta=f"{occupied_count/total_count:.1%}", delta_color="inverse")
+                st.metric("Занято", occupied_count, delta=f"{percent_occ:.1f}%", delta_color="inverse")
                 st.metric("Свободно", free_count)
                 
                 st.divider()
-                st.write("**Последние операции:**")
-                st.caption("Синхронизация с `global_inventory` активна.")
+                st.write("**Статус базы:**")
+                st.caption("🟢 Синхронизация с `global_inventory` активна.")
                 
-            except NameError:
-                st.warning("Ошибка: Функция get_actual_cells не найдена. Проверьте импорты.")
             except Exception as e:
-                st.write(f"Нет данных по статистике: {e}")
+                st.warning(f"Невозможно рассчитать статистику: проверьте импорт `get_actual_cells`. Подробности: {e}")
 
+    # ==========================================
+    # ТАБ 2: КОМАНДА
+    # ==========================================
     with tab_team:
-        st.write("### Управление доступом")
-        st.info("Раздел в разработке. Здесь будет управление Telegram ID сотрудников.")
-
-    with tab_system:
-        st.write("### Сервис")
-        if st.button("🧹 Очистить кэш картинок"):
-            st.cache_data.clear()
-            st.success("Кэш очищен")
-
-    # --- ТАБ 2: КОМАНДА (без изменений) ---
-    with tab2:
         st.subheader("👤 Управление персоналом")
-        with st.expander("➕ Зарегистрировать нового сотрудника"):
+        with st.expander("➕ Зарегистрировать нового сотрудника", expanded=True):
             with st.form("user_add_form"):
-                new_email, new_name = st.text_input("Email"), st.text_input("ФИО")
-                new_role = st.selectbox("Доступ", ["Кладовщик", "Администратор", "Водитель"])
-                if st.form_submit_button("Сохранить"):
+                new_email = st.text_input("Email сотрудника")
+                new_name = st.text_input("ФИО")
+                new_role = st.selectbox("Уровень доступа", ["Кладовщик", "Администратор", "Водитель"])
+                
+                if st.form_submit_button("💾 Сохранить в базу", use_container_width=True):
                     if new_email and new_name:
-                        supabase.table("profiles").insert({"email": new_email, "full_name": new_name, "role": new_role}).execute()
-                        st.success("Добавлен"); st.rerun()
+                        try:
+                            supabase.table("profiles").insert({"email": new_email, "full_name": new_name, "role": new_role}).execute()
+                            st.success(f"Сотрудник {new_name} успешно добавлен!")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Ошибка БД: {e}")
+                    else:
+                        st.warning("Пожалуйста, заполните Email и ФИО.")
 
-    # --- ТАБ 4: ОБСЛУЖИВАНИЕ (ИСПРАВЛЕННЫЙ БЛОК ОЧИСТКИ) ---
-    with tab4:
+    # ==========================================
+    # ТАБ 3: ОБСЛУЖИВАНИЕ (ПРО-ВЕРСИЯ)
+    # ==========================================
+    with tab_system:
         st.subheader("🛠️ Сервисные инструменты")
         c1, c2, c3 = st.columns(3)
         
+        # --- МОДАЛЬНОЕ ОКНО ДЛЯ ЭКСПОРТА ---
+        @st.dialog("📊 Экспорт данных в Excel")
+        def export_modal():
+            st.write("Выберите таблицы для выгрузки:")
+            # Добавлена новая таблица global_inventory!
+            available_tables = ["global_inventory", "orders", "arrivals", "defects", "inventory", "profiles"]
+            selected_tables = st.multiselect("Таблицы", available_tables, default=["global_inventory"])
+            
+            if st.button("🚀 Сформировать XLSX", type="primary", use_container_width=True):
+                import pandas as pd
+                import io
+                with st.spinner("Сбор данных..."):
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        for t in selected_tables:
+                            try:
+                                data = supabase.table(t).select("*").execute().data
+                                if data:
+                                    # Имя листа в Excel не может быть длиннее 31 символа
+                                    pd.DataFrame(data).to_excel(writer, sheet_name=t[:31], index=False)
+                            except Exception as e:
+                                st.error(f"Не удалось выгрузить {t}: {e}")
+                    
+                    st.download_button(
+                        label="⬇️ СКАЧАТЬ ОТЧЕТ", 
+                        data=output.getvalue(), 
+                        file_name=f"Warehouse_Report_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+        
+        # Кнопки управления
         with c1:
             st.markdown("### 📦 Экспорт")
-            if st.button("📊 Сформировать отчет XLSX"):
-                import io
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    for t in ["orders", "arrivals", "defects", "inventory"]:
-                        data = supabase.table(t).select("*").execute().data
-                        if data: pd.DataFrame(data).to_excel(writer, sheet_name=t, index=False)
-                st.download_button(label="⬇️ Скачать", data=output.getvalue(), file_name="Report.xlsx")
+            if st.button("📊 Панель выгрузки (Excel)", use_container_width=True):
+                export_modal()
 
         with c2:
             st.markdown("### ⚠️ Оптимизация")
-            if st.button("🔥 Сбросить кеш"):
+            if st.button("🔥 Сбросить кеш системы", use_container_width=True):
                 st.cache_data.clear()
                 st.cache_resource.clear()
-                st.session_state.clear()
+                if 'confirm_delete_all' in st.session_state:
+                    del st.session_state['confirm_delete_all']
                 st.toast("Кеш системы полностью очищен!")
-                time.sleep(1); st.rerun()
+                time.sleep(1)
+                st.rerun()
                 
         with c3:
             st.markdown("### 🔴 Опасная зона")
-            if st.button("🧨 ОЧИСТИТЬ ВСЕ ДАННЫЕ", type="secondary"):
+            if st.button("🧨 ОЧИСТИТЬ ВСЕ ДАННЫЕ", type="secondary", use_container_width=True):
                 st.session_state.confirm_delete_all = True
 
-            if st.session_state.get('confirm_delete_all'):
-                st.error("### ❗ ВНИМАНИЕ: ПОЛНОЕ УДАЛЕНИЕ")
-                st.write("Это удалит данные из ВСЕХ таблиц: заказы, приходы, брак, устройства, водители и др.")
-                
-                c_yes, c_no = st.columns(2)
-                
-                if c_yes.button("ДА, УДАЛИТЬ АБСОЛЮТНО ВСЁ", type="primary", use_container_width=True):
-                    try:
-                        # ПОЛНЫЙ список ваших таблиц в правильном порядке удаления
-                        tables_to_clean = [
-                            "inventory",         # Удаляем остатки
-                            "defects",           # Удаляем брак
-                            "positions",         # Удаляем позиции в документах
-                            "arrivals",          # Удаляем приходы
-                            "orders",            # Удаляем заказы
-                            "devices",           # Удаляем устройства
-                            "drivers",           # Удаляем водителей
-                            "vehicles",          # Удаляем транспорт
-                            "extras",            # Удаляем доп. данные
-                            "product_locations", # Удаляем адреса товаров
-                            "manager_profile"    # Удаляем профили менеджеров
-                        ]
-                        
-                        total_deleted = 0
-                        progress = st.progress(0)
-                        
-                        for idx, table in enumerate(tables_to_clean):
+        # Логика полного удаления (с защитой и прогресс-баром)
+        if st.session_state.get('confirm_delete_all'):
+            st.error("### ❗ ВНИМАНИЕ: БЕЗВОЗВРАТНОЕ УДАЛЕНИЕ")
+            st.write("Это действие удалит данные из **ВСЕХ** таблиц. Отменить это будет невозможно!")
+            
+            c_yes, c_no = st.columns(2)
+            
+            if c_yes.button("☠️ ДА, УДАЛИТЬ АБСОЛЮТНО ВСЁ", type="primary", use_container_width=True):
+                try:
+                    # ПОЛНЫЙ список таблиц (global_inventory ДОБАВЛЕН!)
+                    tables_to_clean = [
+                        "global_inventory",  # Наша главная база!
+                        "inventory",         
+                        "defects",           
+                        "positions",         
+                        "arrivals",          
+                        "orders",            
+                        "devices",           
+                        "drivers",           
+                        "vehicles",          
+                        "extras",            
+                        "product_locations", 
+                        "manager_profile",
+                        "profiles"
+                    ]
+                    
+                    total_deleted = 0
+                    progress_text = "Идет очистка базы данных. Пожалуйста, подождите..."
+                    my_bar = st.progress(0, text=progress_text)
+                    
+                    for idx, table in enumerate(tables_to_clean):
+                        my_bar.progress((idx) / len(tables_to_clean), text=f"Очистка: {table}...")
+                        try:
                             # 1. Получаем все ID
                             res = supabase.table(table).select("id").execute()
                             if res.data:
@@ -2126,22 +2160,27 @@ elif selected == "Настройки":
                                     chunk = ids[i:i + 500]
                                     supabase.table(table).delete().in_("id", chunk).execute()
                                 total_deleted += len(ids)
-                            progress.progress((idx + 1) / len(tables_to_clean))
-                        
-                        # КРИТИЧЕСКИ ВАЖНО: Очищаем кэш после удаления
-                        st.cache_data.clear()
-                        st.cache_resource.clear()
-                        
-                        st.success(f"💥 БАЗА ПОЛНОСТЬЮ ОЧИЩЕНА! Удалено строк: {total_deleted}")
-                        st.session_state.confirm_delete_all = False
-                        time.sleep(2); st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"❌ Ошибка при очистке: {str(e)}")
-                
-                if c_no.button("ОТМЕНА", use_container_width=True):
+                        except Exception:
+                            # Если таблицы нет, просто пропускаем
+                            pass
+                            
+                    my_bar.progress(1.0, text="Удаление завершено!")
+                    
+                    # КРИТИЧЕСКИ ВАЖНО: Очищаем кэш после удаления
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
                     st.session_state.confirm_delete_all = False
+                    
+                    st.success(f"💥 БАЗА ПОЛНОСТЬЮ ОЧИЩЕНА! Удалено строк: {total_deleted}")
+                    time.sleep(2)
                     st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Ошибка при очистке: {str(e)}")
+            
+            if c_no.button("ОТМЕНА", use_container_width=True):
+                st.session_state.confirm_delete_all = False
+                st.rerun()
                 
 # --- 1. УМНАЯ ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
 TABLES_TO_LOAD = {
