@@ -2257,13 +2257,3 @@ elif st.session_state.get("active_modal"):
         create_driver_modal()
     elif m_type == "vehicle_new": 
         create_vehicle_modal()
-
-
-
-
-
-
-
-
-
-
