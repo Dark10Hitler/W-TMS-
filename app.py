@@ -45,12 +45,7 @@ from database import insert_data # Твоя функция Supabase
 import qrcode
 from io import BytesIO
 
-# --- 1. САМЫЙ ВЕРХ ФАЙЛА (СТРОГО ОДИН РАЗ) ---
-st.set_page_config(
-    page_title="LOGISTICS W&TMS", 
-    layout="wide", 
-    initial_sidebar_state="expanded" 
-)
+st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
 
 # --- 2. ЛОГИКА QR-ВИТРИНЫ ---
 query_params = st.query_params
