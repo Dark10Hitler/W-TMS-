@@ -44,15 +44,13 @@ from database import insert_data # Твоя функция Supabase
 import qrcode
 from io import BytesIO
 
-# --- РЕЖИМ ВИТРИНЫ (Для всех, кто сканирует QR) ---
-# Важно: здесь больше нет st.set_page_config, он должен быть только один раз в самом верху файла!
+# --- РЕЖИМ ВИТРИНЫ ---
 if "shelf" in st.query_params:
     shelf_id = st.query_params["shelf"]
     
-    # CSS: Скрываем сайдбар ТОЛЬКО для витрины
+    # Оставляем только оформление карточек, НЕ ТРОГАЕМ SIDEBAR
     st.markdown("""
         <style>
-            [data-testid="stSidebar"] {display: none !important;}
             .product-card {
                 background: #f9f9f9;
                 padding: 15px;
@@ -60,37 +58,13 @@ if "shelf" in st.query_params:
                 margin-bottom: 10px;
                 border: 1px solid #eee;
             }
+            /* Убеждаемся, что хедер не мешает, но кнопку меню не трогаем */
+            header { visibility: visible !important; } 
         </style>
     """, unsafe_allow_html=True)
     
     st.markdown(f"<h1 style='text-align: center;'>📍 Стеллаж: {shelf_id}</h1>", unsafe_allow_html=True)
     st.divider()
-
-    st.write("### 📦 Товары в этой ячейке:")
-    
-    try:
-        # Получаем товары именно для этой полки
-        items = supabase.table("global_inventory").select("*").eq("cell", shelf_id).execute().data
-    except Exception as e:
-        st.error("Ошибка подключения к базе данных")
-        items = []
-
-    if not items:
-        st.warning("В данной ячейке товаров не обнаружено.")
-    else:
-        for item in items:
-            with st.container():
-                c1, c2 = st.columns([1, 2])
-                with c1:
-                    pic = item['image_url'] if item['image_url'] else "https://via.placeholder.com/150"
-                    st.image(pic, use_container_width=True)
-                with c2:
-                    st.subheader(item['name'])
-                    st.info(f"Склад: {item['warehouse']}")
-                    st.caption(f"📅 Дата обновления: {item['last_updated'][:10]}")
-                st.divider()
-    
-    st.stop() # Прерываем код, чтобы админка не подгрузилась ниже
 
 
 
