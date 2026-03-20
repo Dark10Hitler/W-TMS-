@@ -46,16 +46,14 @@ from io import BytesIO
 
 
 # --- РЕЖИМ ВИТРИНЫ (Для всех, кто сканирует QR) ---
+# Важно: здесь больше нет st.set_page_config, он должен быть только один раз в самом верху файла!
 if "shelf" in st.query_params:
     shelf_id = st.query_params["shelf"]
-    st.set_page_config(page_title=f"Ячейка {shelf_id}", layout="wide", initial_sidebar_state="collapsed")
     
-    # CSS: Максимально чистый интерфейс
+    # CSS: Скрываем сайдбар ТОЛЬКО для витрины
     st.markdown("""
         <style>
-            #MainMenu {visibility: hidden;} 
-            [data-testid="stSidebar"] {display: none;}
-            footer {visibility: hidden;}
+            [data-testid="stSidebar"] {display: none !important;}
             .product-card {
                 background: #f9f9f9;
                 padding: 15px;
@@ -93,7 +91,7 @@ if "shelf" in st.query_params:
                     st.caption(f"📅 Дата обновления: {item['last_updated'][:10]}")
                 st.divider()
     
-    st.stop() # Важно: прерываем код, чтобы админка не подгрузилась ниже
+    st.stop() # Прерываем код, чтобы админка не подгрузилась ниже
 
 
 
