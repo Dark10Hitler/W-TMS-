@@ -59,7 +59,7 @@ if "shelf" in st.query_params:
                 border: 1px solid #eee;
             }
             /* Убеждаемся, что хедер не мешает, но кнопку меню не трогаем */
-            header { visibility: visible !important; } 
+            header { opacity: 0.1; } 
         </style>
     """, unsafe_allow_html=True)
     
