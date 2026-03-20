@@ -44,6 +44,115 @@ from database import insert_data # Твоя функция Supabase
 import qrcode
 from io import BytesIO
 
+st.set_page_config(layout="wide", page_title="W&TMS", page_icon="🏛️", initial_sidebar_state="expanded")
+
+st.markdown("""
+<style>
+    /* 1. ПОЛНОЕ УДАЛЕНИЕ ВЕРХНЕЙ ПОЛОСЫ И ДЕКОРАЦИЙ */
+    header { visibility: hidden; height: 0px; }
+    [data-testid="stHeader"] { display: none; }
+    [data-testid="stDecoration"] { display: none; } /* Тонкая цветная полоска сверху */
+    
+    /* 2. ШРИФТЫ И ОСНОВНОЙ ФОН */
+    @import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap');
+    
+    html, body, [data-testid="stAppViewContainer"] {
+        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
+        background-color: #F3F3F3;
+        color: #1B1B1B;
+    }
+
+    /* Адаптивный контейнер: убираем лишние отступы сверху */
+    .block-container { 
+        padding-top: 1rem !important; 
+        padding-bottom: 1rem !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+        max-width: 100%; /* Растягиваем на весь экран */
+    }
+
+    /* 3. САЙДБАР (Стиль Windows 11) */
+    [data-testid="stSidebar"] {
+        background-color: #FFFFFF !important;
+        border-right: 1px solid #E5E5E5;
+    }
+
+    /* 4. АДАПТИВНЫЕ КАРТОЧКИ МЕТРИК */
+    div[data-testid="stMetric"] {
+        background-color: #FFFFFF;
+        border: 1px solid #E5E5E5;
+        border-radius: 8px;
+        padding: 1.5% 2% !important; /* Процентные отступы для адаптивности */
+        box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+        transition: all 0.2s ease-in-out;
+    }
+
+    div[data-testid="stMetric"]:hover {
+        box-shadow: 0 6px 15px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+        border-color: #0067C0;
+    }
+
+    /* Настройка размеров текста метрик, чтобы не "ломались" на малых экранах */
+    div[data-testid="stMetricLabel"] { 
+        font-size: clamp(0.8rem, 1vw, 1rem) !important; 
+        color: #5F6368 !important; 
+    }
+    div[data-testid="stMetricValue"] { 
+        font-size: clamp(1.2rem, 2vw, 2.2rem) !important; 
+        font-weight: 700 !important; 
+    }
+
+    /* 5. КНОПКИ (Умный размер) */
+    .stButton>button {
+        width: 100%; /* На мобильных кнопка будет во всю ширину */
+        max-width: fit-content; /* На десктопе - по размеру текста */
+        min-width: 120px;
+        border-radius: 6px;
+        padding: 0.6rem 1.2rem;
+        font-weight: 600;
+        background-color: #FFFFFF;
+        border: 1px solid #D1D1D1;
+        transition: all 0.2s;
+    }
+
+    .stButton>button[kind="primary"] {
+        background-color: #0067C0;
+        color: white;
+        border: none;
+    }
+
+    /* 6. АДАПТИВНОСТЬ ДЛЯ ТАБЛИЦ И ИНПУТОВ */
+    .stTextInput input, .stSelectbox div {
+        border-radius: 6px !important;
+    }
+
+    /* 7. МЕДИА-ЗАПРОСЫ (Для разных экранов) */
+    @media (max-width: 768px) {
+        .block-container {
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }
+        /* Увеличиваем кликабельные зоны на телефонах */
+        .stButton>button {
+            height: 48px;
+        }
+    }
+
+    /* 8. ТАБЛИЦЫ AgGrid (Windows Style) */
+    .ag-theme-alpine {
+        --ag-border-radius: 8px;
+        --ag-header-height: 40px;
+        --ag-row-height: 45px;
+        --ag-font-size: 14px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }
+
+    /* Скроллбары */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { background: #C1C1C1; border-radius: 10px; }
+</style>
+""", unsafe_allow_html=True)
 
 # --- РЕЖИМ ВИТРИНЫ (Для всех, кто сканирует QR) ---
 # Важно: здесь больше нет st.set_page_config, он должен быть только один раз в самом верху файла!
@@ -564,115 +673,7 @@ def save_new_location(product_name, location):
     except Exception as e:
         st.error(f"Ошибка сохранения топологии: {e}")
 
-st.set_page_config(layout="wide", page_title="W&TMS", page_icon="🏛️", initial_sidebar_state="expanded")
 
-st.markdown("""
-<style>
-    /* 1. ПОЛНОЕ УДАЛЕНИЕ ВЕРХНЕЙ ПОЛОСЫ И ДЕКОРАЦИЙ */
-    header { visibility: hidden; height: 0px; }
-    [data-testid="stHeader"] { display: none; }
-    [data-testid="stDecoration"] { display: none; } /* Тонкая цветная полоска сверху */
-    
-    /* 2. ШРИФТЫ И ОСНОВНОЙ ФОН */
-    @import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap');
-    
-    html, body, [data-testid="stAppViewContainer"] {
-        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
-        background-color: #F3F3F3;
-        color: #1B1B1B;
-    }
-
-    /* Адаптивный контейнер: убираем лишние отступы сверху */
-    .block-container { 
-        padding-top: 1rem !important; 
-        padding-bottom: 1rem !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
-        max-width: 100%; /* Растягиваем на весь экран */
-    }
-
-    /* 3. САЙДБАР (Стиль Windows 11) */
-    [data-testid="stSidebar"] {
-        background-color: #FFFFFF !important;
-        border-right: 1px solid #E5E5E5;
-    }
-
-    /* 4. АДАПТИВНЫЕ КАРТОЧКИ МЕТРИК */
-    div[data-testid="stMetric"] {
-        background-color: #FFFFFF;
-        border: 1px solid #E5E5E5;
-        border-radius: 8px;
-        padding: 1.5% 2% !important; /* Процентные отступы для адаптивности */
-        box-shadow: 0 2px 4px rgba(0,0,0,0.04);
-        transition: all 0.2s ease-in-out;
-    }
-
-    div[data-testid="stMetric"]:hover {
-        box-shadow: 0 6px 15px rgba(0,0,0,0.1);
-        transform: translateY(-2px);
-        border-color: #0067C0;
-    }
-
-    /* Настройка размеров текста метрик, чтобы не "ломались" на малых экранах */
-    div[data-testid="stMetricLabel"] { 
-        font-size: clamp(0.8rem, 1vw, 1rem) !important; 
-        color: #5F6368 !important; 
-    }
-    div[data-testid="stMetricValue"] { 
-        font-size: clamp(1.2rem, 2vw, 2.2rem) !important; 
-        font-weight: 700 !important; 
-    }
-
-    /* 5. КНОПКИ (Умный размер) */
-    .stButton>button {
-        width: 100%; /* На мобильных кнопка будет во всю ширину */
-        max-width: fit-content; /* На десктопе - по размеру текста */
-        min-width: 120px;
-        border-radius: 6px;
-        padding: 0.6rem 1.2rem;
-        font-weight: 600;
-        background-color: #FFFFFF;
-        border: 1px solid #D1D1D1;
-        transition: all 0.2s;
-    }
-
-    .stButton>button[kind="primary"] {
-        background-color: #0067C0;
-        color: white;
-        border: none;
-    }
-
-    /* 6. АДАПТИВНОСТЬ ДЛЯ ТАБЛИЦ И ИНПУТОВ */
-    .stTextInput input, .stSelectbox div {
-        border-radius: 6px !important;
-    }
-
-    /* 7. МЕДИА-ЗАПРОСЫ (Для разных экранов) */
-    @media (max-width: 768px) {
-        .block-container {
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
-        }
-        /* Увеличиваем кликабельные зоны на телефонах */
-        .stButton>button {
-            height: 48px;
-        }
-    }
-
-    /* 8. ТАБЛИЦЫ AgGrid (Windows Style) */
-    .ag-theme-alpine {
-        --ag-border-radius: 8px;
-        --ag-header-height: 40px;
-        --ag-row-height: 45px;
-        --ag-font-size: 14px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-    }
-
-    /* Скроллбары */
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-thumb { background: #C1C1C1; border-radius: 10px; }
-</style>
-""", unsafe_allow_html=True)
 
 # 3. Затем системные переменные
 if "items_registry" not in st.session_state:
