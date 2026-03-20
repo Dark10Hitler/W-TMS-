@@ -1405,7 +1405,44 @@ def delete_entry(table_key, entry_id):
             
     except Exception as e:
         st.error(f"❌ Ошибка при удалении из базы данных: {e}")
-        
+
+# --- ИСПРАВЛЕННАЯ ЛОГИКА ПЕРЕД МЕНЮ ---
+
+# 1. Сначала проверяем QR-параметр
+shelf_id = st.query_params.get("shelf")
+
+# 2. Если мы в режиме QR — показываем ТОЛЬКО полку и СТОПАЕМ код
+if shelf_id:
+    st.markdown(f"<h1>📍 Стеллаж: {shelf_id}</h1>", unsafe_allow_html=True)
+    # Твой код отрисовки товаров...
+    
+    if st.button("⬅️ ВЕРНУТЬСЯ"):
+        st.query_params.clear()
+        st.rerun()
+    st.stop() # ЭТО ВАЖНО: дальше код не пойдет, меню не будет
+
+# 3. ЕСЛИ МЫ ТУТ — ЗНАЧИТ МЫ В АДМИНКЕ. Рисуем меню.
+# Убедись, что 'selected' определяется ПЕРЕД тем, как использовать его в if/elif
+with st.sidebar:
+    st.markdown("""
+        <div style='padding: 10px 0px;'>
+            <h2 style='color: #1E1E1E; font-family: "Segoe UI"; font-size: 22px; font-weight: 600;'>
+                📦 LOGISTICS W&TMS
+            </h2>
+        </div>
+    """, unsafe_allow_html=True)
+
+    selected = option_menu(
+        menu_title=None,
+        options=["Main", "База Данных", "Заявки", "Приходы", "Дополнения", "Брак", "Карта", "Аналитика", "Настройки"],
+        icons=["house", "database-fill", "clipboard2-check", "box-arrow-in-down", "plus-circle", "exclamation-octagon", "map", "graph-up-arrow", "gear"],
+        default_index=0,
+        styles={
+            "container": {"padding": "0!important", "background-color": "#FFFFFF"},
+            "nav-link-selected": {"background-color": "#E8F0FE", "color": "#1A73E8", "border-left": "4px solid #1A73E8"}
+        }
+    )
+
 if selected == "Main": render_aggrid_table("main", "Основной Реестр")
 elif selected == "Заявки": render_aggrid_table("orders", "Заявки")
 elif selected == "Приходы": render_aggrid_table("arrivals", "Приходы")
