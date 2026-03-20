@@ -42,51 +42,6 @@ from database import insert_data # Твоя функция Supabase
 import qrcode
 from io import BytesIO
 
-# --- 2. ПРОВЕРКА QR-РЕЖИМА (БЕЗ ОШИБОК) ---
-# Получаем параметры БЕЗ принудительной остановки для админа
-shelf_id = st.query_params.get("shelf")
-
-if shelf_id:
-    # Этот блок сработает ТОЛЬКО если в ссылке есть ?shelf=...
-    st.markdown("""
-        <style>
-            [data-testid="stSidebar"] {display: none !important;}
-        </style>
-    """, unsafe_allow_html=True)
-    
-    st.markdown(f"<h1 style='text-align: center;'>📍 Стеллаж: {shelf_id}</h1>", unsafe_allow_html=True)
-    # ... твой код отрисовки товаров для QR (try/except) ...
-    
-    if st.button("⬅️ ВЕРНУТЬСЯ В АДМИНКУ"):
-        st.query_params.clear()
-        st.rerun()
-        
-    st.stop() # Остановка ТОЛЬКО внутри условия shelf_id
-
-# --- 3. ОТРИСОВКА МЕНЮ (ДЛЯ АДМИНА) ---
-# Если мы здесь, значит shelf_id нет, меню ДОЛЖНО быть видно
-with st.sidebar:
-    st.markdown("""
-        <div style='padding: 10px 0px;'>
-            <h2 style='color: #1E1E1E; font-family: "Segoe UI"; font-size: 22px; font-weight: 600;'>
-                📦 LOGISTICS W&TMS
-            </h2>
-            <p style='color: #666; font-size: 12px; margin-top: -10px;'>Warehouse Management System</p>
-        </div>
-    """, unsafe_allow_html=True)
-
-    selected = option_menu(
-        menu_title=None,
-        options=["Main", "База Данных", "Заявки", "Приходы", "Дополнения", "Брак", "Карта", "Аналитика", "Настройки"],
-        icons=["house", "database-fill", "clipboard2-check", "box-arrow-in-down", "plus-circle", "exclamation-octagon", "map", "graph-up-arrow", "gear"],
-        default_index=0,
-        styles={
-            "container": {"padding": "0!important", "background-color": "#FFFFFF"},
-            "nav-link": {"font-family": "Segoe UI", "font-size": "14px"},
-            "nav-link-selected": {"background-color": "#E8F0FE", "color": "#1A73E8", "border-left": "4px solid #1A73E8"}
-        }
-    )
-    
 def sync_to_inventory(doc_id, items_list, doc_type):
     """
     doc_id: ID документа (например, ORD-101, ARR-202, EXT-303)
