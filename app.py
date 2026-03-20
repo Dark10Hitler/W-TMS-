@@ -22,7 +22,7 @@ from constants import ORDER_COLUMNS, ARRIVAL_COLUMNS, EXTRA_COLUMNS, DEFECT_COLU
 from config import edit_arrival_modal, edit_defect_modal, edit_extra_modal, edit_order_modal
 from config import show_extra_details_modal, show_arrival_details_modal, show_defect_details_modal, show_order_details_modal
 from config import show_arrival_print_modal, show_defect_print_modal, show_extra_print_modal, show_print_modal
-from config_topology import get_warehouse_figure
+from config_topology import get_warehouse_figure,get_actual_cells
 from specific_doc import create_modal, create_extras_modal, create_arrival_modal, create_defect_modal
 import streamlit as st
 import folium
