@@ -15,6 +15,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 import streamlit.components.v1 as components
+from config_topology import get_warehouse_figure, get_actual_cells
 import os
 import plotly.graph_objects as go
 from constants import WAREHOUSE_MAP, TABLE_STRUCT, DRIVER_COLUMNS, VEHICLE_COLUMNS, NOMENCLATURE_COLUMNS
@@ -22,9 +23,7 @@ from constants import ORDER_COLUMNS, ARRIVAL_COLUMNS, EXTRA_COLUMNS, DEFECT_COLU
 from config import edit_arrival_modal, edit_defect_modal, edit_extra_modal, edit_order_modal
 from config import show_extra_details_modal, show_arrival_details_modal, show_defect_details_modal, show_order_details_modal
 from config import show_arrival_print_modal, show_defect_print_modal, show_extra_print_modal, show_print_modal
-from config_topology import get_warehouse_figure
-from specific_doc import create_modal, create_extras_modal, create_arrival_modal, create_defect_modal, create_driver_modal, create_vehicle_modal
-from specific_doc import edit_vehicle_modal, edit_driver_modal
+from specific_doc import create_modal, create_extras_modal, create_arrival_modal, create_defect_modal
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
@@ -35,11 +34,13 @@ from geopy.distance import geodesic
 import json
 from geopy.geocoders import Nominatim # Для получения адреса по координатам
 import math
-from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
-
 import pytz
 from datetime import datetime
+from uploader import upload_to_cloudinary
+from database import insert_data # Твоя функция Supabase
+import qrcode
+from io import BytesIO
 
 def sync_to_inventory(doc_id, items_list, doc_type):
     """
