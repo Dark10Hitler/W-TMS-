@@ -15,7 +15,6 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 import streamlit.components.v1 as components
-from config_topology import get_warehouse_figure, get_actual_cells
 import os
 import plotly.graph_objects as go
 from constants import WAREHOUSE_MAP, TABLE_STRUCT, DRIVER_COLUMNS, VEHICLE_COLUMNS, NOMENCLATURE_COLUMNS
@@ -23,7 +22,9 @@ from constants import ORDER_COLUMNS, ARRIVAL_COLUMNS, EXTRA_COLUMNS, DEFECT_COLU
 from config import edit_arrival_modal, edit_defect_modal, edit_extra_modal, edit_order_modal
 from config import show_extra_details_modal, show_arrival_details_modal, show_defect_details_modal, show_order_details_modal
 from config import show_arrival_print_modal, show_defect_print_modal, show_extra_print_modal, show_print_modal
-from specific_doc import create_modal, create_extras_modal, create_arrival_modal, create_defect_modal
+from config_topology import get_warehouse_figure
+from specific_doc import create_modal, create_extras_modal, create_arrival_modal, create_defect_modal, create_driver_modal, create_vehicle_modal
+from specific_doc import edit_vehicle_modal, edit_driver_modal
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
@@ -34,13 +35,11 @@ from geopy.distance import geodesic
 import json
 from geopy.geocoders import Nominatim # Для получения адреса по координатам
 import math
+from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
+
 import pytz
 from datetime import datetime
-from uploader import upload_to_cloudinary
-from database import insert_data # Твоя функция Supabase
-import qrcode
-from io import BytesIO
 
 def sync_to_inventory(doc_id, items_list, doc_type):
     """
@@ -312,58 +311,37 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
         return False, None
 
 
-import requests
-import streamlit as st
-
-# 1. СЮДА ВСТАВЛЯЕШЬ СВОЙ АКТУАЛЬНЫЙ АДРЕС (NGROK ИЛИ CLOUDFLARE)
-TRACCAR_URL = "https://posttarsal-tanisha-nondisastrous.ngrok-free.dev" 
+# ИСПОЛЬЗУЕМ ВНЕШНИЙ URL ТУННЕЛЯ, чтобы облако видело твой ПК
+TRACCAR_URL = "https://bronchiolar-dichromatic-abdul.ngrok-free.dev"
 TRACCAR_AUTH = ("denis.masliuc.speak23dev@gmail.com", "qwert12345")
 
 @st.cache_data(ttl=10)
 def get_detailed_traccar_data(endpoint="devices", params=None):
-    # Чистим URL от лишних слэшей в конце и добавляем /api
-    api_base = f"{TRACCAR_URL.strip().rstrip('/')}/api"
+    api_base = f"{TRACCAR_URL.rstrip('/')}/api"
+    headers = {'ngrok-skip-browser-warning': 'true'}
     
-    # Заголовок, чтобы NGROK не показывал страницу-предупреждение
-    headers = {
-        'ngrok-skip-browser-warning': 'true',
-        'Accept': 'application/json'
-    }
-    
-    # --- СЦЕНАРИЙ 1: ЗАПРОС УСТРОЙСТВ И ПОЗИЦИЙ ---
+    # Если запрашиваем устройства (стандартный вызов без аргументов)
     if endpoint == "devices":
         try:
-            # Делаем два параллельных запроса
             dev_resp = requests.get(f"{api_base}/devices", auth=TRACCAR_AUTH, headers=headers, timeout=10)
             pos_resp = requests.get(f"{api_base}/positions", auth=TRACCAR_AUTH, headers=headers, timeout=10)
             
             if dev_resp.status_code == 200 and pos_resp.status_code == 200:
-                devices_list = dev_resp.json()
-                positions_list = pos_resp.json()
-                
-                # Превращаем список в словарь {id: данные}, чтобы удобнее искать
-                devices_dict = {d['id']: d for d in devices_list}
-                return devices_dict, positions_list
-            
-            else:
-                st.sidebar.warning(f"⚠️ Статус API: Dev({dev_resp.status_code}) Pos({pos_resp.status_code})")
-                return {}, []
-                
+                devices = {d['id']: d for d in dev_resp.json()}
+                return devices, pos_resp.json()
+            return {}, []
         except Exception as e:
             st.sidebar.error(f"📡 Ошибка связи (devices): {e}")
             return {}, []
     
-    # --- СЦЕНАРИЙ 2: ЗАПРОС ОТЧЕТОВ (С ПАРАМЕТРАМИ) ---
+    # Если запрашиваем отчеты (вызов с параметрами)
     else:
         try:
             resp = requests.get(f"{api_base}/{endpoint}", auth=TRACCAR_AUTH, headers=headers, params=params, timeout=15)
             if resp.status_code == 200:
                 return resp.json()
-            elif resp.status_code == 401:
-                st.error("🔒 Ошибка авторизации: проверь логин/пароль Traccar")
-                return []
             else:
-                st.error(f"❌ Ошибка API ({endpoint}): {resp.status_code}")
+                st.error(f"Ошибка API: {resp.status_code}")
                 return []
         except Exception as e:
             st.error(f"📡 Ошибка связи (reports): {e}")
@@ -635,7 +613,7 @@ MIN_LOAD_FACTOR = 0.3
 
 # 2. ИНИЦИАЛИЗАЦИЯ (Один цикл вместо трех)
 if "db_initialized" not in st.session_state:
-    with st.spinner("🚀 Загрузка системы..."):
+    with st.spinner("🚀 Загрузка системы IMPERIA..."):
         st.session_state.items_registry = {}
         st.session_state.active_modal = None
         
@@ -1091,7 +1069,7 @@ def show_map():
 
     folium.Marker(
         base_coords, 
-        popup="🏢 <b>LOGISTICS WAREHOUSE</b>",
+        popup="🏢 <b>IMPERIA LOGISTICS HQ</b>",
         icon=folium.Icon(color="darkred", icon="home", prefix="fa")
     ).add_to(m)
 
@@ -1371,6 +1349,55 @@ def show_profile():
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
             
+with st.sidebar:
+    st.markdown("""
+        <div style='padding: 10px 0px;'>
+            <h2 style='color: #1E1E1E; font-family: "Segoe UI", Tahoma, Geneva, sans-serif; font-size: 22px; font-weight: 600;'>
+                📦 LOGISTICS W&TMS
+            </h2>
+            <p style='color: #666; font-size: 12px; margin-top: -10px;'>Warehouse Management System</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    selected = option_menu(
+        menu_title=None, # Убираем заголовок меню для минимализма
+        options=[
+            "Main", "База Данных", "Заявки", "Приходы", 
+            "Дополнения", "Брак", "Карта", "Аналитика", "Настройки"
+        ],
+        icons=[
+            "house", "database-fill", "clipboard2-check", "box-arrow-in-down", 
+            "plus-circle", "exclamation-octagon", "map", "graph-up-arrow", "gear"
+        ],
+        menu_icon="cast",
+        default_index=0,
+        styles={
+            "container": {
+                "padding": "0!important", 
+                "background-color": "#FFFFFF", # Чистый белый фон
+                "border-radius": "0px"
+            },
+            "icon": {
+                "color": "#5F6368", # Спокойный серый для иконок
+                "font-size": "18px"
+            },
+            "nav-link": {
+                "font-size": "14px", 
+                "text-align": "left", 
+                "margin": "0px", 
+                "color": "#3C4043", # Цвет текста Windows Light
+                "font-family": "Segoe UI",
+                "--hover-color": "#F1F3F4" # Светло-серый при наведении
+            },
+            "nav-link-selected": {
+                "background-color": "#E8F0FE", # Нежно-голубой фон (как в Windows/Google)
+                "color": "#1A73E8", # Акцентный синий цвет текста
+                "font-weight": "600",
+                "border-left": "4px solid #1A73E8" # Полоска слева для акцента
+            },
+        }
+    )
+    
 def delete_entry(table_key, entry_id):
     """
     Удаляет запись из Supabase и синхронизирует локальное состояние.
@@ -1405,51 +1432,14 @@ def delete_entry(table_key, entry_id):
             
     except Exception as e:
         st.error(f"❌ Ошибка при удалении из базы данных: {e}")
-
-# --- ИСПРАВЛЕННАЯ ЛОГИКА ПЕРЕД МЕНЮ ---
-
-# 1. Сначала проверяем QR-параметр
-shelf_id = st.query_params.get("shelf")
-
-# 2. Если мы в режиме QR — показываем ТОЛЬКО полку и СТОПАЕМ код
-if shelf_id:
-    st.markdown(f"<h1>📍 Стеллаж: {shelf_id}</h1>", unsafe_allow_html=True)
-    # Твой код отрисовки товаров...
-    
-    if st.button("⬅️ ВЕРНУТЬСЯ"):
-        st.query_params.clear()
-        st.rerun()
-    st.stop() # ЭТО ВАЖНО: дальше код не пойдет, меню не будет
-
-# 3. ЕСЛИ МЫ ТУТ — ЗНАЧИТ МЫ В АДМИНКЕ. Рисуем меню.
-# Убедись, что 'selected' определяется ПЕРЕД тем, как использовать его в if/elif
-with st.sidebar:
-    st.markdown("""
-        <div style='padding: 10px 0px;'>
-            <h2 style='color: #1E1E1E; font-family: "Segoe UI"; font-size: 22px; font-weight: 600;'>
-                📦 LOGISTICS W&TMS
-            </h2>
-        </div>
-    """, unsafe_allow_html=True)
-
-    selected = option_menu(
-        menu_title=None,
-        options=["Main", "База Данных", "Заявки", "Приходы", "Дополнения", "Брак", "Карта", "Аналитика", "Настройки"],
-        icons=["house", "database-fill", "clipboard2-check", "box-arrow-in-down", "plus-circle", "exclamation-octagon", "map", "graph-up-arrow", "gear"],
-        default_index=0,
-        styles={
-            "container": {"padding": "0!important", "background-color": "#FFFFFF"},
-            "nav-link-selected": {"background-color": "#E8F0FE", "color": "#1A73E8", "border-left": "4px solid #1A73E8"}
-        }
-    )
-
+        
 if selected == "Main": render_aggrid_table("main", "Основной Реестр")
 elif selected == "Заявки": render_aggrid_table("orders", "Заявки")
 elif selected == "Приходы": render_aggrid_table("arrivals", "Приходы")
 elif selected == "Брак": render_aggrid_table("defects", "Журнал Брака")
 elif selected == "Дополнения": render_aggrid_table("extras", "Дополнения")
 elif selected == "Аналитика":
-    st.title("Транспортный анализ")
+    st.title("🛡️ Logistics Intelligence & Tech Audit")
     
     # --- 1. ФУНКЦИЯ СИНХРОНИЗАЦИИ (Автоматический период: последние 24 часа) ---
     def get_traccar_reports_sync(v_id):
@@ -1703,340 +1693,280 @@ elif selected == "Аналитика":
     else:
         st.info("🔍 Данные аудита еще не сформированы. Запустите проверку.")
             
-# --- 2. АДМИН-ПАНЕЛЬ (БАЗА ДАННЫХ) ---
-elif selected == "База Данных":
-    BASE_URL = "https://4nrmgw3mde695us2cdnt9q.streamlit.app/"
-
-    st.markdown("## 🛡️ Управление базой и топологией")
-
-    # 1. Сначала рисуем поле поиска
-    search_query = st.text_input(
-        "🔍 Быстрый поиск по названию", 
-        placeholder="Введите название и нажмите Enter...", 
-        key="search_input"
-    ).strip().lower()
-
-    # 2. Определяем функции-диалоги (они должны быть объявлены до вызова)
-    @st.dialog("🖨 Подготовка ячейки")
-    def qr_generator():
-        st.write("### Выбор адреса")
-        wh = st.selectbox("Склад", list(WAREHOUSE_MAP.keys()), key="qr_wh")
-        cell = st.selectbox("Полка", get_actual_cells(wh), key="qr_cell")
-        
-        st.write("---")
-        fig_qr = get_warehouse_figure(wh, highlighted_cell=cell)
-        fig_qr.add_annotation(
-            x=cell, y=0.5, text="ВЫБРАНО",
-            showarrow=True, arrowhead=2, arrowcolor="red", ax=0, ay=-40,
-            bgcolor="black", font=dict(color="white")
-        )
-        fig_qr.update_layout(height=300, margin=dict(l=0, r=0, t=0, b=0))
-        st.plotly_chart(fig_qr, use_container_width=True)
-        
-        qr_link = f"{BASE_URL}?shelf={cell}"
-        st.code(qr_link, language="text")
-        st.caption("☝️ Скопируйте ссылку для быстрого перехода с компьютера")
-
-        import qrcode
-        from io import BytesIO
-        qr_img = qrcode.make(qr_link)
-        buf = BytesIO()
-        qr_img.save(buf, format="PNG")
-        st.image(buf.getvalue(), width=200, caption=f"QR-код для {cell}")
-        st.download_button("💾 СКАЧАТЬ QR", buf.getvalue(), f"QR_{cell}.png", use_container_width=True, type="primary")
-
-    @st.dialog("📦 Изменение данных товара")
-    def product_editor(item=None):
-        name = st.text_input("Название", value=item['name'] if item else "")
-        wh = st.selectbox("Склад", list(WAREHOUSE_MAP.keys()), 
-                          index=list(WAREHOUSE_MAP.keys()).index(item['warehouse']) if item else 0)
-        cell = st.selectbox("Ячейка", get_actual_cells(wh), 
-                           index=get_actual_cells(wh).index(item['cell']) if item else 0)
-        
-        new_img = st.file_uploader("📸 Сменить фото", type=['jpg', 'png'])
-        
-        st.write("Место на карте:")
-        fig_edit = get_warehouse_figure(wh, highlighted_cell=cell)
-        fig_edit.update_layout(height=200, margin=dict(l=0, r=0, t=0, b=0))
-        st.plotly_chart(fig_edit, use_container_width=True)
-
-        if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
-            with st.spinner("Синхронизация..."):
-                final_url = item['image_url'] if item else None
-                if new_img: final_url = upload_to_cloudinary(new_img, "inventory")
-                
-                payload = {"name": name, "image_url": final_url, "warehouse": wh, "cell": cell, "last_updated": datetime.now().isoformat()}
-                
-                if item: supabase.table("global_inventory").update(payload).eq("id", item['id']).execute()
-                else: supabase.table("global_inventory").insert(payload).execute()
-                st.rerun()
-
-    # 3. Кнопки управления
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        if st.button("➕ ДОБАВИТЬ ТОВАР", use_container_width=True, type="primary"): 
-            product_editor()
-    with col_btn2:
-        if st.button("🖨 QR И ССЫЛКА ПОЛКИ", use_container_width=True): 
-            qr_generator()
-
-    # 4. ЛОГИКА ЗАГРУЗКИ И ФИЛЬТРАЦИИ (КРИТИЧЕСКИЙ МОМЕНТ)
-    try:
-        # Получаем свежие данные
-        all_data = supabase.table("global_inventory").select("*").order("name").execute().data
-        
-        # Фильтруем список на основе ввода в поиске
-        if search_query:
-            display_items = [i for i in all_data if search_query in i['name'].lower()]
-        else:
-            display_items = all_data
             
-    except Exception as e:
-        st.error(f"Ошибка связи с базой: {e}")
-        display_items = []
+elif selected == "База Данных":
+    st.markdown("<h1 class='section-head'>📋 Единая База Товаров</h1>", unsafe_allow_html=True)
+    
+    with st.spinner("Синхронизация товарных позиций..."):
+        # 1. Получаем основной список товаров через твою функцию
+        inventory_df = get_full_inventory_df() 
+        
+        # 2. Актуализируем адреса из product_locations (твоя логика мерджа)
+        locations_res = supabase.table("product_locations").select("doc_id, product, address").execute()
+        if locations_res.data:
+            loc_df = pd.DataFrame(locations_res.data)
+            inventory_df = inventory_df.merge(
+                loc_df, 
+                left_on=['ID Документа', 'Название товара'], 
+                right_on=['doc_id', 'product'], 
+                how='left'
+            )
+            if 'address' in inventory_df.columns:
+                inventory_df['Адрес'] = inventory_df['address'].fillna(inventory_df['Адрес'])
+                inventory_df.drop(columns=['doc_id', 'product', 'address'], inplace=True)
 
-    st.divider()
-
-    # 5. Вывод отфильтрованного списка
-    if not display_items:
-        st.info("Товары не найдены.")
+    if inventory_df is None or inventory_df.empty:
+        st.info("📦 В документах пока нет товаров.")
     else:
-        for prod in display_items:
-            with st.container():
-                c_img, c_txt, c_loc, c_act = st.columns([1, 4, 2, 1.2])
-                
-                with c_img:
-                    st.image(prod['image_url'] if prod['image_url'] else "https://via.placeholder.com/100", width=80)
-                with c_txt:
-                    st.markdown(f"**{prod['name']}**")
-                    st.markdown(f"<span style='color:white; background:red; padding:2px 6px; border-radius:4px;'>{prod['cell']}</span>", unsafe_allow_html=True)
-                with c_loc:
-                    if st.button("📍 ГДЕ?", key=f"loc_{prod['id']}", use_container_width=True):
-                        st.session_state[f"map_{prod['id']}"] = not st.session_state.get(f"map_{prod['id']}", False)
-                with c_act:
-                    ce, cd = st.columns(2)
-                    if ce.button("✏️", key=f"ed_{prod['id']}"): product_editor(prod)
-                    if cd.button("🗑️", key=f"dl_{prod['id']}"):
-                        supabase.table("global_inventory").delete().eq("id", prod['id']).execute()
-                        st.rerun()
+        # --- ПАНЕЛЬ АНАЛИТИКИ ---
+        c1, c2, c3 = st.columns(3)
+        total_in = inventory_df[inventory_df['Тип'] == "📦 ПРИХОД"]['Количество'].sum() if 'Количество' in inventory_df.columns else 0
+        unassigned = len(inventory_df[inventory_df['Адрес'] == 'НЕ НАЗНАЧЕНО']) if 'Адрес' in inventory_df.columns else 0
+        
+        c1.metric("Всего поступило (ед.)", f"{int(total_in)} шт")
+        c2.metric("Требуют размещения", unassigned, delta=f"{unassigned} поз.", delta_color="inverse")
+        c3.metric("Уникальных строк", len(inventory_df))
 
-                # Карта внутри списка
-                if st.session_state.get(f"map_{prod['id']}"):
-                    st.info(f"Склад: {prod['warehouse']} | Стеллаж: {prod['cell']}")
-                    fig = get_warehouse_figure(prod['warehouse'], highlighted_cell=prod['cell'])
-                    fig.add_annotation(
-                        x=prod['cell'], y=0.5, text="ТОВАР ТУТ",
-                        showarrow=True, arrowhead=2, arrowsize=2, arrowcolor="red",
-                        ax=0, ay=-50, bgcolor="red", font=dict(color="white")
-                    )
+        # --- ТАБЛИЦА AG-GRID ---
+        gb = GridOptionsBuilder.from_dataframe(inventory_df)
+        gb.configure_default_column(resizable=True, filterable=True, sortable=True, floatingFilter=True)
+        gb.configure_selection(selection_mode="single", use_checkbox=True)
+        
+        cellsytle_jscode = JsCode("""
+function(params) {
+    if (params.value === 'НЕ НАЗНАЧЕНО') {
+        return {'color': '#c42b1c', 'backgroundColor': '#fde7e9', 'fontWeight': '600', 'borderRadius': '4px'}; 
+    } else if (params.value === '🚚 В ЗАКАЗЕ') {
+        return {'color': '#0067c0', 'backgroundColor': '#e5f1fb', 'fontWeight': '600', 'borderRadius': '4px'};
+    } else {
+        return {'color': '#0f7b0f', 'backgroundColor': '#dff6dd', 'fontWeight': '600', 'borderRadius': '4px'};
+    }
+};
+        """)
+        gb.configure_column("Адрес", cellStyle=cellsytle_jscode, pinned='left', width=180)
+        
+        grid_res = AgGrid(
+            inventory_df,
+            gridOptions=gb.build(),
+            height=500,
+            theme='alpine',
+            allow_unsafe_jscode=True,
+            update_on=['selectionChanged'], 
+            key="global_inventory_grid"
+        )
+
+        sel_row = grid_res.get('selected_rows')
+        
+        if sel_row is not None and len(sel_row) > 0:
+            item = sel_row.iloc[0] if isinstance(sel_row, pd.DataFrame) else sel_row[0]
+            
+            # Подготовка данных
+            doc_id = str(item.get('ID Документа', item.get('id')))
+            item_name = item.get('Название товара')
+            
+            # --- ИМПОРТЫ ИЗ ТВОИХ ФАЙЛОВ ---
+            from constants import WAREHOUSE_MAP
+            from config_topology import get_warehouse_figure, get_actual_cells
+            
+            warehouse_list = list(WAREHOUSE_MAP.keys())
+            
+            # Проверка текущего места в БД
+            try:
+                db_data = supabase.table("product_locations").select("*").eq("doc_id", doc_id).eq("product", item_name).execute()
+                if db_data.data:
+                    current_addr = db_data.data[0].get('address', 'НЕ НАЗНАЧЕНО')
+                    saved_zone = str(db_data.data[0].get('zone', warehouse_list[0]))
+                else:
+                    current_addr = "НЕ НАЗНАЧЕНО"
+                    saved_zone = warehouse_list[0]
+            except:
+                current_addr = "НЕ НАЗНАЧЕНО"
+                saved_zone = warehouse_list[0]
+
+            st.divider()
+            
+            col_info, col_location = st.columns([1, 1.2])
+            
+            with col_info:
+                # Замени HTML-код внутри st.markdown в col_info на этот:
+                st.markdown(f"""
+<div style="background: #FFFFFF; padding: 20px; border-radius: 12px; border: 1px solid #E5E5E5; box-shadow: 0 4px 6px rgba(0,0,0,0.02);">
+    <b style="color: #1B1B1B; font-size: 1.1rem;">📋 Детали товара:</b><br>
+    <div style="margin-top: 10px; color: #666;">
+        - ID: <code style="color: #0067c0;">{doc_id}</code><br>
+        - Товар: <b style="color: #1B1B1B;">{item_name}</b><br>
+        - Текущий адрес: <span style="padding: 2px 8px; border-radius: 4px; background: {'#fde7e9' if current_addr == 'НЕ НАЗНАЧЕНО' else '#dff6dd'}; color: {'#c42b1c' if current_addr == 'НЕ НАЗНАЧЕНО' else '#0f7b0f'}; font-weight: 600;">{current_addr}</span>
+    </div>
+</div>
+                """, unsafe_allow_html=True)
+                
+                # Метрики внутри инфо-блока
+                st.write("")
+                m1, m2 = st.columns(2)
+                m1.metric("Количество", f"{item.get('Количество', 0)} шт")
+                m2.metric("Тип", item.get('Тип', 'Н/Д'))
+                
+                st.info("💡 Выберите склад и ячейку справа. Карта Plotly обновится автоматически.")
+
+            with col_location:
+                # Замени HTML-код заголовка в col_location на этот:
+                st.markdown("""<div style="color: #1B1B1B; font-weight: 600; font-size: 1.1rem; margin-bottom: 15px;">🏪 Управление локацией:</div>""", unsafe_allow_html=True)
+
+                # Выбор склада
+                wh_id = st.selectbox("🏪 Выберите склад:", warehouse_list, index=warehouse_list.index(saved_zone) if saved_zone in warehouse_list else 0, key=f"wh_db_{doc_id}")
+
+                # Получение ячеек через твою функцию
+                all_cells = get_actual_cells(wh_id)
+                if not all_cells: all_cells = [current_addr] if current_addr != "НЕ НАЗНАЧЕНО" else ["Список пуст"]
+
+                # Выбор ячейки
+                selected_cell = st.selectbox("📍 Выберите ячейку:", options=all_cells, index=all_cells.index(current_addr) if current_addr in all_cells else 0, key=f"cell_db_{doc_id}")
+
+                # --- ТВОЯ ВИЗУАЛИЗАЦИЯ PLOTLY ---
+                try:
+                    fig = get_warehouse_figure(str(wh_id), highlighted_cell=selected_cell)
+                    fig.update_layout(
+                        template="plotly_white", # ПРИНУДИТЕЛЬНО СВЕТЛАЯ ТЕМА КАРТЫ
+                        paper_bgcolor='rgba(0,0,0,0)', 
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        margin=dict(l=0, r=0, b=0, t=30), 
+                        height=400
+                        )
                     st.plotly_chart(fig, use_container_width=True)
-                    if st.button("❌ ЗАКРЫТЬ КАРТУ", key=f"close_{prod['id']}", use_container_width=True):
-                        st.session_state[f"map_{prod['id']}"] = False
+                except Exception as e:
+                    st.warning(f"Карта Plotly временно недоступна: {e}")
+
+                # Кнопка сохранения
+                btn_label = "💾 НАЗНАЧИТЬ МЕСТО" if current_addr == "НЕ НАЗНАЧЕНО" else "🔄 ИЗМЕНИТЬ ПОЗИЦИЮ"
+                
+                if st.button(btn_label, use_container_width=True, type="primary", key=f"save_db_{doc_id}"):
+                    try:
+                        from datetime import datetime
+                        payload = {
+                            "doc_id": str(doc_id),
+                            "product": str(item_name),
+                            "address": str(selected_cell),
+                            "zone": str(wh_id),
+                            "last_updated": datetime.now().isoformat()
+                        }
+                        supabase.table("product_locations").upsert(payload, on_conflict="doc_id,product").execute()
+                        st.cache_data.clear()
+                        st.success(f"✅ Успешно: {selected_cell}")
+                        st.balloons()
+                        time.sleep(1)
                         st.rerun()
-                st.markdown("<hr style='margin:10px 0; opacity:0.1'>", unsafe_allow_html=True)
+                    except Exception as e:
+                        st.error(f"Ошибка сохранения: {e}")
                         
 elif selected == "Карта": show_map()
 elif selected == "Настройки":
-    st.markdown("<h1 style='text-align:center;'>⚙️ Системные настройки</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='section-head'>⚙️ Системные настройки</h1>", unsafe_allow_html=True)
     
-    # Создаем табы
-    tabs = st.tabs(["🏢 Склад и Топология", "👥 Команда", "💾 Обслуживание"])
-    tab_topology = tabs[0]
-    tab_team = tabs[1]
-    tab_system = tabs[2]
+    tab1, tab2, tab4 = st.tabs([
+        "🏢 Склад и Топология", 
+        "👥 Команда", 
+        "💾 Обслуживание системы"
+    ])
 
-    # ==========================================
-    # ТАБ 1: СКЛАД И ТОПОЛОГИЯ (СВЯЗЬ С БД)
-    # ==========================================
-    with tab_topology:
-        st.subheader("📍 Интерактивная карта складов")
-        
-        col_map, col_stats = st.columns([2, 1])
-        
+    # --- ТАБ 1: СКЛАД (без изменений) ---
+    with tab1:
+        st.subheader("📍 Конфигурация зон хранения")
+        col_map, col_cfg = st.columns([2, 1])
         with col_map:
-            wh_list = list(WAREHOUSE_MAP.keys())
-            wh_to_show = st.selectbox("Выберите склад для визуализации", wh_list, key="wh_settings_select")
-            
+            wh_to_show = st.selectbox("Выберите склад для просмотра", list(WAREHOUSE_MAP.keys()))
             try:
-                # 1. Запрос из актуальной базы global_inventory
-                raw_inv = supabase.table("global_inventory").select("name, cell").eq("warehouse", wh_to_show).execute()
-                
-                # 2. Группировка товаров по ячейкам
-                cell_content = {}
-                for row in raw_inv.data:
-                    c_id = str(row['cell']).strip()
-                    p_name = row['name']
-                    if c_id not in cell_content:
-                        cell_content[c_id] = []
-                    cell_content[c_id].append(p_name)
-                
-                # 3. Отрисовка карты
-                fig = get_warehouse_figure(wh_to_show)
-                
-                for trace in fig.data:
-                    cell_name = str(trace.name).strip()
-                    products = cell_content.get(cell_name, [])
-                    
-                    if products:
-                        display_limit = 10
-                        p_list_str = "<br>• ".join(products[:display_limit])
-                        if len(products) > display_limit:
-                            p_list_str += f"<br>... и еще {len(products) - display_limit}"
-                        
-                        hover_html = (
-                            f"<b>Ячейка: {cell_name}</b><br>"
-                            f"📦 Товаров: {len(products)}<br>"
-                            f"<span style='font-size:12px;'>• {p_list_str}</span>"
-                        )
-                    else:
-                        hover_html = f"<b>Ячейка: {cell_name}</b><br><i style='color:gray;'>Ячейка пуста</i>"
-                    
-                    trace.hovertemplate = hover_html + "<extra></extra>"
-                
-                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-                
+                inv_data = supabase.table("product_locations").select("product, address").eq("zone", str(wh_to_show)).execute()
+                inv_dict = {}
+                for row in inv_data.data:
+                    cell = row['address']
+                    if cell not in inv_dict: inv_dict[cell] = []
+                    inv_dict[cell].append(row['product'])
             except Exception as e:
-                st.error(f"Ошибка при обновлении карты: {e}")
+                st.error(f"Ошибка загрузки: {e}")
+                inv_dict = {}
+            fig = get_warehouse_figure(wh_to_show)
+            for trace in fig.data:
+                cell_id = trace.name
+                items = inv_dict.get(str(cell_id).strip(), [])
+                if items:
+                    items_list = "<br>• ".join(items[:5])
+                    hover_text = f"<b>Ячейка: {cell_id}</b><br>📦 Товары:<br>• {items_list}"
+                else:
+                    hover_text = f"<b>Ячейка: {cell_id}</b><br><i>Пусто</i>"
+                trace.hovertemplate = hover_text + "<extra></extra>"
+            st.plotly_chart(fig, use_container_width=True)
+        with col_cfg:
+            st.info("💡 Наведите на ячейку на карте.")
 
-        with col_stats:
-            st.info("📊 **Статистика склада**")
-            try:
-                # Безопасный расчет статистики (защита от NameError)
-                all_possible_cells = get_actual_cells(wh_to_show)
-                total_count = len(all_possible_cells)
-                occupied_count = len(cell_content.keys())
-                free_count = total_count - occupied_count
-                
-                # Защита от деления на ноль
-                percent_occ = (occupied_count / total_count * 100) if total_count > 0 else 0
-                
-                st.metric("Всего ячеек", total_count)
-                st.metric("Занято", occupied_count, delta=f"{percent_occ:.1f}%", delta_color="inverse")
-                st.metric("Свободно", free_count)
-                
-                st.divider()
-                st.write("**Статус базы:**")
-                st.caption("🟢 Синхронизация с `global_inventory` активна.")
-                
-            except Exception as e:
-                st.warning(f"Невозможно рассчитать статистику: проверьте импорт `get_actual_cells`. Подробности: {e}")
-
-    # ==========================================
-    # ТАБ 2: КОМАНДА
-    # ==========================================
-    with tab_team:
+    # --- ТАБ 2: КОМАНДА (без изменений) ---
+    with tab2:
         st.subheader("👤 Управление персоналом")
-        with st.expander("➕ Зарегистрировать нового сотрудника", expanded=True):
+        with st.expander("➕ Зарегистрировать нового сотрудника"):
             with st.form("user_add_form"):
-                new_email = st.text_input("Email сотрудника")
-                new_name = st.text_input("ФИО")
-                new_role = st.selectbox("Уровень доступа", ["Кладовщик", "Администратор", "Водитель"])
-                
-                if st.form_submit_button("💾 Сохранить в базу", use_container_width=True):
+                new_email, new_name = st.text_input("Email"), st.text_input("ФИО")
+                new_role = st.selectbox("Доступ", ["Кладовщик", "Администратор", "Водитель"])
+                if st.form_submit_button("Сохранить"):
                     if new_email and new_name:
-                        try:
-                            supabase.table("profiles").insert({"email": new_email, "full_name": new_name, "role": new_role}).execute()
-                            st.success(f"Сотрудник {new_name} успешно добавлен!")
-                            time.sleep(1)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Ошибка БД: {e}")
-                    else:
-                        st.warning("Пожалуйста, заполните Email и ФИО.")
+                        supabase.table("profiles").insert({"email": new_email, "full_name": new_name, "role": new_role}).execute()
+                        st.success("Добавлен"); st.rerun()
 
-    # ==========================================
-    # ТАБ 3: ОБСЛУЖИВАНИЕ (ПРО-ВЕРСИЯ)
-    # ==========================================
-    with tab_system:
+    # --- ТАБ 4: ОБСЛУЖИВАНИЕ (ИСПРАВЛЕННЫЙ БЛОК ОЧИСТКИ) ---
+    with tab4:
         st.subheader("🛠️ Сервисные инструменты")
         c1, c2, c3 = st.columns(3)
         
-        # --- МОДАЛЬНОЕ ОКНО ДЛЯ ЭКСПОРТА ---
-        @st.dialog("📊 Экспорт данных в Excel")
-        def export_modal():
-            st.write("Выберите таблицы для выгрузки:")
-            # Добавлена новая таблица global_inventory!
-            available_tables = ["global_inventory", "orders", "arrivals", "defects", "inventory", "profiles"]
-            selected_tables = st.multiselect("Таблицы", available_tables, default=["global_inventory"])
-            
-            if st.button("🚀 Сформировать XLSX", type="primary", use_container_width=True):
-                import pandas as pd
-                import io
-                with st.spinner("Сбор данных..."):
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                        for t in selected_tables:
-                            try:
-                                data = supabase.table(t).select("*").execute().data
-                                if data:
-                                    # Имя листа в Excel не может быть длиннее 31 символа
-                                    pd.DataFrame(data).to_excel(writer, sheet_name=t[:31], index=False)
-                            except Exception as e:
-                                st.error(f"Не удалось выгрузить {t}: {e}")
-                    
-                    st.download_button(
-                        label="⬇️ СКАЧАТЬ ОТЧЕТ", 
-                        data=output.getvalue(), 
-                        file_name=f"Warehouse_Report_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-        
-        # Кнопки управления
         with c1:
             st.markdown("### 📦 Экспорт")
-            if st.button("📊 Панель выгрузки (Excel)", use_container_width=True):
-                export_modal()
+            if st.button("📊 Сформировать отчет XLSX"):
+                import io
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    for t in ["orders", "arrivals", "defects", "inventory"]:
+                        data = supabase.table(t).select("*").execute().data
+                        if data: pd.DataFrame(data).to_excel(writer, sheet_name=t, index=False)
+                st.download_button(label="⬇️ Скачать", data=output.getvalue(), file_name="Report.xlsx")
 
         with c2:
             st.markdown("### ⚠️ Оптимизация")
-            if st.button("🔥 Сбросить кеш системы", use_container_width=True):
+            if st.button("🔥 Сбросить кеш"):
                 st.cache_data.clear()
                 st.cache_resource.clear()
-                if 'confirm_delete_all' in st.session_state:
-                    del st.session_state['confirm_delete_all']
+                st.session_state.clear()
                 st.toast("Кеш системы полностью очищен!")
-                time.sleep(1)
-                st.rerun()
+                time.sleep(1); st.rerun()
                 
         with c3:
             st.markdown("### 🔴 Опасная зона")
-            if st.button("🧨 ОЧИСТИТЬ ВСЕ ДАННЫЕ", type="secondary", use_container_width=True):
+            if st.button("🧨 ОЧИСТИТЬ ВСЕ ДАННЫЕ", type="secondary"):
                 st.session_state.confirm_delete_all = True
 
-        # Логика полного удаления (с защитой и прогресс-баром)
-        if st.session_state.get('confirm_delete_all'):
-            st.error("### ❗ ВНИМАНИЕ: БЕЗВОЗВРАТНОЕ УДАЛЕНИЕ")
-            st.write("Это действие удалит данные из **ВСЕХ** таблиц. Отменить это будет невозможно!")
-            
-            c_yes, c_no = st.columns(2)
-            
-            if c_yes.button("☠️ ДА, УДАЛИТЬ АБСОЛЮТНО ВСЁ", type="primary", use_container_width=True):
-                try:
-                    # ПОЛНЫЙ список таблиц (global_inventory ДОБАВЛЕН!)
-                    tables_to_clean = [
-                        "global_inventory",  # Наша главная база!
-                        "inventory",         
-                        "defects",           
-                        "positions",         
-                        "arrivals",          
-                        "orders",            
-                        "devices",           
-                        "drivers",           
-                        "vehicles",          
-                        "extras",            
-                        "product_locations", 
-                        "manager_profile",
-                        "profiles"
-                    ]
-                    
-                    total_deleted = 0
-                    progress_text = "Идет очистка базы данных. Пожалуйста, подождите..."
-                    my_bar = st.progress(0, text=progress_text)
-                    
-                    for idx, table in enumerate(tables_to_clean):
-                        my_bar.progress((idx) / len(tables_to_clean), text=f"Очистка: {table}...")
-                        try:
+            if st.session_state.get('confirm_delete_all'):
+                st.error("### ❗ ВНИМАНИЕ: ПОЛНОЕ УДАЛЕНИЕ")
+                st.write("Это удалит данные из ВСЕХ таблиц: заказы, приходы, брак, устройства, водители и др.")
+                
+                c_yes, c_no = st.columns(2)
+                
+                if c_yes.button("ДА, УДАЛИТЬ АБСОЛЮТНО ВСЁ", type="primary", use_container_width=True):
+                    try:
+                        # ПОЛНЫЙ список ваших таблиц в правильном порядке удаления
+                        tables_to_clean = [
+                            "inventory",         # Удаляем остатки
+                            "defects",           # Удаляем брак
+                            "positions",         # Удаляем позиции в документах
+                            "arrivals",          # Удаляем приходы
+                            "orders",            # Удаляем заказы
+                            "devices",           # Удаляем устройства
+                            "drivers",           # Удаляем водителей
+                            "vehicles",          # Удаляем транспорт
+                            "extras",            # Удаляем доп. данные
+                            "product_locations", # Удаляем адреса товаров
+                            "manager_profile"    # Удаляем профили менеджеров
+                        ]
+                        
+                        total_deleted = 0
+                        progress = st.progress(0)
+                        
+                        for idx, table in enumerate(tables_to_clean):
                             # 1. Получаем все ID
                             res = supabase.table(table).select("id").execute()
                             if res.data:
@@ -2046,27 +1976,22 @@ elif selected == "Настройки":
                                     chunk = ids[i:i + 500]
                                     supabase.table(table).delete().in_("id", chunk).execute()
                                 total_deleted += len(ids)
-                        except Exception:
-                            # Если таблицы нет, просто пропускаем
-                            pass
-                            
-                    my_bar.progress(1.0, text="Удаление завершено!")
-                    
-                    # КРИТИЧЕСКИ ВАЖНО: Очищаем кэш после удаления
-                    st.cache_data.clear()
-                    st.cache_resource.clear()
+                            progress.progress((idx + 1) / len(tables_to_clean))
+                        
+                        # КРИТИЧЕСКИ ВАЖНО: Очищаем кэш после удаления
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+                        
+                        st.success(f"💥 БАЗА ПОЛНОСТЬЮ ОЧИЩЕНА! Удалено строк: {total_deleted}")
+                        st.session_state.confirm_delete_all = False
+                        time.sleep(2); st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Ошибка при очистке: {str(e)}")
+                
+                if c_no.button("ОТМЕНА", use_container_width=True):
                     st.session_state.confirm_delete_all = False
-                    
-                    st.success(f"💥 БАЗА ПОЛНОСТЬЮ ОЧИЩЕНА! Удалено строк: {total_deleted}")
-                    time.sleep(2)
                     st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"❌ Ошибка при очистке: {str(e)}")
-            
-            if c_no.button("ОТМЕНА", use_container_width=True):
-                st.session_state.confirm_delete_all = False
-                st.rerun()
                 
 # --- 1. УМНАЯ ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
 TABLES_TO_LOAD = {
