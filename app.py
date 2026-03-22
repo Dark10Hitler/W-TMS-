@@ -652,6 +652,28 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- 2. ЖЕСТКАЯ ПРОВЕРКА АВТОРИЗАЦИИ (СТЕНА) ---
+if 'user' not in st.session_state:
+    login_form() # Рисуем ТОЛЬКО центрированное окно входа
+    st.stop() # ОСТАНАВЛИВАЕМ ВЫПОЛНЕНИЕ! Весь код ниже не запустится.
+
+# --- 3. КОД ДЛЯ АВТОРИЗОВАННЫХ ПОЛЬЗОВАТЕЛЕЙ (ПОДГРУЖАЕТСЯ ПОТОМ) ---
+# Если мы здесь, значит юзер залогинен и st.stop() не сработал.
+user_data = st.session_state.user_data
+company_name = user_data['companies']['company_name']
+
+# Теперь рисуем боковое меню, хедер и т.д.
+st.sidebar.title(f"🏢 {company_name}")
+st.sidebar.write(f"👤 {user_data['full_name']} ({user_data['role']})")
+
+# ... (Твоя логика меню на основе тумблеров) ...
+
+if st.sidebar.button("Выйти"):
+    del st.session_state.user
+    st.rerun()
+
+st.title(f"Добро пожаловать в {company_name}")
+st.write("Теперь подгрузился весь основной интерфейс, таблицы и данные.")
 
 # 3. Затем системные переменные
 if "items_registry" not in st.session_state:
@@ -2113,35 +2135,100 @@ elif selected == "Настройки":
                 st.session_state.confirm_delete_all = False
                 st.rerun()
 
-# 1. Проверяем, авторизован ли пользователь
-if 'user' not in st.session_state:
-    login_form() # Если нет — показываем только окно входа
-else:
-    # 2. Если авторизован — показываем основное приложение
-    user_data = st.session_state.user_data
-    company_name = user_data['companies']['company_name']
-    
-    st.sidebar.title(f"🏢 {company_name}")
-    st.sidebar.write(f"👤 {user_data['full_name']} ({user_data['role']})")
-    
-    # 3. ТУМБЛЕРЫ: Рисуем меню на основе прав компании
-    menu = ["🏠 Главная"]
-    
-    if user_data['companies']['module_wms']:
-        menu.append("📦 Склад")
-    
-    if user_data['companies']['module_tms']:
-        menu.append("🚚 Логистика")
-        
-    choice = st.sidebar.selectbox("Навигация", menu)
-    
-    # Кнопка выхода
-    if st.sidebar.button("Выйти"):
-        del st.session_state.user
-        st.rerun()
+import streamlit as st
+from supabase import create_client
 
-    # Тут идет контент выбранной страницы...
-    st.write(f"Добро пожаловать в модуль: {choice}")
+# Проверка секретов перед запуском (на всякий случай)
+if "url" not in st.secrets or "key" not in st.secrets:
+    st.error("🚨 Ошибка конфигурации. Свяжитесь с администратором.")
+    st.stop()
+
+# Подключение к Supabase (берем из секретов, исправленное)
+supabase = create_client(st.secrets["url"], st.secrets["key"])
+
+def login_form():
+    # --- CUSTOM CSS ДЛЯ СТИЛИЗАЦИИ ОКНА ВХОДА ---
+    st.markdown("""
+        <style>
+            /* Скрываем стандартные элементы Streamlit на экране входа */
+            [data-testid="stHeader"] { visibility: hidden; }
+            [data-testid="stSidebar"] { visibility: hidden; }
+            
+            /* Стилизация основного фона */
+            .stApp {
+                background-color: #f0f2f5; /* Легкий серый фон */
+            }
+
+            /* Контейнер для центрирования */
+            .login-container {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 80vh; /* Почти вся высота экрана */
+            }
+
+            /* Стилизация самого квадрата входа */
+            .login-box {
+                background-color: white;
+                padding: 40px;
+                border-radius: 15px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+                width: 100%;
+                max-width: 400px;
+                text-align: center;
+            }
+            
+            /* Стилизация заголовка */
+            .login-box h1 {
+                font-size: 24px;
+                margin-bottom: 10px;
+                color: #1a1a1a;
+            }
+            .login-box h3 {
+                font-size: 16px;
+                font-weight: 400;
+                margin-bottom: 30px;
+                color: #666;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # --- ОТРИСОВКА ОКНА ВХОДА ЧЕРЕЗ HTML/CSS ---
+    # Мы создаем 'div' для центрирования и внутри него 'div' для бокса
+    st.markdown('<div class="login-container"><div class="login-box">', unsafe_allow_html=True)
+    
+    # Элементы внутри бокса (рисуем через Streamlit, чтобы работали инпуты)
+    st.markdown("<h1>🔒 IMPERIA WMS</h1>", unsafe_allow_html=True)
+    st.markdown("<h3>Вход в систему управления</h3>", unsafe_allow_html=True)
+
+    email = st.text_input("Электронная почта", placeholder="example@imperia.md", label_visibility="collapsed")
+    password = st.text_input("Пароль", type="password", placeholder="••••••••", label_visibility="collapsed")
+    
+    st.markdown("<br>", unsafe_allow_html=True) # Отступ
+
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        if st.button("Войти", use_container_width=True, type="primary"):
+            try:
+                response = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                
+                if response.user:
+                    st.session_state.user = response.user
+                    # Загружаем профиль и тумблеры (важно: таблицы 'profiles' и 'companies' должны существовать)
+                    user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", response.user.id).single().execute()
+                    st.session_state.user_data = user_profile.data
+                    st.rerun() 
+            except Exception as e:
+                st.error("Ошибка входа.")
+
+    with col2:
+        # Кнопка "Забыл?"
+        if st.button("Забыл?", help="Свяжитесь с IT-директором", use_container_width=True):
+            st.toast("📞 +373 6803 1705 \n 📧 denis2305den4ik@gmail.com", icon="ℹ️")
+
+    # Закрываем теги HTML
+    st.markdown('</div></div>', unsafe_allow_html=True)
 
 # --- 1. УМНАЯ ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
 TABLES_TO_LOAD = {
