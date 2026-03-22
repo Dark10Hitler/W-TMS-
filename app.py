@@ -541,87 +541,6 @@ def save_new_location(product_name, location):
         st.error(f"Ошибка сохранения топологии: {e}")
 
 
-
-import streamlit as st
-from auth import login_form
-
-# 1. Настройка страницы — ВСЕГДА ПЕРВАЯ СТРОКА
-st.set_page_config(
-    layout="wide", 
-    page_title="W&TMS", 
-    page_icon="🏛️", 
-    initial_sidebar_state="expanded"
-)
-
-# --- ФУНКЦИЯ ДЛЯ СИСТЕМНЫХ СТИЛЕЙ (ЗАПУСКАЕТСЯ ТОЛЬКО ПОСЛЕ ВХОДА) ---
-def apply_system_styles():
-    st.markdown("""
-    <style>
-        /* 1. ПОЛНОЕ УДАЛЕНИЕ ВЕРХНЕЙ ПОЛОСЫ */
-        header { visibility: hidden; height: 0px; }
-        [data-testid="stHeader"] { display: none; }
-        [data-testid="stDecoration"] { display: none; }
-        
-        /* 2. ШРИФТЫ И СВЕТЛЫЙ ФОН СИСТЕМЫ */
-        html, body, [data-testid="stAppViewContainer"] {
-            font-family: 'Segoe UI', system-ui, sans-serif !important;
-            background-color: #F3F3F3 !important; /* Серый фон рабочего стола */
-            color: #1B1B1B !important;
-        }
-
-        .block-container { 
-            padding-top: 1rem !important; 
-            max-width: 100%; 
-        }
-
-        /* 3. САЙДБАР */
-        [data-testid="stSidebar"] {
-            background-color: #FFFFFF !important;
-            border-right: 1px solid #E5E5E5;
-            visibility: visible !important; /* Показываем сайдбар */
-        }
-
-        /* 4. КНОПКИ */
-        .stButton>button {
-            border-radius: 6px;
-            font-weight: 600;
-        }
-
-        /* Таблицы и скроллбары */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-thumb { background: #C1C1C1; border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 2. ЖЕСТКАЯ ПРОВЕРКА АВТОРИЗАЦИИ (СТЕНА) ---
-if 'user' not in st.session_state:
-    # Если юзер не вошел, вызываем форму. 
-    # ВАЖНО: Внутри login_form() в auth.py должны быть свои стили с градиентом!
-    login_form()
-    st.stop() # Дальше код не идет, стили Windows не загружаются
-
-# --- 3. КОД ДЛЯ ТЕХ, КТО ВОШЕЛ ---
-# Теперь, когда юзер прошел "стену", включаем системные стили
-apply_system_styles()
-
-# Извлекаем данные
-user_data = st.session_state.user_data
-company_name = user_data['companies']['company_name']
-
-# Отрисовка интерфейса
-st.sidebar.title(f"🏢 {company_name}")
-st.sidebar.write(f"👤 {user_data['full_name']} ({user_data['role']})")
-
-# Меню (пример)
-page = st.sidebar.selectbox("Навигация", ["Главная", "Склад", "Логистика"])
-
-if st.sidebar.button("Выйти"):
-    del st.session_state.user
-    st.rerun()
-
-st.title(f"Добро пожаловать в {company_name}")
-st.info(f"Активный модуль: {page}")
-
 # 3. Затем системные переменные
 if "items_registry" not in st.session_state:
     st.session_state.items_registry = {}
@@ -1372,48 +1291,58 @@ def show_profile():
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
             
-# Получаем данные компании из сессии
-company = st.session_state.user_data['companies']
+# 1. СТЕНА АВТОРИЗАЦИИ
+if 'user' not in st.session_state:
+    login_form()
+    st.stop()
 
-# --- СОБИРАЕМ МЕНЮ С НУЛЯ ---
+# 2. ПРИМЕНЯЕМ СТИЛИ
+apply_system_styles()
+
+# 3. ПОДГОТОВКА ДАННЫХ
+user_data = st.session_state.user_data
+company = user_data['companies']
+
+# Динамическая сборка меню на основе колонок из DB
 options = []
 icons = []
 
-# 1. BASE (Всегда первый, если true)
 if company.get('module_base'):
     options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
     icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
 
-# 2. MAP (Добавляется после базы)
-if company.get('module_map'):
-    options.append("Карта")
-    icons.append("map")
+if company.get('module_map'): options.append("Карта"); icons.append("map")
+if company.get('module_analytics'): options.append("Аналитика"); icons.append("graph-up-arrow")
+if company.get('module_ai'): options.append("AI-support"); icons.append("robot")
 
-# 3. ANALYTICS
-if company.get('module_analytics'):
-    options.append("Аналитика")
-    icons.append("graph-up-arrow")
-
-# 4. AI-SUPPORT
-if company.get('module_ai'):
-    options.append("AI-support")
-    icons.append("robot")
-
-# 5. СИСТЕМА (Всегда в конце)
 options.extend(["Настройки", "Выйти"])
 icons.extend(["gear", "box-arrow-right"])
 
-# --- ВЫВОДИМ В SIDEBAR ---
+# 4. ОТРИСОВКА НОВОГО МЕНЮ
 with st.sidebar:
+    # Твой красивый HTML заголовок
+    st.markdown("""
+        <div style='padding: 10px 0px;'>
+            <h2 style='color: #1E1E1E; font-family: "Segoe UI"; font-size: 22px; font-weight: 600;'>
+                📦 LOGISTICS W&TMS
+            </h2>
+            <p style='color: #666; font-size: 12px; margin-top: -10px;'>Warehouse Management System</p>
+        </div>
+    """, unsafe_allow_html=True)
+
     selected = option_menu(
-        menu_title="W&TMS Terminal",
+        menu_title=None,
         options=options,
         icons=icons,
-        default_index=0,
-        styles={
+        styles={ # Твои стили Windows Light из прошлого сообщения
             "nav-link-selected": {"background-color": "#E8F0FE", "color": "#1A73E8", "border-left": "4px solid #1A73E8"}
         }
     )
+
+# 5. ЛОГИКА ВЫХОДА И ПЕРЕКЛЮЧЕНИЯ
+if selected == "Выйти":
+    st.session_state.clear()
+    st.rerun()
     
 def delete_entry(table_key, entry_id):
     """
