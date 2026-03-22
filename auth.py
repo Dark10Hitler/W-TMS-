@@ -132,16 +132,29 @@ def login_form():
         
         st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
 
-        if st.button("Access System", use_container_width=True, type="primary"):
-            try:
-                response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                if response.user:
-                    st.session_state.user = response.user
-                    user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", response.user.id).single().execute()
-                    st.session_state.user_data = user_profile.data
-                    st.rerun()
-            except:
-                st.error("Authentication failed")
+        if st.button("Access Terminal", use_container_width=True, type="primary"):
+        try:
+            # 1. Пробуем войти в Auth
+            auth_response = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            
+            if auth_response.user:
+                st.session_state.user = auth_response.user
+                
+                # 2. Пробуем получить профиль
+                try:
+                    user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", auth_response.user.id).single().execute()
+                    
+                    if user_profile.data:
+                        st.session_state.user_data = user_profile.data
+                        st.success("Успешный вход!")
+                        st.rerun()
+                    else:
+                        st.error("Профиль создан, но данные не получены. Проверь таблицу profiles.")
+                except Exception as profile_err:
+                    st.error(f"Ошибка данных профиля: {profile_err}")
+                    # Это часто случается, если company_id в профиле пустой
+        except Exception as auth_err:
+            st.error("Неверный логин или пароль")
 
         if st.button("System Support", use_container_width=True):
             show_support_modal()
