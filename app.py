@@ -2109,7 +2109,40 @@ elif selected == "Настройки":
             if c_no.button("ОТМЕНА", use_container_width=True):
                 st.session_state.confirm_delete_all = False
                 st.rerun()
-                
+
+import streamlit as st
+from auth import login_form
+
+# 1. Проверяем, авторизован ли пользователь
+if 'user' not in st.session_state:
+    login_form() # Если нет — показываем только окно входа
+else:
+    # 2. Если авторизован — показываем основное приложение
+    user_data = st.session_state.user_data
+    company_name = user_data['companies']['company_name']
+    
+    st.sidebar.title(f"🏢 {company_name}")
+    st.sidebar.write(f"👤 {user_data['full_name']} ({user_data['role']})")
+    
+    # 3. ТУМБЛЕРЫ: Рисуем меню на основе прав компании
+    menu = ["🏠 Главная"]
+    
+    if user_data['companies']['module_wms']:
+        menu.append("📦 Склад")
+    
+    if user_data['companies']['module_tms']:
+        menu.append("🚚 Логистика")
+        
+    choice = st.sidebar.selectbox("Навигация", menu)
+    
+    # Кнопка выхода
+    if st.sidebar.button("Выйти"):
+        del st.session_state.user
+        st.rerun()
+
+    # Тут идет контент выбранной страницы...
+    st.write(f"Добро пожаловать в модуль: {choice}")
+
 # --- 1. УМНАЯ ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
 TABLES_TO_LOAD = {
     "orders": "orders",
