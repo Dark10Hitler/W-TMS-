@@ -2138,97 +2138,114 @@ elif selected == "Настройки":
 import streamlit as st
 from supabase import create_client
 
-# Проверка секретов перед запуском (на всякий случай)
-if "url" not in st.secrets or "key" not in st.secrets:
-    st.error("🚨 Ошибка конфигурации. Свяжитесь с администратором.")
-    st.stop()
-
-# Подключение к Supabase (берем из секретов, исправленное)
+# Подключение к Supabase
 supabase = create_client(st.secrets["url"], st.secrets["key"])
 
 def login_form():
-    # --- CUSTOM CSS ДЛЯ СТИЛИЗАЦИИ ОКНА ВХОДА ---
+    # --- СУПЕР ДИЗАЙН: АНИМИРОВАННЫЙ ФОН И СТЕКЛЯННЫЙ КВАДРАТ ---
     st.markdown("""
         <style>
-            /* Скрываем стандартные элементы Streamlit на экране входа */
-            [data-testid="stHeader"] { visibility: hidden; }
-            [data-testid="stSidebar"] { visibility: hidden; }
+            /* Скрываем стандартный мусор Streamlit */
+            [data-testid="stHeader"], [data-testid="stSidebar"], [data-testid="stFooter"] { visibility: hidden; }
             
-            /* Стилизация основного фона */
+            /* Анимированный градиентный фон */
             .stApp {
-                background-color: #f0f2f5; /* Легкий серый фон */
+                background: linear-gradient(-45deg, #0f172a, #1e293b, #334155, #020617);
+                background-size: 400% 400%;
+                animation: gradient 15s ease infinite;
+                height: 100vh;
             }
 
-            /* Контейнер для центрирования */
-            .login-container {
+            @keyframes gradient {
+                0% { background-position: 0% 50%; }
+                50% { background-position: 100% 50%; }
+                100% { background-position: 0% 50%; }
+            }
+
+            /* Контейнер-центровщик */
+            .main-login-wrapper {
                 display: flex;
-                justify-content: center;
+                flex-direction: column;
                 align-items: center;
-                height: 80vh; /* Почти вся высота экрана */
+                justify-content: center;
+                height: 90vh;
+                width: 100%;
             }
 
-            /* Стилизация самого квадрата входа */
-            .login-box {
-                background-color: white;
-                padding: 40px;
-                border-radius: 15px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            /* Стеклянный квадрат (Glassmorphism) */
+            .login-card {
+                background: rgba(255, 255, 255, 0.05);
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 24px;
+                padding: 50px;
                 width: 100%;
-                max-width: 400px;
+                max-width: 420px;
+                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
                 text-align: center;
             }
-            
-            /* Стилизация заголовка */
-            .login-box h1 {
-                font-size: 24px;
-                margin-bottom: 10px;
-                color: #1a1a1a;
+
+            /* Минималистичный текст */
+            .title-text {
+                font-family: 'Inter', sans-serif;
+                color: white;
+                font-size: 32px;
+                font-weight: 700;
+                letter-spacing: -1px;
+                margin-bottom: 8px;
             }
-            .login-box h3 {
-                font-size: 16px;
-                font-weight: 400;
-                margin-bottom: 30px;
-                color: #666;
+            .subtitle-text {
+                color: #94a3b8;
+                font-size: 14px;
+                margin-bottom: 32px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
             }
+
+            /* Кастомизация полей ввода (убираем белые рамки) */
+            div[data-baseweb="input"] {
+                background-color: rgba(0, 0, 0, 0.2) !important;
+                border-radius: 12px !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                color: white !important;
+            }
+            input { color: white !important; }
         </style>
     """, unsafe_allow_html=True)
 
-    # --- ОТРИСОВКА ОКНА ВХОДА ЧЕРЕЗ HTML/CSS ---
-    # Мы создаем 'div' для центрирования и внутри него 'div' для бокса
-    st.markdown('<div class="login-container"><div class="login-box">', unsafe_allow_html=True)
+    # Обертка для центрирования
+    st.markdown('<div class="main-login-wrapper">', unsafe_allow_html=True)
     
-    # Элементы внутри бокса (рисуем через Streamlit, чтобы работали инпуты)
-    st.markdown("<h1>🔒 IMPERIA WMS</h1>", unsafe_allow_html=True)
-    st.markdown("<h3>Вход в систему управления</h3>", unsafe_allow_html=True)
+    # Начало карточки
+    st.markdown('<div class="login-card">', unsafe_allow_html=True)
+    st.markdown('<p class="title-text">IMPERIA</p>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle-text">Warehouse Management System</p>', unsafe_allow_html=True)
 
-    email = st.text_input("Электронная почта", placeholder="example@imperia.md", label_visibility="collapsed")
-    password = st.text_input("Пароль", type="password", placeholder="••••••••", label_visibility="collapsed")
+    # Поля ввода (label_visibility скрывает стандартные надписи, оставляя чистый вид)
+    email = st.text_input("Email", placeholder="Login", label_visibility="collapsed")
+    password = st.text_input("Password", type="password", placeholder="Password", label_visibility="collapsed")
     
-    st.markdown("<br>", unsafe_allow_html=True) # Отступ
+    st.markdown("<div style='margin-top: 25px;'></div>", unsafe_allow_html=True)
 
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        if st.button("Войти", use_container_width=True, type="primary"):
-            try:
-                response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                
-                if response.user:
-                    st.session_state.user = response.user
-                    # Загружаем профиль и тумблеры (важно: таблицы 'profiles' и 'companies' должны существовать)
-                    user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", response.user.id).single().execute()
-                    st.session_state.user_data = user_profile.data
-                    st.rerun() 
-            except Exception as e:
-                st.error("Ошибка входа.")
+    # Кнопка входа
+    if st.button("ENTER SYSTEM", use_container_width=True, type="primary"):
+        try:
+            response = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            if response.user:
+                st.session_state.user = response.user
+                user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", response.user.id).single().execute()
+                st.session_state.user_data = user_profile.data
+                st.rerun()
+        except:
+            st.error("Access Denied")
 
-    with col2:
-        # Кнопка "Забыл?"
-        if st.button("Забыл?", help="Свяжитесь с IT-директором", use_container_width=True):
-            st.toast("📞 +373 6803 1705 \n 📧 denis2305den4ik@gmail.com", icon="ℹ️")
+    # Ссылка на поддержку (минимализм)
+    if st.button("Need help?", help="Contact IT Director", use_container_width=True):
+        st.toast("📞 +373 6803 1705 | 📧 denis2305den4ik@gmail.com")
 
-    # Закрываем теги HTML
-    st.markdown('</div></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True) # Закрываем карточку
+    st.markdown('</div>', unsafe_allow_html=True) # Закрываем обертку
 
 # --- 1. УМНАЯ ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
 TABLES_TO_LOAD = {
