@@ -1291,17 +1291,22 @@ def show_profile():
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
 
-import streamlit as st
-from auth import login_form
-from streamlit_option_menu import option_menu
-import pandas as pd
-
 # 1. СТЕНА АВТОРИЗАЦИИ
 if 'user' not in st.session_state:
     login_form()
     st.stop()
 
-# Динамическая сборка меню на основе колонок из DB
+# 2. ПРИМЕНЯЕМ СТИЛИ
+apply_system_styles()
+
+# --- СНАЧАЛА ИЗВЛЕКАЕМ ДАННЫЕ (ПЕРЕНЕСЕНО СЮДА) ---
+user_data = st.session_state.user_data
+company = user_data['companies'] # Используем 'company' для проверки модулей
+company_info = user_data['companies'] # Оставляем для блока дизайна
+full_name = user_data.get('full_name', 'Сотрудник')
+role = user_data.get('role', 'worker')
+
+# --- ТЕПЕРЬ СОБИРАЕМ МЕНЮ (ОШИБКИ НЕ БУДЕТ) ---
 options = []
 icons = []
 
@@ -1309,15 +1314,18 @@ if company.get('module_base'):
     options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
     icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
 
-if company.get('module_map'): options.append("Карта"); icons.append("map")
-if company.get('module_analytics'): options.append("Аналитика"); icons.append("graph-up-arrow")
-if company.get('module_ai'): options.append("AI-support"); icons.append("robot")
+if company.get('module_map'): 
+    options.append("Карта")
+    icons.append("map")
+if company.get('module_analytics'): 
+    options.append("Аналитика")
+    icons.append("graph-up-arrow")
+if company.get('module_ai'): 
+    options.append("AI-support")
+    icons.append("robot")
 
 options.extend(["Настройки", "Выйти"])
 icons.extend(["gear", "box-arrow-right"])
-
-# 1. Настройка страницы (ВСЕГДА ПЕРВАЯ)
-st.set_page_config(layout="wide", page_title="W&TMS", page_icon="🏛️")
 
 # 2. ОПРЕДЕЛЯЕМ ФУНКЦИЮ (Чтобы Python её "видел")
 def apply_system_styles():
@@ -1370,14 +1378,6 @@ def apply_system_styles():
         ::-webkit-scrollbar-thumb { background: #d1d1d1; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
-
-# Извлекаем данные (уже проверено, что они есть после логина)
-user_data = st.session_state.user_data
-company_info = user_data['companies']
-full_name = user_data.get('full_name', 'Сотрудник')
-role = user_data.get('role', 'worker')
-
-apply_system_styles()
 
 with st.sidebar:
     # --- БЛОК КОМПАНИИ (Супер дизайн) ---
