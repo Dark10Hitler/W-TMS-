@@ -1296,6 +1296,29 @@ from auth import login_form
 from streamlit_option_menu import option_menu
 import pandas as pd
 
+# 1. СТЕНА АВТОРИЗАЦИИ
+if 'user' not in st.session_state:
+    login_form()
+    st.stop()
+
+# 2. ПРИМЕНЯЕМ СТИЛИ
+apply_system_styles()
+
+# Динамическая сборка меню на основе колонок из DB
+options = []
+icons = []
+
+if company.get('module_base'):
+    options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
+    icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
+
+if company.get('module_map'): options.append("Карта"); icons.append("map")
+if company.get('module_analytics'): options.append("Аналитика"); icons.append("graph-up-arrow")
+if company.get('module_ai'): options.append("AI-support"); icons.append("robot")
+
+options.extend(["Настройки", "Выйти"])
+icons.extend(["gear", "box-arrow-right"])
+
 # 1. Настройка страницы (ВСЕГДА ПЕРВАЯ)
 st.set_page_config(layout="wide", page_title="W&TMS", page_icon="🏛️")
 
@@ -1350,29 +1373,6 @@ def apply_system_styles():
         ::-webkit-scrollbar-thumb { background: #d1d1d1; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
-    
-# 1. СТЕНА АВТОРИЗАЦИИ
-if 'user' not in st.session_state:
-    login_form()
-    st.stop()
-
-# 2. ПРИМЕНЯЕМ СТИЛИ
-apply_system_styles()
-
-# Динамическая сборка меню на основе колонок из DB
-options = []
-icons = []
-
-if company.get('module_base'):
-    options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
-    icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
-
-if company.get('module_map'): options.append("Карта"); icons.append("map")
-if company.get('module_analytics'): options.append("Аналитика"); icons.append("graph-up-arrow")
-if company.get('module_ai'): options.append("AI-support"); icons.append("robot")
-
-options.extend(["Настройки", "Выйти"])
-icons.extend(["gear", "box-arrow-right"])
 
 # Извлекаем данные (уже проверено, что они есть после логина)
 user_data = st.session_state.user_data
