@@ -652,10 +652,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. ЖЕСТКАЯ ПРОВЕРКА АВТОРИЗАЦИИ (СТЕНА) ---
+# --- 2. ЖЕСТКАЯ ПРОВЕРКА АВТОРИЗАЦИИ ---
 if 'user' not in st.session_state:
-    login_form() # Рисуем ТОЛЬКО центрированное окно входа
-    st.stop() # ОСТАНАВЛИВАЕМ ВЫПОЛНЕНИЕ! Весь код ниже не запустится.
+    # Здесь НЕТ системных стилей, только стили из auth.py
+    login_form() 
+    st.stop() 
+
+# --- 3. ЕСЛИ МЫ ЗДЕСЬ, ЗНАЧИТ ЮЗЕР ЗАЛОГИНЕН ---
+apply_system_styles() # Включаем "Windows 11" только сейчас!
 
 # --- 3. КОД ДЛЯ АВТОРИЗОВАННЫХ ПОЛЬЗОВАТЕЛЕЙ (ПОДГРУЖАЕТСЯ ПОТОМ) ---
 # Если мы здесь, значит юзер залогинен и st.stop() не сработал.
@@ -665,8 +669,6 @@ company_name = user_data['companies']['company_name']
 # Теперь рисуем боковое меню, хедер и т.д.
 st.sidebar.title(f"🏢 {company_name}")
 st.sidebar.write(f"👤 {user_data['full_name']} ({user_data['role']})")
-
-# ... (Твоя логика меню на основе тумблеров) ...
 
 if st.sidebar.button("Выйти"):
     del st.session_state.user
@@ -2138,22 +2140,19 @@ elif selected == "Настройки":
 import streamlit as st
 from supabase import create_client
 
-# Подключение к Supabase
 supabase = create_client(st.secrets["url"], st.secrets["key"])
 
 def login_form():
-    # --- СУПЕР ДИЗАЙН: АНИМИРОВАННЫЙ ФОН И СТЕКЛЯННЫЙ КВАДРАТ ---
     st.markdown("""
         <style>
-            /* Скрываем стандартный мусор Streamlit */
-            [data-testid="stHeader"], [data-testid="stSidebar"], [data-testid="stFooter"] { visibility: hidden; }
+            /* Усиленный сброс стилей Streamlit для экрана входа */
+            [data-testid="stHeader"], [data-testid="stSidebar"] { display: none !important; }
             
-            /* Анимированный градиентный фон */
+            /* Анимированный фон с принудительным приоритетом */
             .stApp {
-                background: linear-gradient(-45deg, #0f172a, #1e293b, #334155, #020617);
-                background-size: 400% 400%;
-                animation: gradient 15s ease infinite;
-                height: 100vh;
+                background: linear-gradient(-45deg, #0f172a, #1e293b, #020617) !important;
+                background-size: 400% 400% !important;
+                animation: gradient 15s ease infinite !important;
             }
 
             @keyframes gradient {
@@ -2162,90 +2161,73 @@ def login_form():
                 100% { background-position: 0% 50%; }
             }
 
-            /* Контейнер-центровщик */
             .main-login-wrapper {
                 display: flex;
-                flex-direction: column;
                 align-items: center;
                 justify-content: center;
                 height: 90vh;
-                width: 100%;
             }
 
-            /* Стеклянный квадрат (Glassmorphism) */
             .login-card {
-                background: rgba(255, 255, 255, 0.05);
-                backdrop-filter: blur(20px);
-                -webkit-backdrop-filter: blur(20px);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 24px;
-                padding: 50px;
-                width: 100%;
-                max-width: 420px;
+                background: rgba(255, 255, 255, 0.07) !important;
+                backdrop-filter: blur(25px) !important;
+                -webkit-backdrop-filter: blur(25px) !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                border-radius: 28px !important;
+                padding: 60px;
+                width: 420px;
                 box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
                 text-align: center;
             }
 
-            /* Минималистичный текст */
             .title-text {
-                font-family: 'Inter', sans-serif;
-                color: white;
-                font-size: 32px;
-                font-weight: 700;
-                letter-spacing: -1px;
-                margin-bottom: 8px;
+                color: white !important;
+                font-size: 38px !important;
+                font-weight: 800 !important;
+                letter-spacing: -1.5px !important;
+                margin-bottom: 0px !important;
             }
             .subtitle-text {
-                color: #94a3b8;
-                font-size: 14px;
-                margin-bottom: 32px;
-                text-transform: uppercase;
-                letter-spacing: 1px;
+                color: #64748b !important;
+                font-size: 12px !important;
+                letter-spacing: 2px !important;
+                margin-bottom: 40px !important;
             }
 
-            /* Кастомизация полей ввода (убираем белые рамки) */
-            div[data-baseweb="input"] {
-                background-color: rgba(0, 0, 0, 0.2) !important;
-                border-radius: 12px !important;
+            /* Чистим поля ввода */
+            .stTextInput input {
+                background-color: rgba(0, 0, 0, 0.3) !important;
                 border: 1px solid rgba(255, 255, 255, 0.1) !important;
                 color: white !important;
+                border-radius: 12px !important;
             }
-            input { color: white !important; }
         </style>
     """, unsafe_allow_html=True)
 
-    # Обертка для центрирования
     st.markdown('<div class="main-login-wrapper">', unsafe_allow_html=True)
-    
-    # Начало карточки
-    st.markdown('<div class="login-card">', unsafe_allow_html=True)
-    st.markdown('<p class="title-text">IMPERIA</p>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle-text">Warehouse Management System</p>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="login-card">', unsafe_allow_html=True)
+        st.markdown('<p class="title-text">IMPERIA</p>', unsafe_allow_html=True)
+        st.markdown('<p class="subtitle-text">MANAGEMENT SYSTEM</p>', unsafe_allow_html=True)
 
-    # Поля ввода (label_visibility скрывает стандартные надписи, оставляя чистый вид)
-    email = st.text_input("Email", placeholder="Login", label_visibility="collapsed")
-    password = st.text_input("Password", type="password", placeholder="Password", label_visibility="collapsed")
-    
-    st.markdown("<div style='margin-top: 25px;'></div>", unsafe_allow_html=True)
+        email = st.text_input("Email", placeholder="Username", label_visibility="collapsed")
+        password = st.text_input("Password", type="password", placeholder="Password", label_visibility="collapsed")
+        
+        st.write("") # Отступ
 
-    # Кнопка входа
-    if st.button("ENTER SYSTEM", use_container_width=True, type="primary"):
-        try:
-            response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-            if response.user:
-                st.session_state.user = response.user
-                user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", response.user.id).single().execute()
-                st.session_state.user_data = user_profile.data
-                st.rerun()
-        except:
-            st.error("Access Denied")
+        if st.button("SIGN IN", use_container_width=True, type="primary"):
+            try:
+                response = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                if response.user:
+                    st.session_state.user = response.user
+                    user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", response.user.id).single().execute()
+                    st.session_state.user_data = user_profile.data
+                    st.rerun()
+            except:
+                st.error("Invalid credentials")
 
-    # Ссылка на поддержку (минимализм)
-    if st.button("Need help?", help="Contact IT Director", use_container_width=True):
-        st.toast("📞 +373 6803 1705 | 📧 denis2305den4ik@gmail.com")
-
-    st.markdown('</div>', unsafe_allow_html=True) # Закрываем карточку
-    st.markdown('</div>', unsafe_allow_html=True) # Закрываем обертку
+        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # --- 1. УМНАЯ ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
 TABLES_TO_LOAD = {
