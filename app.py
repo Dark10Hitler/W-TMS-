@@ -1291,42 +1291,6 @@ def show_profile():
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
 
-# 1. СТЕНА АВТОРИЗАЦИИ
-if 'user' not in st.session_state:
-    login_form()
-    st.stop()
-
-# 2. ПРИМЕНЯЕМ СТИЛИ
-apply_system_styles()
-
-# --- СНАЧАЛА ИЗВЛЕКАЕМ ДАННЫЕ (ПЕРЕНЕСЕНО СЮДА) ---
-user_data = st.session_state.user_data
-company = user_data['companies'] # Используем 'company' для проверки модулей
-company_info = user_data['companies'] # Оставляем для блока дизайна
-full_name = user_data.get('full_name', 'Сотрудник')
-role = user_data.get('role', 'worker')
-
-# --- ТЕПЕРЬ СОБИРАЕМ МЕНЮ (ОШИБКИ НЕ БУДЕТ) ---
-options = []
-icons = []
-
-if company.get('module_base'):
-    options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
-    icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
-
-if company.get('module_map'): 
-    options.append("Карта")
-    icons.append("map")
-if company.get('module_analytics'): 
-    options.append("Аналитика")
-    icons.append("graph-up-arrow")
-if company.get('module_ai'): 
-    options.append("AI-support")
-    icons.append("robot")
-
-options.extend(["Настройки", "Выйти"])
-icons.extend(["gear", "box-arrow-right"])
-
 # 2. ОПРЕДЕЛЯЕМ ФУНКЦИЮ (Чтобы Python её "видел")
 def apply_system_styles():
     st.markdown("""
@@ -1432,6 +1396,42 @@ with st.sidebar:
 if selected == "Выйти":
     st.session_state.clear()
     st.rerun()
+
+# 1. СТЕНА АВТОРИЗАЦИИ
+if 'user' not in st.session_state:
+    login_form()
+    st.stop()
+
+# 2. ПРИМЕНЯЕМ СТИЛИ
+apply_system_styles()
+
+# --- СНАЧАЛА ИЗВЛЕКАЕМ ДАННЫЕ (ПЕРЕНЕСЕНО СЮДА) ---
+user_data = st.session_state.user_data
+company = user_data['companies'] # Используем 'company' для проверки модулей
+company_info = user_data['companies'] # Оставляем для блока дизайна
+full_name = user_data.get('full_name', 'Сотрудник')
+role = user_data.get('role', 'worker')
+
+# --- ТЕПЕРЬ СОБИРАЕМ МЕНЮ (ОШИБКИ НЕ БУДЕТ) ---
+options = []
+icons = []
+
+if company.get('module_base'):
+    options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
+    icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
+
+if company.get('module_map'): 
+    options.append("Карта")
+    icons.append("map")
+if company.get('module_analytics'): 
+    options.append("Аналитика")
+    icons.append("graph-up-arrow")
+if company.get('module_ai'): 
+    options.append("AI-support")
+    icons.append("robot")
+
+options.extend(["Настройки", "Выйти"])
+icons.extend(["gear", "box-arrow-right"])
     
 def delete_entry(table_key, entry_id):
     """
