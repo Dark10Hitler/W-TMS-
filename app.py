@@ -1290,7 +1290,29 @@ def show_profile():
                 
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
-            
+
+import streamlit as st
+from auth import login_form
+from streamlit_option_menu import option_menu
+import pandas as pd
+
+# 1. Настройка страницы (ВСЕГДА ПЕРВАЯ)
+st.set_page_config(layout="wide", page_title="W&TMS", page_icon="🏛️")
+
+# 2. ОПРЕДЕЛЯЕМ ФУНКЦИЮ (Чтобы Python её "видел")
+def apply_system_styles():
+    st.markdown("""
+    <style>
+        header { visibility: hidden; height: 0px; }
+        [data-testid="stHeader"] { display: none; }
+        html, body, [data-testid="stAppViewContainer"] {
+            font-family: 'Segoe UI', sans-serif !important;
+            background-color: #F3F3F3 !important;
+        }
+        [data-testid="stSidebar"] { background-color: #FFFFFF !important; }
+    </style>
+    """, unsafe_allow_html=True)
+    
 # 1. СТЕНА АВТОРИЗАЦИИ
 if 'user' not in st.session_state:
     login_form()
