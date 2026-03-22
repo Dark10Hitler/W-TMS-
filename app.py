@@ -111,85 +111,122 @@ def apply_system_styles():
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. ПУБЛИЧНЫЙ РЕЖИМ ВИТРИНЫ (ПРОФЕССИОНАЛЬНЫЙ ВИД) ---
+# --- 3. ПУБЛИЧНЫЙ РЕЖИМ ВИТРИНЫ (СУПЕР КРУПНЫЙ ПЛАН) ---
 if "shelf" in st.query_params:
     shelf_id = st.query_params["shelf"]
     
-    # Стили профессионального приложения
+    # Стили профессионального приложения с МАКСИМАЛЬНЫМ акцентом на фото и имя
     st.markdown("""
         <style>
-            /* Полная зачистка интерфейса Streamlit */
-            header, [data-testid="stSidebar"], [data-testid="stHeader"] { display: none !important; }
-            .main .block-container { padding: 1rem !important; max-width: 600px; }
+            /* 1. ПОЛНАЯ МАскировка элементов Streamlit и формы входа */
+            header, [data-testid="stSidebar"], [data-testid="stHeader"], footer,
+            form, .stButton, [data-testid="stMarkdownContainer"] h1:not(.shelf-title) { 
+                display: none !important; 
+            }
             
             /* Фон всей страницы */
             html, body, [data-testid="stAppViewContainer"] {
                 background-color: #F3F4F6 !important;
+                font-family: 'Segoe UI', system-ui, sans-serif;
             }
 
-            /* Заголовок полки */
+            /* Контейнер основного контента - сужаем для мобильного фокуса */
+            .main .block-container { 
+                padding: 1.5rem !important; 
+                max-width: 650px; /* Идеально для телефонов */
+                margin: 0 auto;
+            }
+
+            /* Шапка витрины */
             .shelf-header {
                 background: #ffffff;
-                padding: 20px;
-                border-radius: 16px;
-                text-align: center;
-                margin-bottom: 20px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-            }
-            .shelf-title { color: #1F2937; font-size: 24px; font-weight: 800; margin: 0; }
-            .shelf-subtitle { color: #6B7280; font-size: 14px; margin-top: 5px; }
-
-            /* Карточка товара */
-            .product-card {
-                background: white;
+                padding: 25px;
                 border-radius: 20px;
-                padding: 12px;
-                margin-bottom: 16px;
+                text-align: center;
+                margin-bottom: 25px;
+                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+                border: 1px solid #E5E7EB;
+            }
+            .shelf-subtitle { color: #6B7280; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
+            .shelf-title { color: #111827; font-size: 28px; font-weight: 800; margin: 0; }
+
+            /* --- СУПЕР КАРТОЧКА ТОВАРА (ВЕРТИКАЛЬНАЯ) --- */
+            .product-hero-card {
+                background: white;
+                border-radius: 24px;
+                overflow: hidden; /* Чтобы скруглить углы фото */
+                margin-bottom: 30px;
+                box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+                border: 1px solid rgba(0,0,0,0.05);
+                transition: transform 0.2s ease;
+            }
+            .product-hero-card:active { transform: scale(0.98); } /* Эффект нажатия */
+
+            /* Контейнер для фото - занимает всю ширину, высокая фиксированная высота */
+            .product-hero-img-container {
+                width: 100%;
+                height: 380px; /* Очень крупное фото */
+                background-color: #F9FAFB;
                 display: flex;
-                gap: 15px;
                 align-items: center;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-                border: 1px solid rgba(0,0,0,0.03);
+                justify-content: center;
+                overflow: hidden;
+                border-bottom: 1px solid #F3F4F6;
             }
-            .product-img {
-                width: 90px;
-                height: 90px;
-                border-radius: 12px;
-                object-fit: cover;
-                background: #F9FAFB;
+            .product-hero-img {
+                max-width: 100%;
+                max-height: 100%;
+                object-fit: contain; /* Показывать весь товар без обрезки */
+                padding: 10px; /* Чтобы товар не касался краев */
             }
-            .product-info { flex: 1; }
-            .product-name {
-                font-size: 17px;
-                font-weight: 700;
+
+            /* Блок информации под фото */
+            .product-hero-info {
+                padding: 25px;
+            }
+
+            /* СУПЕР КРУПНОЕ НАЗВАНИЕ */
+            .product-hero-name {
+                font-size: 32px; /* Максимальный размер */
+                font-weight: 800;
                 color: #111827;
-                margin-bottom: 4px;
-                line-height: 1.2;
+                margin: 0 0 10px 0;
+                line-height: 1.1;
+                letter-spacing: -0.5px;
+            }
+
+            /* Вспомогательная информация (меньше акцента) */
+            .product-hero-meta {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-top: 15px;
+                padding-top: 15px;
+                border-top: 1px solid #F3F4F6;
             }
             .product-id {
-                font-size: 12px;
+                font-size: 13px;
                 color: #9CA3AF;
-                font-family: monospace;
-                margin-bottom: 8px;
+                font-family: 'Courier New', monospace;
             }
             .status-badge {
                 display: inline-block;
-                padding: 4px 12px;
+                padding: 6px 16px;
                 border-radius: 99px;
-                font-size: 11px;
+                font-size: 12px;
                 font-weight: 700;
                 text-transform: uppercase;
-                background: #DCFCE7;
-                color: #166534;
+                background: #DCFCE7; /* Нежно-зеленый */
+                color: #166534; /* Темно-зеленый */
             }
             
-            /* Прячем форму логина, если она вдруг просачивается */
-            form, .stButton, [data-testid="stMarkdownContainer"] h1:not(.shelf-title) {
-                display: none !important;
-            }
-            .shelf-content { display: block !important; }
+            /* Обеспечиваем отображение только контента витрины */
+            .shelf-content-wrapper { display: block !important; }
         </style>
     """, unsafe_allow_html=True)
+
+    # Заворачиваем всё в wrapper для дополнительной изоляции
+    st.markdown('<div class="shelf-content-wrapper">', unsafe_allow_html=True)
 
     # Шапка витрины
     st.markdown(f"""
@@ -200,28 +237,39 @@ if "shelf" in st.query_params:
     """, unsafe_allow_html=True)
 
     try:
+        # Загружаем товары для конкретной полки напрямую из Supabase
         products = supabase.table("global_inventory").select("*").eq("cell", shelf_id).execute().data
         
         if products:
             for p in products:
-                img_url = p['image_url'] if p['image_url'] else "https://via.placeholder.com/150"
+                # URL фото или плейсхолдер
+                img_url = p['image_url'] if p['image_url'] else "https://via.placeholder.com/400?text=Нет+Фото"
+                
+                # Рендерим крупную карточку
                 st.markdown(f"""
-                    <div class="product-card">
-                        <img src="{img_url}" class="product-img">
-                        <div class="product-info">
-                            <div class="product-name">{p['name']}</div>
-                            <div class="product-id">ID: {p['id'][:8]}...</div>
-                            <div class="status-badge">● В наличии</div>
+                    <div class="product-hero-card">
+                        <div class="product-hero-img-container">
+                            <img src="{img_url}" class="product-hero-img" alt="{p['name']}">
+                        </div>
+                        <div class="product-hero-info">
+                            <h2 class="product-hero-name">{p['name']}</h2>
+                            <div class="product-hero-meta">
+                                <span class="product-id">ID: {p['id'][:10]}...</span>
+                                <span class="status-badge">● В наличии</span>
+                            </div>
                         </div>
                     </div>
                 """, unsafe_allow_html=True)
         else:
-            st.info("На этом стеллаже пока пусто")
+            st.info(f"На стеллаже {shelf_id} пока нет товаров.")
             
     except Exception as e:
-        st.error("Ошибка загрузки данных")
+        st.error("Ошибка подключения к базе данных.")
     
+    st.markdown('</div>', unsafe_allow_html=True) # Закрываем wrapper
+
     # КРИТИЧЕСКИЙ МОМЕНТ: Остановка выполнения
+    # Это гарантирует, что окно входа (login_form) не появится снизу
     st.stop()
 
 # 3. СТЕНА АВТОРИЗАЦИИ (Если не вошел — стоп)
