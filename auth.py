@@ -107,6 +107,7 @@ def login_form():
                         
                         if user_profile.data:
                             st.session_state.user_data = user_profile.data
+                            st.session_state.saved_email = email
                             st.success("Успешный вход!")
                             st.rerun()
                         else:
