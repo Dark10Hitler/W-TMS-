@@ -39,21 +39,16 @@ def show_support_modal():
         </a>
     </div>
     """
-    # САМАЯ ВАЖНАЯ СТРОЧКА:
     st.markdown(html_code, unsafe_allow_html=True)
-    
+
 def login_form():
     st.markdown("""
         <style>
             [data-testid="stHeader"], [data-testid="stSidebar"], [data-testid="stDecoration"] { display: none !important; }
-
-            /* Строгий OLED-градиент */
             .stApp {
                 background-color: #000000 !important;
                 background-image: radial-gradient(circle at center, #111827 0%, #030712 100%) !important;
             }
-
-            /* Идеальное центрирование */
             [data-testid="block-container"] {
                 display: flex !important;
                 align-items: center !important;
@@ -61,8 +56,6 @@ def login_form():
                 height: 100vh !important;
                 padding: 0 !important;
             }
-
-            /* Квадрат Odoo Enterprise */
             [data-testid="column"]:nth-of-type(2) {
                 background: #0a0f18 !important;
                 border: 1px solid #1e293b !important;
@@ -71,53 +64,21 @@ def login_form():
                 box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7) !important;
                 max-width: 420px !important;
             }
-
-            /* Инпуты с иконками */
             .stTextInput input {
                 background-color: #030712 !important;
                 color: #f8fafc !important;
                 border: 1px solid #1e293b !important;
                 border-radius: 8px !important;
                 padding: 12px 16px !important;
-                font-family: 'Inter', sans-serif;
             }
-            .stTextInput input:focus {
-                border-color: #3b82f6 !important;
-                box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15) !important;
-            }
-
-            /* Кнопка Sign In */
             button[kind="primary"] {
                 background-color: #2563eb !important;
                 border-radius: 8px !important;
                 font-weight: 600 !important;
                 height: 46px !important;
-                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
             }
-            button[kind="primary"]:hover {
-                background-color: #1d4ed8 !important;
-                transform: translateY(-1px);
-            }
-
-            /* Заголовок */
-            .brand-h {
-                color: #ffffff;
-                font-size: 32px;
-                font-weight: 800;
-                font-family: 'Inter';
-                text-align: center;
-                letter-spacing: -1px;
-                margin-bottom: 4px;
-            }
-            .brand-s {
-                color: #475569;
-                font-size: 11px;
-                font-weight: 600;
-                text-align: center;
-                text-transform: uppercase;
-                letter-spacing: 3px;
-                margin-bottom: 32px;
-            }
+            .brand-h { color: #ffffff; font-size: 32px; font-weight: 800; text-align: center; letter-spacing: -1px; margin-bottom: 4px; }
+            .brand-s { color: #475569; font-size: 11px; font-weight: 600; text-align: center; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 32px; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -133,28 +94,27 @@ def login_form():
         st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
 
         if st.button("Access Terminal", use_container_width=True, type="primary"):
-        try:
-            # 1. Пробуем войти в Auth
-            auth_response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-            
-            if auth_response.user:
-                st.session_state.user = auth_response.user
+            try:
+                # 1. Пробуем войти в Auth
+                auth_response = supabase.auth.sign_in_with_password({"email": email, "password": password})
                 
-                # 2. Пробуем получить профиль
-                try:
-                    user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", auth_response.user.id).single().execute()
+                if auth_response.user:
+                    st.session_state.user = auth_response.user
                     
-                    if user_profile.data:
-                        st.session_state.user_data = user_profile.data
-                        st.success("Успешный вход!")
-                        st.rerun()
-                    else:
-                        st.error("Профиль создан, но данные не получены. Проверь таблицу profiles.")
-                except Exception as profile_err:
-                    st.error(f"Ошибка данных профиля: {profile_err}")
-                    # Это часто случается, если company_id в профиле пустой
-        except Exception as auth_err:
-            st.error("Неверный логин или пароль")
+                    # 2. Пробуем получить профиль
+                    try:
+                        user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", auth_response.user.id).single().execute()
+                        
+                        if user_profile.data:
+                            st.session_state.user_data = user_profile.data
+                            st.success("Успешный вход!")
+                            st.rerun()
+                        else:
+                            st.error("Данные профиля отсутствуют в БД.")
+                    except Exception as profile_err:
+                        st.error(f"Ошибка БД: {profile_err}")
+            except Exception as auth_err:
+                st.error("Неверный логин или пароль")
 
         if st.button("System Support", use_container_width=True):
             show_support_modal()
