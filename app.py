@@ -111,38 +111,118 @@ def apply_system_styles():
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. ПУБЛИЧНЫЙ РЕЖИМ ВИТРИНЫ (БЕЗ ПРОВЕРОК) ---
-# Этот блок стоит ВЫШЕ авторизации. Если он срабатывает, дальше код не идет.
+# --- 3. ПУБЛИЧНЫЙ РЕЖИМ ВИТРИНЫ (ПРОФЕССИОНАЛЬНЫЙ ВИД) ---
 if "shelf" in st.query_params:
     shelf_id = st.query_params["shelf"]
-    apply_system_styles()
     
-    st.markdown(f"<h1 style='text-align: center;'>📍 Витрина стеллажа: {shelf_id}</h1>", unsafe_allow_html=True)
-    
+    # Стили профессионального приложения
+    st.markdown("""
+        <style>
+            /* Полная зачистка интерфейса Streamlit */
+            header, [data-testid="stSidebar"], [data-testid="stHeader"] { display: none !important; }
+            .main .block-container { padding: 1rem !important; max-width: 600px; }
+            
+            /* Фон всей страницы */
+            html, body, [data-testid="stAppViewContainer"] {
+                background-color: #F3F4F6 !important;
+            }
+
+            /* Заголовок полки */
+            .shelf-header {
+                background: #ffffff;
+                padding: 20px;
+                border-radius: 16px;
+                text-align: center;
+                margin-bottom: 20px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            }
+            .shelf-title { color: #1F2937; font-size: 24px; font-weight: 800; margin: 0; }
+            .shelf-subtitle { color: #6B7280; font-size: 14px; margin-top: 5px; }
+
+            /* Карточка товара */
+            .product-card {
+                background: white;
+                border-radius: 20px;
+                padding: 12px;
+                margin-bottom: 16px;
+                display: flex;
+                gap: 15px;
+                align-items: center;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                border: 1px solid rgba(0,0,0,0.03);
+            }
+            .product-img {
+                width: 90px;
+                height: 90px;
+                border-radius: 12px;
+                object-fit: cover;
+                background: #F9FAFB;
+            }
+            .product-info { flex: 1; }
+            .product-name {
+                font-size: 17px;
+                font-weight: 700;
+                color: #111827;
+                margin-bottom: 4px;
+                line-height: 1.2;
+            }
+            .product-id {
+                font-size: 12px;
+                color: #9CA3AF;
+                font-family: monospace;
+                margin-bottom: 8px;
+            }
+            .status-badge {
+                display: inline-block;
+                padding: 4px 12px;
+                border-radius: 99px;
+                font-size: 11px;
+                font-weight: 700;
+                text-transform: uppercase;
+                background: #DCFCE7;
+                color: #166534;
+            }
+            
+            /* Прячем форму логина, если она вдруг просачивается */
+            form, .stButton, [data-testid="stMarkdownContainer"] h1:not(.shelf-title) {
+                display: none !important;
+            }
+            .shelf-content { display: block !important; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Шапка витрины
+    st.markdown(f"""
+        <div class="shelf-header">
+            <p class="shelf-subtitle">ИНФОРМАЦИЯ О СТЕЛЛАЖЕ</p>
+            <h1 class="shelf-title">📍 {shelf_id}</h1>
+        </div>
+    """, unsafe_allow_html=True)
+
     try:
-        # Загружаем товары для конкретной полки напрямую из Supabase
         products = supabase.table("global_inventory").select("*").eq("cell", shelf_id).execute().data
         
         if products:
             for p in products:
-                with st.container():
-                    st.markdown(f"""
+                img_url = p['image_url'] if p['image_url'] else "https://via.placeholder.com/150"
+                st.markdown(f"""
                     <div class="product-card">
-                        <div style="display: flex; gap: 20px; align-items: center;">
-                            <img src="{p['image_url'] if p['image_url'] else 'https://via.placeholder.com/150'}" width="120" style="border-radius: 8px;">
-                            <div>
-                                <h3 style="margin: 0;">{p['name']}</h3>
-                                <p style="color: #666; margin: 5px 0;">ID: {p['id']}</p>
-                                <span style="background: #E8F0FE; color: #1A73E8; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 600;">В наличии</span>
-                            </div>
+                        <img src="{img_url}" class="product-img">
+                        <div class="product-info">
+                            <div class="product-name">{p['name']}</div>
+                            <div class="product-id">ID: {p['id'][:8]}...</div>
+                            <div class="status-badge">● В наличии</div>
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
         else:
-            st.warning(f"На стеллаже {shelf_id} пока нет товаров.")
+            st.info("На этом стеллаже пока пусто")
             
     except Exception as e:
-        st.error("Ошибка подключения к базе данных. Но мы хотя бы попытались!")
+        st.error("Ошибка загрузки данных")
+    
+    # КРИТИЧЕСКИЙ МОМЕНТ: Остановка выполнения
+    st.stop()
 
 # 3. СТЕНА АВТОРИЗАЦИИ (Если не вошел — стоп)
 if 'user' not in st.session_state:
