@@ -4,52 +4,53 @@ from supabase import create_client
 # Подключение к Supabase
 supabase = create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
 
-# Подключаем шрифты и иконки Google
-st.markdown("""
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0" />
-""", unsafe_allow_html=True)
-
-@st.dialog("Контактная информация")
+@st.dialog("System Support")
 def show_support_modal():
-    # Профессиональная карточка директора
-    st.markdown("""
-        <div style="text-align: center; margin-bottom: 20px;">
-            <div style="font-size: 48px; color: #3b82f6; margin-bottom: 10px;">
-                <span class="material-symbols-rounded" style="font-size: 64px;">account_circle</span>
+    # SVG иконки для независимости от внешних шрифтов
+    icon_phone = '<svg style="width:18px;height:18px;fill:#3b82f6" viewBox="0 0 24 24"><path d="M6.62,10.79C8.06,13.62 10.38,15.94 13.21,17.38L15.41,15.18C15.69,14.9 16.08,14.82 16.43,14.93C17.55,15.3 18.75,15.5 20,15.5A1,1 0 0,1 21,16.5V20A1,1 0 0,1 20,21A17,17 0 0,1 3,4A1,1 0 0,1 4,3H7.5A1,1 0 0,1 8.5,4C8.5,5.25 8.7,6.45 9.07,7.57C9.18,7.92 9.1,8.31 8.82,8.59L6.62,10.79Z"/></svg>'
+    icon_mail = '<svg style="width:18px;height:18px;fill:#3b82f6" viewBox="0 0 24 24"><path d="M20,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V6C22,4.89 21.11,4 20,4M20,18H4V8L12,13L20,8V18M20,6L12,11L4,6V6H20V6Z"/></svg>'
+    icon_wa = '<svg style="width:18px;height:18px;fill:white;margin-right:8px" viewBox="0 0 448 512"><path d="M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 39.1 10.2 77.3 29.6 111L0 480l117.7-30.9c32.4 17.7 68.9 27 106.1 27h.1c122.3 0 224.1-99.6 224.1-222 0-59.3-25.2-115-67.1-157zm-157 341.6c-33.2 0-65.7-8.9-94-25.7l-6.7-4-69.8 18.3L72 359.2l-4.4-7c-18.5-29.4-28.2-63.3-28.2-98.2 0-101.7 82.8-184.5 184.6-184.5 49.3 0 95.6 19.2 130.4 54.1 34.8 34.9 56.2 81.2 56.1 130.5 0 101.8-84.9 184.6-186.6 184.6zm101.2-138.2c-5.5-2.8-32.8-16.2-37.9-18-5.1-1.9-8.8-2.8-12.5 2.8-3.7 5.6-14.3 18-17.6 21.8-3.2 3.7-6.5 4.2-12 1.4-5.5-2.8-23.1-8.5-44-27.1-16.2-14.5-27.2-32.4-30.3-37.9-3.2-5.5-.3-8.5 2.5-11.2 2.5-2.5 5.5-6.5 8.3-9.7 2.8-3.3 3.7-5.6 5.6-9.3 1.8-3.7.9-6.9-.5-9.7-1.4-2.8-12.5-30.1-17.1-41.2-4.5-10.8-9.1-9.3-12.5-9.5-3.2-.2-6.9-.2-10.6-.2-3.7 0-9.7 1.4-14.8 6.9-5.1 5.6-19.4 19-19.4 46.3 0 27.3 19.9 53.7 22.6 57.4 2.8 3.7 39.1 59.7 94.8 83.8 13.2 5.8 23.5 9.2 31.5 11.8 13.3 4.2 25.4 3.6 35 2.2 10.7-1.5 32.8-13.4 37.4-26.4 4.6-13 4.6-24.1 3.2-26.4-1.3-2.5-5-3.9-10.5-6.6z"/></svg>'
+    icon_vb = '<svg style="width:18px;height:18px;fill:white;margin-right:8px" viewBox="0 0 512 512"><path d="M444 49.9C431.3 38.2 379.9 0 265.3 0 145.3 0 62.6 47.7 44.2 64.2c-35.7 32.1-46.6 73.8-44.1 123.9 2.5 50.1 23.3 133 73 174.9l-4.7 66.3c-1.3 17.6 15 29.9 29.8 23L192 404c27.1 7.2 55.4 11.2 84.7 11.2 144 0 235.3-77.1 235.3-207.2-.1-83.9-34.7-133.2-68-158.1zm-32.3 273.7c-14.7 30.6-67.6 62.6-93.5 62.6-20.3 0-82.3-56.1-137.9-111.7S68.6 172.1 68.6 151.8c0-25.9 32-78.8 62.6-93.5 13.9-6.6 28.9-3.4 36.3 8.3l30.9 49c6.6 10.4 4.6 24.1-4.6 32.1l-24.5 21.3c-6.1 5.3-7.5 14.1-3.3 21 21.5 35.1 50.7 64.3 85.8 85.8 6.9 4.2 15.7 2.8 21-3.3l21.3-24.5c8-9.2 21.7-11.1 32.1-4.6l49 30.9c11.7 7.4 14.9 22.4 8.3 36.3z"/></svg>'
+
+    st.markdown(f"""
+        <div style="text-align: center; font-family: 'Inter', sans-serif; padding: 10px 0;">
+            <div style="margin-bottom: 25px;">
+                <div style="width: 70px; height: 70px; background: #1e293b; border-radius: 50%; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; border: 2px solid #3b82f6;">
+                    <span style="font-size: 35px;">👨‍💻</span>
+                </div>
+                <h2 style="margin:0; color: #f8fafc; font-weight: 700; font-size: 22px;">Денис Маслюк</h2>
+                <p style="margin:4px 0 0; color: #64748b; font-size: 11px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase;">IT Director • Architect</p>
             </div>
-            <h2 style="margin:0; color: #f8fafc; font-weight: 700; font-family: 'Inter';">Денис Маслюк</h2>
-            <p style="margin:0; color: #64748b; font-size: 13px; font-weight: 500; letter-spacing: 0.5px;">IT-ДИРЕКТОР / АРХИТЕКТОР СИСТЕМЫ</p>
-        </div>
-        
-        <div style="background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
-            <div style="display: flex; align-items: center; margin-bottom: 15px;">
-                <span class="material-symbols-rounded" style="color: #3b82f6; margin-right: 12px;">call</span>
-                <div>
-                    <div style="color: #64748b; font-size: 11px;">Телефон</div>
-                    <div style="color: #f8fafc; font-weight: 600;">+373 6803 1705</div>
+            
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 18px; margin-bottom: 25px; text-align: left;">
+                <div style="display: flex; align-items: center; margin-bottom: 12px; gap: 15px;">
+                    {icon_phone}
+                    <div>
+                        <div style="color: #64748b; font-size: 10px; text-transform: uppercase; font-weight: 700;">Телефон</div>
+                        <div style="color: #f8fafc; font-weight: 600; font-size: 15px;">+373 6803 1705</div>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    {icon_mail}
+                    <div>
+                        <div style="color: #64748b; font-size: 10px; text-transform: uppercase; font-weight: 700;">Email</div>
+                        <div style="color: #f8fafc; font-weight: 600; font-size: 14px;">denis2305den4ik@gmail.com</div>
+                    </div>
                 </div>
             </div>
-            <div style="display: flex; align-items: center;">
-                <span class="material-symbols-rounded" style="color: #3b82f6; margin-right: 12px;">mail</span>
-                <div>
-                    <div style="color: #64748b; font-size: 11px;">Email</div>
-                    <div style="color: #f8fafc; font-weight: 600;">denis2305den4ik@gmail.com</div>
-                </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                <a href="https://wa.me/37368031705" target="_blank" style="text-decoration: none;">
+                    <div style="background: #25D366; color: white; padding: 12px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; transition: 0.2s; box-shadow: 0 4px 12px rgba(37, 211, 102, 0.2);">
+                        {icon_wa} WhatsApp
+                    </div>
+                </a>
+                <a href="viber://chat?number=%2B37368031705" target="_blank" style="text-decoration: none;">
+                    <div style="background: #7360f2; color: white; padding: 12px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; transition: 0.2s; box-shadow: 0 4px 12px rgba(115, 96, 242, 0.2);">
+                        {icon_vb} Viber
+                    </div>
+                </a>
             </div>
-        </div>
-        
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-            <a href="https://wa.me/37368031705" target="_blank" style="text-decoration: none;">
-                <div style="background: #075e54; color: white; padding: 12px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px;">
-                    <span class="material-symbols-rounded" style="margin-right: 8px; font-size: 20px;">chat</span> WhatsApp
-                </div>
-            </a>
-            <a href="viber://chat?number=%2B37368031705" target="_blank" style="text-decoration: none;">
-                <div style="background: #7360f2; color: white; padding: 12px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px;">
-                    <span class="material-symbols-rounded" style="margin-right: 8px; font-size: 20px;">forum</span> Viber
-                </div>
-            </a>
         </div>
     """, unsafe_allow_html=True)
 
