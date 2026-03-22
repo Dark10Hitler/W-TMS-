@@ -542,140 +542,85 @@ def save_new_location(product_name, location):
 
 
 
-st.set_page_config(layout="wide", page_title="W&TMS", page_icon="🏛️", initial_sidebar_state="expanded")
+import streamlit as st
+from auth import login_form
 
-st.markdown("""
-<style>
-    /* 1. ПОЛНОЕ УДАЛЕНИЕ ВЕРХНЕЙ ПОЛОСЫ И ДЕКОРАЦИЙ */
-    header { visibility: hidden; height: 0px; }
-    [data-testid="stHeader"] { display: none; }
-    [data-testid="stDecoration"] { display: none; } /* Тонкая цветная полоска сверху */
-    
-    /* 2. ШРИФТЫ И ОСНОВНОЙ ФОН */
-    @import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap');
-    
-    html, body, [data-testid="stAppViewContainer"] {
-        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
-        background-color: #F3F3F3;
-        color: #1B1B1B;
-    }
+# 1. Настройка страницы — ВСЕГДА ПЕРВАЯ СТРОКА
+st.set_page_config(
+    layout="wide", 
+    page_title="W&TMS", 
+    page_icon="🏛️", 
+    initial_sidebar_state="expanded"
+)
 
-    /* Адаптивный контейнер: убираем лишние отступы сверху */
-    .block-container { 
-        padding-top: 1rem !important; 
-        padding-bottom: 1rem !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
-        max-width: 100%; /* Растягиваем на весь экран */
-    }
-
-    /* 3. САЙДБАР (Стиль Windows 11) */
-    [data-testid="stSidebar"] {
-        background-color: #FFFFFF !important;
-        border-right: 1px solid #E5E5E5;
-    }
-
-    /* 4. АДАПТИВНЫЕ КАРТОЧКИ МЕТРИК */
-    div[data-testid="stMetric"] {
-        background-color: #FFFFFF;
-        border: 1px solid #E5E5E5;
-        border-radius: 8px;
-        padding: 1.5% 2% !important; /* Процентные отступы для адаптивности */
-        box-shadow: 0 2px 4px rgba(0,0,0,0.04);
-        transition: all 0.2s ease-in-out;
-    }
-
-    div[data-testid="stMetric"]:hover {
-        box-shadow: 0 6px 15px rgba(0,0,0,0.1);
-        transform: translateY(-2px);
-        border-color: #0067C0;
-    }
-
-    /* Настройка размеров текста метрик, чтобы не "ломались" на малых экранах */
-    div[data-testid="stMetricLabel"] { 
-        font-size: clamp(0.8rem, 1vw, 1rem) !important; 
-        color: #5F6368 !important; 
-    }
-    div[data-testid="stMetricValue"] { 
-        font-size: clamp(1.2rem, 2vw, 2.2rem) !important; 
-        font-weight: 700 !important; 
-    }
-
-    /* 5. КНОПКИ (Умный размер) */
-    .stButton>button {
-        width: 100%; /* На мобильных кнопка будет во всю ширину */
-        max-width: fit-content; /* На десктопе - по размеру текста */
-        min-width: 120px;
-        border-radius: 6px;
-        padding: 0.6rem 1.2rem;
-        font-weight: 600;
-        background-color: #FFFFFF;
-        border: 1px solid #D1D1D1;
-        transition: all 0.2s;
-    }
-
-    .stButton>button[kind="primary"] {
-        background-color: #0067C0;
-        color: white;
-        border: none;
-    }
-
-    /* 6. АДАПТИВНОСТЬ ДЛЯ ТАБЛИЦ И ИНПУТОВ */
-    .stTextInput input, .stSelectbox div {
-        border-radius: 6px !important;
-    }
-
-    /* 7. МЕДИА-ЗАПРОСЫ (Для разных экранов) */
-    @media (max-width: 768px) {
-        .block-container {
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
+# --- ФУНКЦИЯ ДЛЯ СИСТЕМНЫХ СТИЛЕЙ (ЗАПУСКАЕТСЯ ТОЛЬКО ПОСЛЕ ВХОДА) ---
+def apply_system_styles():
+    st.markdown("""
+    <style>
+        /* 1. ПОЛНОЕ УДАЛЕНИЕ ВЕРХНЕЙ ПОЛОСЫ */
+        header { visibility: hidden; height: 0px; }
+        [data-testid="stHeader"] { display: none; }
+        [data-testid="stDecoration"] { display: none; }
+        
+        /* 2. ШРИФТЫ И СВЕТЛЫЙ ФОН СИСТЕМЫ */
+        html, body, [data-testid="stAppViewContainer"] {
+            font-family: 'Segoe UI', system-ui, sans-serif !important;
+            background-color: #F3F3F3 !important; /* Серый фон рабочего стола */
+            color: #1B1B1B !important;
         }
-        /* Увеличиваем кликабельные зоны на телефонах */
+
+        .block-container { 
+            padding-top: 1rem !important; 
+            max-width: 100%; 
+        }
+
+        /* 3. САЙДБАР */
+        [data-testid="stSidebar"] {
+            background-color: #FFFFFF !important;
+            border-right: 1px solid #E5E5E5;
+            visibility: visible !important; /* Показываем сайдбар */
+        }
+
+        /* 4. КНОПКИ */
         .stButton>button {
-            height: 48px;
+            border-radius: 6px;
+            font-weight: 600;
         }
-    }
 
-    /* 8. ТАБЛИЦЫ AgGrid (Windows Style) */
-    .ag-theme-alpine {
-        --ag-border-radius: 8px;
-        --ag-header-height: 40px;
-        --ag-row-height: 45px;
-        --ag-font-size: 14px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-    }
+        /* Таблицы и скроллбары */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #C1C1C1; border-radius: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
 
-    /* Скроллбары */
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-thumb { background: #C1C1C1; border-radius: 10px; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- 2. ЖЕСТКАЯ ПРОВЕРКА АВТОРИЗАЦИИ ---
+# --- 2. ЖЕСТКАЯ ПРОВЕРКА АВТОРИЗАЦИИ (СТЕНА) ---
 if 'user' not in st.session_state:
-    # Здесь НЕТ системных стилей, только стили из auth.py
-    login_form() 
-    st.stop() 
+    # Если юзер не вошел, вызываем форму. 
+    # ВАЖНО: Внутри login_form() в auth.py должны быть свои стили с градиентом!
+    login_form()
+    st.stop() # Дальше код не идет, стили Windows не загружаются
 
-# --- 3. ЕСЛИ МЫ ЗДЕСЬ, ЗНАЧИТ ЮЗЕР ЗАЛОГИНЕН ---
-apply_system_styles() # Включаем "Windows 11" только сейчас!
+# --- 3. КОД ДЛЯ ТЕХ, КТО ВОШЕЛ ---
+# Теперь, когда юзер прошел "стену", включаем системные стили
+apply_system_styles()
 
-# --- 3. КОД ДЛЯ АВТОРИЗОВАННЫХ ПОЛЬЗОВАТЕЛЕЙ (ПОДГРУЖАЕТСЯ ПОТОМ) ---
-# Если мы здесь, значит юзер залогинен и st.stop() не сработал.
+# Извлекаем данные
 user_data = st.session_state.user_data
 company_name = user_data['companies']['company_name']
 
-# Теперь рисуем боковое меню, хедер и т.д.
+# Отрисовка интерфейса
 st.sidebar.title(f"🏢 {company_name}")
 st.sidebar.write(f"👤 {user_data['full_name']} ({user_data['role']})")
+
+# Меню (пример)
+page = st.sidebar.selectbox("Навигация", ["Главная", "Склад", "Логистика"])
 
 if st.sidebar.button("Выйти"):
     del st.session_state.user
     st.rerun()
 
 st.title(f"Добро пожаловать в {company_name}")
-st.write("Теперь подгрузился весь основной интерфейс, таблицы и данные.")
+st.info(f"Активный модуль: {page}")
 
 # 3. Затем системные переменные
 if "items_registry" not in st.session_state:
