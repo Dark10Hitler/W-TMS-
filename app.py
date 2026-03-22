@@ -1290,8 +1290,55 @@ def show_profile():
                 
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
+    
+def delete_entry(table_key, entry_id):
+    """
+    Удаляет запись из Supabase и синхронизирует локальное состояние.
+    """
+    try:
+        # 1. УДАЛЕНИЕ ИЗ ОБЛАКА (Supabase)
+        # Мы обращаемся к таблице по ключу и удаляем строку, где id совпадает
+        response = supabase.table(table_key).delete().eq("id", entry_id).execute()
+        
+        # Проверяем, не пустой ли ответ (если данных нет, значит в БД записи не было)
+        if hasattr(response, 'data'):
+            
+            # 2. УДАЛЕНИЕ ИЗ ЛОКАЛЬНОЙ ПАМЯТИ
+            # Оставляем в стейте только те строки, id которых НЕ равен удаленному
+            st.session_state[table_key] = st.session_state[table_key][
+                st.session_state[table_key]['id'] != entry_id
+            ]
+            
+            # Если удаляем из дочерних таблиц (orders/arrivals), 
+            # нужно не забыть удалить и из сводной таблицы 'main'
+            if table_key != 'main' and 'main' in st.session_state:
+                st.session_state['main'] = st.session_state['main'][
+                    st.session_state['main']['id'] != entry_id
+                ]
+                # Опционально: удалить и из БД таблицы main, если они там дублируются
+                supabase.table("main").delete().eq("id", entry_id).execute()
 
-# 2. ОПРЕДЕЛЯЕМ ФУНКЦИЮ (Чтобы Python её "видел")
+            # 3. УВЕДОМЛЕНИЕ
+            st.toast(f"🗑️ Запись {entry_id} успешно удалена из системы", icon="🚮")
+            time.sleep(0.5)
+            st.rerun()
+            
+    except Exception as e:
+        st.error(f"❌ Ошибка при удалении из базы данных: {e}")
+
+import streamlit as st
+from streamlit_option_menu import option_menu
+import pandas as pd
+
+# 1. Настройка страницы (Всегда первая)
+st.set_page_config(
+    layout="wide", 
+    page_title="W&TMS", 
+    page_icon="🏛️",
+    initial_sidebar_state="expanded"
+)
+
+# 2. ОПРЕДЕЛЯЕМ ФУНКЦИЮ СТИЛЕЙ
 def apply_system_styles():
     st.markdown("""
     <style>
@@ -1343,76 +1390,22 @@ def apply_system_styles():
     </style>
     """, unsafe_allow_html=True)
 
-with st.sidebar:
-    # --- БЛОК КОМПАНИИ (Супер дизайн) ---
-    st.markdown(f"""
-        <div class="company-box">
-            <div class="company-name">
-                🏢 {company_info['company_name']}
-            </div>
-            <div class="user-badge">
-                👤 {full_name} <span style="opacity: 0.5;">|</span> {role}
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-    # --- НАВИГАЦИЯ ---
-    st.markdown("<p style='margin-left: 10px; font-weight: 600; color: #80868B; font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;'>Навигация</p>", unsafe_allow_html=True)
-    
-    selected = option_menu(
-        menu_title=None,
-        options=options,
-        icons=icons,
-        default_index=0,
-        styles={
-            "container": {
-                "padding": "5px!important", 
-                "background-color": "transparent"
-            },
-            "icon": {
-                "color": "#5F6368", 
-                "font-size": "20px" # Увеличенные иконки
-            }, 
-            "nav-link": {
-                "font-size": "15px", # Увеличенный шрифт
-                "font-weight": "500",
-                "text-align": "left", 
-                "margin": "5px 0px", 
-                "height": "48px", # Увеличенная высота кнопки для удобства клика
-                "border-radius": "8px",
-                "color": "#3C4043",
-                "--hover-color": "#F1F3F4"
-            },
-            "nav-link-selected": {
-                "background-color": "#E8F0FE", 
-                "color": "#1A73E8", 
-                "font-weight": "600",
-                "box-shadow": "none"
-            },
-        }
-    )
-
-# 5. ЛОГИКА ВЫХОДА И ПЕРЕКЛЮЧЕНИЯ
-if selected == "Выйти":
-    st.session_state.clear()
-    st.rerun()
-
-# 1. СТЕНА АВТОРИЗАЦИИ
+# 3. СТЕНА АВТОРИЗАЦИИ (Если не вошел — стоп)
 if 'user' not in st.session_state:
-    login_form()
+    login_form() # Предполагается, что функция импортирована из auth.py
     st.stop()
 
-# 2. ПРИМЕНЯЕМ СТИЛИ
+# 4. ПРИМЕНЯЕМ СТИЛИ (Только для авторизованных)
 apply_system_styles()
 
-# --- СНАЧАЛА ИЗВЛЕКАЕМ ДАННЫЕ (ПЕРЕНЕСЕНО СЮДА) ---
+# 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ (Чтобы они были доступны для меню)
 user_data = st.session_state.user_data
-company = user_data['companies'] # Используем 'company' для проверки модулей
-company_info = user_data['companies'] # Оставляем для блока дизайна
+company = user_data['companies'] 
+company_info = user_data['companies'] 
 full_name = user_data.get('full_name', 'Сотрудник')
 role = user_data.get('role', 'worker')
 
-# --- ТЕПЕРЬ СОБИРАЕМ МЕНЮ (ОШИБКИ НЕ БУДЕТ) ---
+# 6. СОБИРАЕМ СПИСКИ ДЛЯ МЕНЮ (На основе доступов из базы)
 options = []
 icons = []
 
@@ -1430,44 +1423,67 @@ if company.get('module_ai'):
     options.append("AI-support")
     icons.append("robot")
 
+# Добавляем системные кнопки в конец списка
 options.extend(["Настройки", "Выйти"])
 icons.extend(["gear", "box-arrow-right"])
-    
-def delete_entry(table_key, entry_id):
-    """
-    Удаляет запись из Supabase и синхронизирует локальное состояние.
-    """
-    try:
-        # 1. УДАЛЕНИЕ ИЗ ОБЛАКА (Supabase)
-        # Мы обращаемся к таблице по ключу и удаляем строку, где id совпадает
-        response = supabase.table(table_key).delete().eq("id", entry_id).execute()
-        
-        # Проверяем, не пустой ли ответ (если данных нет, значит в БД записи не было)
-        if hasattr(response, 'data'):
-            
-            # 2. УДАЛЕНИЕ ИЗ ЛОКАЛЬНОЙ ПАМЯТИ
-            # Оставляем в стейте только те строки, id которых НЕ равен удаленному
-            st.session_state[table_key] = st.session_state[table_key][
-                st.session_state[table_key]['id'] != entry_id
-            ]
-            
-            # Если удаляем из дочерних таблиц (orders/arrivals), 
-            # нужно не забыть удалить и из сводной таблицы 'main'
-            if table_key != 'main' and 'main' in st.session_state:
-                st.session_state['main'] = st.session_state['main'][
-                    st.session_state['main']['id'] != entry_id
-                ]
-                # Опционально: удалить и из БД таблицы main, если они там дублируются
-                supabase.table("main").delete().eq("id", entry_id).execute()
 
-            # 3. УВЕДОМЛЕНИЕ
-            st.toast(f"🗑️ Запись {entry_id} успешно удалена из системы", icon="🚮")
-            time.sleep(0.5)
-            st.rerun()
-            
-    except Exception as e:
-        st.error(f"❌ Ошибка при удалении из базы данных: {e}")
-        
+# 7. ОТРИСОВКА САЙДБАРА (Теперь все переменные определены)
+with st.sidebar:
+    # --- БЛОК КОМПАНИИ (Дизайн) ---
+    st.markdown(f"""
+        <div class="company-box">
+            <div class="company-name">
+                🏢 {company_info['company_name']}
+            </div>
+            <div class="user-badge">
+                👤 {full_name} <span style="opacity: 0.5;">|</span> {role}
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # --- ЗАГОЛОВОК НАВИГАЦИИ ---
+    st.markdown("<p style='margin-left: 10px; font-weight: 600; color: #80868B; font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;'>Навигация</p>", unsafe_allow_html=True)
+    
+    # --- САМО МЕНЮ ---
+    selected = option_menu(
+        menu_title=None,
+        options=options,
+        icons=icons,
+        default_index=0,
+        styles={
+            "container": {
+                "padding": "5px!important", 
+                "background-color": "transparent"
+            },
+            "icon": {
+                "color": "#5F6368", 
+                "font-size": "20px"
+            }, 
+            "nav-link": {
+                "font-size": "15px", 
+                "font-weight": "500",
+                "text-align": "left", 
+                "margin": "5px 0px", 
+                "height": "48px", 
+                "border-radius": "8px",
+                "color": "#3C4043",
+                "font-family": "Segoe UI",
+                "--hover-color": "#F1F3F4"
+            },
+            "nav-link-selected": {
+                "background-color": "#E8F0FE", 
+                "color": "#1A73E8", 
+                "font-weight": "600",
+                "box-shadow": "none"
+            },
+        }
+    )
+
+# 8. ЛОГИКА ПОСЛЕ ВЫБОРА МЕНЮ
+if selected == "Выйти":
+    st.session_state.clear()
+    st.rerun()
+
 if selected == "Main": render_aggrid_table("main", "Основной Реестр")
 elif selected == "Заявки": render_aggrid_table("orders", "Заявки")
 elif selected == "Приходы": render_aggrid_table("arrivals", "Приходы")
