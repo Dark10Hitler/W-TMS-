@@ -1,120 +1,121 @@
 import streamlit as st
 from supabase import create_client
 
-# Подключение к Supabase (используем твою структуру секретов)
-supabase = create_client(
-    st.secrets["supabase"]["url"], 
-    st.secrets["supabase"]["key"]
-)
+# Подключение к Supabase
+supabase = create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
 
 def login_form():
-    # --- СУПЕР ДИЗАЙН: ГРАДИЕНТ И СТЕКЛО ---
+    # --- ULTRA PRO DESIGN: DARK GLASSMORPHISM ---
     st.markdown("""
         <style>
-            /* Скрываем всё лишнее */
-            [data-testid="stHeader"], [data-testid="stSidebar"], [data-testid="stFooter"] { visibility: hidden !important; }
-            
-            /* Анимированный футуристичный фон */
+            /* 1. Скрываем абсолютно всё лишнее */
+            [data-testid="stHeader"], [data-testid="stSidebar"], [data-testid="stFooter"], [data-testid="stDecoration"] {
+                display: none !important;
+            }
+
+            /* 2. Фон: Глубокий темный градиент (не выжигает глаза) */
             .stApp {
-                background: linear-gradient(-45deg, #020617, #0f172a, #1e293b, #020617) !important;
-                background-size: 400% 400% !important;
-                animation: gradient 10s ease infinite !important;
+                background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%) !important;
+                height: 100vh !important;
+                overflow: hidden !important;
+            }
+
+            /* 3. Центрирование контейнера */
+            .main {
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
                 height: 100vh !important;
             }
 
-            @keyframes gradient {
-                0% { background-position: 0% 50%; }
-                50% { background-position: 100% 50%; }
-                100% { background-position: 0% 50%; }
-            }
-
-            /* Контейнер-центрировщик */
-            .main-login-wrapper {
+            /* Контейнер для фиксации "квадрата" */
+            .stVerticalBlock {
+                gap: 0px !important;
                 display: flex;
-                flex-direction: column;
                 align-items: center;
                 justify-content: center;
-                height: 85vh;
-                width: 100%;
             }
 
-            /* Стеклянная карточка (Glassmorphism) */
+            /* 4. Сам квадрат входа (Glass Box) */
             .login-card {
-                background: rgba(255, 255, 255, 0.03) !important;
-                backdrop-filter: blur(25px) !important;
-                -webkit-backdrop-filter: blur(25px) !important;
-                border: 1px solid rgba(255, 255, 255, 0.1) !important;
-                border-radius: 30px !important;
-                padding: 50px 40px !important;
-                width: 100%;
-                max-width: 400px;
-                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+                background: rgba(15, 23, 42, 0.6) !important;
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 20px;
+                padding: 40px;
+                width: 380px; /* Фиксированная ширина квадрата */
+                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
                 text-align: center;
+                margin: auto;
             }
 
-            /* Заголовок системы */
-            .title-text {
-                color: white !important;
-                font-size: 34px !important;
-                font-weight: 800 !important;
-                letter-spacing: -1.5px !important;
-                margin-bottom: 5px !important;
+            /* 5. Типографика */
+            .brand-name {
+                color: #f8fafc;
                 font-family: 'Inter', sans-serif;
+                font-size: 28px;
+                font-weight: 800;
+                letter-spacing: 2px;
+                margin-bottom: 5px;
             }
-            .subtitle-text {
-                color: #64748b !important;
-                font-size: 13px !important;
+            .brand-sub {
+                color: #64748b;
+                font-size: 11px;
                 text-transform: uppercase;
-                letter-spacing: 2px !important;
-                margin-bottom: 35px !important;
+                letter-spacing: 3px;
+                margin-bottom: 30px;
             }
 
-            /* Кастомизация инпутов под темную тему */
+            /* 6. Инпуты: Темные, плоские, современные */
             .stTextInput input {
-                background-color: rgba(0, 0, 0, 0.3) !important;
+                background-color: rgba(255, 255, 255, 0.03) !important;
                 border: 1px solid rgba(255, 255, 255, 0.1) !important;
-                color: white !important;
-                border-radius: 12px !important;
-                padding: 10px !important;
+                color: #f8fafc !important;
+                border-radius: 10px !important;
+                height: 45px !important;
             }
-
-            /* Убираем белые рамки вокруг инпутов при фокусе */
-            .stTextInput input:focus {
-                border-color: #3b82f6 !important;
-                box-shadow: 0 0 0 1px #3b82f6 !important;
+            
+            /* Кнопка входа: Акцентный синий */
+            .stButton>button {
+                background-color: #3b82f6 !important;
+                color: white !important;
+                border: none !important;
+                border-radius: 10px !important;
+                height: 45px !important;
+                font-weight: 700 !important;
+                letter-spacing: 1px !important;
+                margin-top: 10px !important;
+                transition: 0.3s !important;
+            }
+            .stButton>button:hover {
+                background-color: #2563eb !important;
+                box-shadow: 0 0 15px rgba(59, 130, 246, 0.4) !important;
             }
         </style>
     """, unsafe_allow_html=True)
 
-    # Отрисовка структуры
-    st.markdown('<div class="main-login-wrapper">', unsafe_allow_html=True)
+    # HTML Обертка
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
-    
-    st.markdown('<p class="title-text">IMPERIA</p>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle-text">Management System</p>', unsafe_allow_html=True)
+    st.markdown('<div class="brand-name">IMPERIA</div>', unsafe_allow_html=True)
+    st.markdown('<div class="brand-sub">WMS Terminal</div>', unsafe_allow_html=True)
 
-    # Используем label_visibility="collapsed" чтобы убрать лишний текст над полями
-    email = st.text_input("Email", placeholder="Login / Email", label_visibility="collapsed")
+    email = st.text_input("Login", placeholder="Email", label_visibility="collapsed")
     password = st.text_input("Password", type="password", placeholder="Password", label_visibility="collapsed")
     
-    st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
-
-    # Кнопка входа (Primary)
-    if st.button("SIGN IN", use_container_width=True, type="primary"):
+    if st.button("SIGN IN", use_container_width=True):
         try:
             response = supabase.auth.sign_in_with_password({"email": email, "password": password})
             if response.user:
                 st.session_state.user = response.user
-                # Загружаем данные профиля и компании
                 user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", response.user.id).single().execute()
                 st.session_state.user_data = user_profile.data
                 st.rerun()
-        except Exception as e:
-            st.error("Access Denied: Invalid credentials")
+        except:
+            st.error("Invalid Login or Password")
 
-    # Вспомогательная кнопка (Minimal)
-    if st.button("Forgot Password?", help="Contact IT Director", use_container_width=True):
-        st.toast("📞 +373 6803 1705 \n 📧 denis2305den4ik@gmail.com", icon="ℹ️")
+    # Ссылка на помощь
+    if st.button("Support", use_container_width=True, help="Contact Administrator"):
+        st.toast("Admin: +373 6803 1705")
 
-    st.markdown('</div>', unsafe_allow_html=True) # Закрываем card
-    st.markdown('</div>', unsafe_allow_html=True) # Закрываем wrapper
+    st.markdown('</div>', unsafe_allow_html=True)
