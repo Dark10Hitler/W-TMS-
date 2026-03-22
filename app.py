@@ -111,27 +111,38 @@ def apply_system_styles():
     </style>
     """, unsafe_allow_html=True)
 
-# --- РЕЖИМ ВИТРИНЫ ---
+# --- 3. ПУБЛИЧНЫЙ РЕЖИМ ВИТРИНЫ (БЕЗ ПРОВЕРОК) ---
+# Этот блок стоит ВЫШЕ авторизации. Если он срабатывает, дальше код не идет.
 if "shelf" in st.query_params:
     shelf_id = st.query_params["shelf"]
+    apply_system_styles()
     
-    # Оставляем только оформление карточек, НЕ ТРОГАЕМ SIDEBAR
-    st.markdown("""
-        <style>
-            .product-card {
-                background: #f9f9f9;
-                padding: 15px;
-                border-radius: 10px;
-                margin-bottom: 10px;
-                border: 1px solid #eee;
-            }
-            /* Убеждаемся, что хедер не мешает, но кнопку меню не трогаем */
-            header { opacity: 0.1; } 
-        </style>
-    """, unsafe_allow_html=True)
+    st.markdown(f"<h1 style='text-align: center;'>📍 Витрина стеллажа: {shelf_id}</h1>", unsafe_allow_html=True)
     
-    st.markdown(f"<h1 style='text-align: center;'>📍 Стеллаж: {shelf_id}</h1>", unsafe_allow_html=True)
-    st.divider()
+    try:
+        # Загружаем товары для конкретной полки напрямую из Supabase
+        products = supabase.table("global_inventory").select("*").eq("cell", shelf_id).execute().data
+        
+        if products:
+            for p in products:
+                with st.container():
+                    st.markdown(f"""
+                    <div class="product-card">
+                        <div style="display: flex; gap: 20px; align-items: center;">
+                            <img src="{p['image_url'] if p['image_url'] else 'https://via.placeholder.com/150'}" width="120" style="border-radius: 8px;">
+                            <div>
+                                <h3 style="margin: 0;">{p['name']}</h3>
+                                <p style="color: #666; margin: 5px 0;">ID: {p['id']}</p>
+                                <span style="background: #E8F0FE; color: #1A73E8; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 600;">В наличии</span>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            st.warning(f"На стеллаже {shelf_id} пока нет товаров.")
+            
+    except Exception as e:
+        st.error("Ошибка подключения к базе данных. Но мы хотя бы попытались!")
 
 # 3. СТЕНА АВТОРИЗАЦИИ (Если не вошел — стоп)
 if 'user' not in st.session_state:
