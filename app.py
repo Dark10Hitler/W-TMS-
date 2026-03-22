@@ -1372,52 +1372,46 @@ def show_profile():
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
             
-with st.sidebar:
-    st.markdown("""
-        <div style='padding: 10px 0px;'>
-            <h2 style='color: #1E1E1E; font-family: "Segoe UI", Tahoma, Geneva, sans-serif; font-size: 22px; font-weight: 600;'>
-                📦 LOGISTICS W&TMS
-            </h2>
-            <p style='color: #666; font-size: 12px; margin-top: -10px;'>Warehouse Management System</p>
-        </div>
-    """, unsafe_allow_html=True)
+# Получаем данные компании из сессии
+company = st.session_state.user_data['companies']
 
+# --- СОБИРАЕМ МЕНЮ С НУЛЯ ---
+options = []
+icons = []
+
+# 1. BASE (Всегда первый, если true)
+if company.get('module_base'):
+    options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
+    icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
+
+# 2. MAP (Добавляется после базы)
+if company.get('module_map'):
+    options.append("Карта")
+    icons.append("map")
+
+# 3. ANALYTICS
+if company.get('module_analytics'):
+    options.append("Аналитика")
+    icons.append("graph-up-arrow")
+
+# 4. AI-SUPPORT
+if company.get('module_ai'):
+    options.append("AI-support")
+    icons.append("robot")
+
+# 5. СИСТЕМА (Всегда в конце)
+options.extend(["Настройки", "Выйти"])
+icons.extend(["gear", "box-arrow-right"])
+
+# --- ВЫВОДИМ В SIDEBAR ---
+with st.sidebar:
     selected = option_menu(
-        menu_title=None, # Убираем заголовок меню для минимализма
-        options=[
-            "Main", "База Данных", "Заявки", "Приходы", 
-            "Дополнения", "Брак", "Карта", "Аналитика", "Настройки"
-        ],
-        icons=[
-            "house", "database-fill", "clipboard2-check", "box-arrow-in-down", 
-            "plus-circle", "exclamation-octagon", "map", "graph-up-arrow", "gear"
-        ],
-        menu_icon="cast",
+        menu_title="W&TMS Terminal",
+        options=options,
+        icons=icons,
         default_index=0,
         styles={
-            "container": {
-                "padding": "0!important", 
-                "background-color": "#FFFFFF", # Чистый белый фон
-                "border-radius": "0px"
-            },
-            "icon": {
-                "color": "#5F6368", # Спокойный серый для иконок
-                "font-size": "18px"
-            },
-            "nav-link": {
-                "font-size": "14px", 
-                "text-align": "left", 
-                "margin": "0px", 
-                "color": "#3C4043", # Цвет текста Windows Light
-                "font-family": "Segoe UI",
-                "--hover-color": "#F1F3F4" # Светло-серый при наведении
-            },
-            "nav-link-selected": {
-                "background-color": "#E8F0FE", # Нежно-голубой фон (как в Windows/Google)
-                "color": "#1A73E8", # Акцентный синий цвет текста
-                "font-weight": "600",
-                "border-left": "4px solid #1A73E8" # Полоска слева для акцента
-            },
+            "nav-link-selected": {"background-color": "#E8F0FE", "color": "#1A73E8", "border-left": "4px solid #1A73E8"}
         }
     )
     
