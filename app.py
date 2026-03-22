@@ -1301,9 +1301,6 @@ if 'user' not in st.session_state:
     login_form()
     st.stop()
 
-# 2. ПРИМЕНЯЕМ СТИЛИ
-apply_system_styles()
-
 # Динамическая сборка меню на основе колонок из DB
 options = []
 icons = []
@@ -1379,6 +1376,8 @@ user_data = st.session_state.user_data
 company_info = user_data['companies']
 full_name = user_data.get('full_name', 'Сотрудник')
 role = user_data.get('role', 'worker')
+
+apply_system_styles()
 
 with st.sidebar:
     # --- БЛОК КОМПАНИИ (Супер дизайн) ---
