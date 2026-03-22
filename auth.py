@@ -9,7 +9,9 @@ def show_support_modal():
     html_code = """
     <div style="text-align: center; margin-bottom: 20px;">
         <div style="font-size: 48px; color: #3b82f6; margin-bottom: 10px;">👤</div>
-        <h2 style="margin:0; color: #f8fafc; font-weight: 700;">Денис Маслюк</h2>
+        <h1 style="margin:0; color: #94a3b8; font-size: 40px; font-weight: 800; opacity: 0.9; letter-spacing: -1.5px; line-height: 1.1;">
+            Денис Маслюк
+        </h1>
         <p style="margin:0; color: #64748b; font-size: 13px; font-weight: 500; letter-spacing: 0.5px;">IT-ДИРЕКТОР / АРХИТЕКТОР СИСТЕМЫ</p>
     </div>
 
