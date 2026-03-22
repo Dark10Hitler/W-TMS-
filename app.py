@@ -47,28 +47,200 @@ from io import BytesIO
 import streamlit as st
 from auth import login_form
 
-# --- РЕЖИМ ВИТРИНЫ ---
+import streamlit as st
+from streamlit_option_menu import option_menu
+import pandas as pd
+
+# 1. Настройка страницы (Всегда первая)
+st.set_page_config(
+    layout="wide", 
+    page_title="W&TMS", 
+    page_icon="🏛️",
+    initial_sidebar_state="expanded"
+)
+
+# 2. ОПРЕДЕЛЯЕМ ФУНКЦИЮ СТИЛЕЙ
+def apply_system_styles():
+    st.markdown("""
+    <style>
+        /* Удаляем стандартные элементы Streamlit */
+        header { visibility: hidden; }
+        [data-testid="stHeader"] { display: none; }
+        
+        /* Общий фон и шрифты */
+        html, body, [data-testid="stAppViewContainer"] {
+            background-color: #F8F9FA !important;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        /* Красивый блок компании в сайдбаре */
+        .company-box {
+            background: linear-gradient(135deg, #ffffff 0%, #f1f4f9 100%);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #E0E4E8;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+        }
+        .company-name {
+            color: #1A1C1E;
+            font-size: 18px;
+            font-weight: 700;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .user-badge {
+            color: #5F6368;
+            font-size: 13px;
+            margin-top: 5px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        /* Контейнер основного контента */
+        .block-container {
+            padding: 2rem 3rem !important;
+        }
+        
+        /* Тонкий скроллбар */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-thumb { background: #d1d1d1; border-radius: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 3. ПУБЛИЧНЫЙ РЕЖИМ ВИТРИНЫ (БЕЗ ПРОВЕРОК) ---
+# Этот блок стоит ВЫШЕ авторизации. Если он срабатывает, дальше код не идет.
 if "shelf" in st.query_params:
     shelf_id = st.query_params["shelf"]
+    apply_system_styles()
     
-    # Оставляем только оформление карточек, НЕ ТРОГАЕМ SIDEBAR
-    st.markdown("""
-        <style>
-            .product-card {
-                background: #f9f9f9;
-                padding: 15px;
-                border-radius: 10px;
-                margin-bottom: 10px;
-                border: 1px solid #eee;
-            }
-            /* Убеждаемся, что хедер не мешает, но кнопку меню не трогаем */
-            header { opacity: 0.1; } 
-        </style>
-    """, unsafe_allow_html=True)
+    st.markdown(f"<h1 style='text-align: center;'>📍 Витрина стеллажа: {shelf_id}</h1>", unsafe_allow_html=True)
     
-    st.markdown(f"<h1 style='text-align: center;'>📍 Стеллаж: {shelf_id}</h1>", unsafe_allow_html=True)
-    st.divider()
+    try:
+        # Загружаем товары для конкретной полки напрямую из Supabase
+        products = supabase.table("global_inventory").select("*").eq("cell", shelf_id).execute().data
+        
+        if products:
+            for p in products:
+                with st.container():
+                    st.markdown(f"""
+                    <div class="product-card">
+                        <div style="display: flex; gap: 20px; align-items: center;">
+                            <img src="{p['image_url'] if p['image_url'] else 'https://via.placeholder.com/150'}" width="120" style="border-radius: 8px;">
+                            <div>
+                                <h3 style="margin: 0;">{p['name']}</h3>
+                                <p style="color: #666; margin: 5px 0;">ID: {p['id']}</p>
+                                <span style="background: #E8F0FE; color: #1A73E8; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 600;">В наличии</span>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            st.warning(f"На стеллаже {shelf_id} пока нет товаров.")
+            
+    except Exception as e:
+        st.error("Ошибка подключения к базе данных. Но мы хотя бы попытались!")
+    
+    # ОСТАНАВЛИВАЕМ ПРОГРАММУ ТУТ
+    # Это гарантирует, что окно входа (login_form) не появится снизу
+    st.stop()
 
+# 3. СТЕНА АВТОРИЗАЦИИ (Если не вошел — стоп)
+if 'user' not in st.session_state:
+    login_form() # Предполагается, что функция импортирована из auth.py
+    st.stop()
+
+# 4. ПРИМЕНЯЕМ СТИЛИ (Только для авторизованных)
+apply_system_styles()
+
+# 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ (Чтобы они были доступны для меню)
+user_data = st.session_state.user_data
+company = user_data['companies'] 
+company_info = user_data['companies'] 
+full_name = user_data.get('full_name', 'Сотрудник')
+role = user_data.get('role', 'worker')
+
+# 6. СОБИРАЕМ СПИСКИ ДЛЯ МЕНЮ (На основе доступов из базы)
+options = []
+icons = []
+
+if company.get('module_base'):
+    options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
+    icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
+
+if company.get('module_map'): 
+    options.append("Карта")
+    icons.append("map")
+if company.get('module_analytics'): 
+    options.append("Аналитика")
+    icons.append("graph-up-arrow")
+if company.get('module_ai'): 
+    options.append("AI-support")
+    icons.append("robot")
+
+# Добавляем системные кнопки в конец списка
+options.extend(["Настройки", "Выйти"])
+icons.extend(["gear", "box-arrow-right"])
+
+# 7. ОТРИСОВКА САЙДБАРА (Теперь все переменные определены)
+with st.sidebar:
+    # --- БЛОК КОМПАНИИ (Дизайн) ---
+    st.markdown(f"""
+        <div class="company-box">
+            <div class="company-name">
+                🏢 {company_info['company_name']}
+            </div>
+            <div class="user-badge">
+                👤 {full_name} <span style="opacity: 0.5;">|</span> {role}
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # --- ЗАГОЛОВОК НАВИГАЦИИ ---
+    st.markdown("<p style='margin-left: 10px; font-weight: 600; color: #80868B; font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;'>Навигация</p>", unsafe_allow_html=True)
+    
+    # --- САМО МЕНЮ ---
+    selected = option_menu(
+        menu_title=None,
+        options=options,
+        icons=icons,
+        default_index=0,
+        styles={
+            "container": {
+                "padding": "5px!important", 
+                "background-color": "transparent"
+            },
+            "icon": {
+                "color": "#5F6368", 
+                "font-size": "20px"
+            }, 
+            "nav-link": {
+                "font-size": "15px", 
+                "font-weight": "500",
+                "text-align": "left", 
+                "margin": "5px 0px", 
+                "height": "48px", 
+                "border-radius": "8px",
+                "color": "#3C4043",
+                "font-family": "Segoe UI",
+                "--hover-color": "#F1F3F4"
+            },
+            "nav-link-selected": {
+                "background-color": "#E8F0FE", 
+                "color": "#1A73E8", 
+                "font-weight": "600",
+                "box-shadow": "none"
+            },
+        }
+    )
+
+# 8. ЛОГИКА ПОСЛЕ ВЫБОРА МЕНЮ
+if selected == "Выйти":
+    st.session_state.clear()
+    st.rerun()
 
 
 def sync_to_inventory(doc_id, items_list, doc_type):
@@ -1325,164 +1497,6 @@ def delete_entry(table_key, entry_id):
             
     except Exception as e:
         st.error(f"❌ Ошибка при удалении из базы данных: {e}")
-
-import streamlit as st
-from streamlit_option_menu import option_menu
-import pandas as pd
-
-# 1. Настройка страницы (Всегда первая)
-st.set_page_config(
-    layout="wide", 
-    page_title="W&TMS", 
-    page_icon="🏛️",
-    initial_sidebar_state="expanded"
-)
-
-# 2. ОПРЕДЕЛЯЕМ ФУНКЦИЮ СТИЛЕЙ
-def apply_system_styles():
-    st.markdown("""
-    <style>
-        /* Удаляем стандартные элементы Streamlit */
-        header { visibility: hidden; }
-        [data-testid="stHeader"] { display: none; }
-        
-        /* Общий фон и шрифты */
-        html, body, [data-testid="stAppViewContainer"] {
-            background-color: #F8F9FA !important;
-            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        }
-
-        /* Красивый блок компании в сайдбаре */
-        .company-box {
-            background: linear-gradient(135deg, #ffffff 0%, #f1f4f9 100%);
-            padding: 20px;
-            border-radius: 12px;
-            border: 1px solid #E0E4E8;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.02);
-        }
-        .company-name {
-            color: #1A1C1E;
-            font-size: 18px;
-            font-weight: 700;
-            margin: 0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .user-badge {
-            color: #5F6368;
-            font-size: 13px;
-            margin-top: 5px;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        /* Контейнер основного контента */
-        .block-container {
-            padding: 2rem 3rem !important;
-        }
-        
-        /* Тонкий скроллбар */
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-thumb { background: #d1d1d1; border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# 3. СТЕНА АВТОРИЗАЦИИ (Если не вошел — стоп)
-if 'user' not in st.session_state:
-    login_form() # Предполагается, что функция импортирована из auth.py
-    st.stop()
-
-# 4. ПРИМЕНЯЕМ СТИЛИ (Только для авторизованных)
-apply_system_styles()
-
-# 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ (Чтобы они были доступны для меню)
-user_data = st.session_state.user_data
-company = user_data['companies'] 
-company_info = user_data['companies'] 
-full_name = user_data.get('full_name', 'Сотрудник')
-role = user_data.get('role', 'worker')
-
-# 6. СОБИРАЕМ СПИСКИ ДЛЯ МЕНЮ (На основе доступов из базы)
-options = []
-icons = []
-
-if company.get('module_base'):
-    options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
-    icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
-
-if company.get('module_map'): 
-    options.append("Карта")
-    icons.append("map")
-if company.get('module_analytics'): 
-    options.append("Аналитика")
-    icons.append("graph-up-arrow")
-if company.get('module_ai'): 
-    options.append("AI-support")
-    icons.append("robot")
-
-# Добавляем системные кнопки в конец списка
-options.extend(["Настройки", "Выйти"])
-icons.extend(["gear", "box-arrow-right"])
-
-# 7. ОТРИСОВКА САЙДБАРА (Теперь все переменные определены)
-with st.sidebar:
-    # --- БЛОК КОМПАНИИ (Дизайн) ---
-    st.markdown(f"""
-        <div class="company-box">
-            <div class="company-name">
-                🏢 {company_info['company_name']}
-            </div>
-            <div class="user-badge">
-                👤 {full_name} <span style="opacity: 0.5;">|</span> {role}
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-    # --- ЗАГОЛОВОК НАВИГАЦИИ ---
-    st.markdown("<p style='margin-left: 10px; font-weight: 600; color: #80868B; font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;'>Навигация</p>", unsafe_allow_html=True)
-    
-    # --- САМО МЕНЮ ---
-    selected = option_menu(
-        menu_title=None,
-        options=options,
-        icons=icons,
-        default_index=0,
-        styles={
-            "container": {
-                "padding": "5px!important", 
-                "background-color": "transparent"
-            },
-            "icon": {
-                "color": "#5F6368", 
-                "font-size": "20px"
-            }, 
-            "nav-link": {
-                "font-size": "15px", 
-                "font-weight": "500",
-                "text-align": "left", 
-                "margin": "5px 0px", 
-                "height": "48px", 
-                "border-radius": "8px",
-                "color": "#3C4043",
-                "font-family": "Segoe UI",
-                "--hover-color": "#F1F3F4"
-            },
-            "nav-link-selected": {
-                "background-color": "#E8F0FE", 
-                "color": "#1A73E8", 
-                "font-weight": "600",
-                "box-shadow": "none"
-            },
-        }
-    )
-
-# 8. ЛОГИКА ПОСЛЕ ВЫБОРА МЕНЮ
-if selected == "Выйти":
-    st.session_state.clear()
-    st.rerun()
 
 if selected == "Main": render_aggrid_table("main", "Основной Реестр")
 elif selected == "Заявки": render_aggrid_table("orders", "Заявки")
