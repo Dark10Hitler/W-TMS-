@@ -6,90 +6,43 @@ supabase = create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["
 
 @st.dialog("System Support")
 def show_support_modal():
-    # Мы объединяем весь HTML в одну строку, чтобы Streamlit не разрывал верстку
-    support_html = """
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-        .support-container {
-            font-family: 'Inter', sans-serif;
-            text-align: center;
-        }
-        .contact-box {
-            background: rgba(128,128,128,0.05);
-            border: 1px solid rgba(128,128,128,0.1);
-            border-radius: 16px;
-            padding: 20px;
-            margin: 20px 0;
-            text-align: left;
-        }
-        .label {
-            color: #64748b;
-            font-size: 10px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 4px;
-            display: block;
-        }
-        .value {
-            font-size: 15px;
-            font-weight: 600;
-            color: inherit;
-        }
-        .btn-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-        }
-        .btn {
-            text-decoration: none !important;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 14px;
-            border-radius: 12px;
-            font-weight: 700;
-            font-size: 14px;
-            color: white !important;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-        }
-        .wa { background: #25D366; } /* Светлый сочный WhatsApp */
-        .vb { background: #7360f2; }
-    </style>
+    # Иконки вынесены отдельно, чтобы не перегружать HTML-строку
+    wa_svg = '<svg style="width:20px;height:20px;fill:white;margin-right:10px" viewBox="0 0 448 512"><path d="M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 39.1 10.2 77.3 29.6 111L0 480l117.7-30.9c32.4 17.7 68.9 27 106.1 27h.1c122.3 0 224.1-99.6 224.1-222 0-59.3-25.2-115-67.1-157zm-157 341.6c-33.2 0-65.7-8.9-94-25.7l-6.7-4-69.8 18.3L72 359.2l-4.4-7c-18.5-29.4-28.2-63.3-28.2-98.2 0-101.7 82.8-184.5 184.6-184.5 49.3 0 95.6 19.2 130.4 54.1 34.8 34.9 56.2 81.2 56.1 130.5 0 101.8-84.9 184.6-186.6 184.6zm101.2-138.2c-5.5-2.8-32.8-16.2-37.9-18-5.1-1.9-8.8-2.8-12.5 2.8-3.7 5.6-14.3 18-17.6 21.8-3.2 3.7-6.5 4.2-12 1.4-5.5-2.8-23.1-8.5-44-27.1-16.2-14.5-27.2-32.4-30.3-37.9-3.2-5.5-.3-8.5 2.5-11.2 2.5-2.5 5.5-6.5 8.3-9.7 2.8-3.3 3.7-5.6 5.6-9.3 1.8-3.7.9-6.9-.5-9.7-1.4-2.8-12.5-30.1-17.1-41.2-4.5-10.8-9.1-9.3-12.5-9.5-3.2-.2-6.9-.2-10.6-.2-3.7 0-9.7 1.4-14.8 6.9-5.1 5.6-19.4 19-19.4 46.3 0 27.3 19.9 53.7 22.6 57.4 2.8 3.7 39.1 59.7 94.8 83.8 13.2 5.8 23.5 9.2 31.5 11.8 13.3 4.2 25.4 3.6 35 2.2 10.7-1.5 32.8-13.4 37.4-26.4 4.6-13 4.6-24.1 3.2-26.4-1.3-2.5-5-3.9-10.5-6.6z"/></svg>'
+    vb_svg = '<svg style="width:20px;height:20px;fill:white;margin-right:10px" viewBox="0 0 512 512"><path d="M444 49.9C431.3 38.2 379.9 0 265.3 0 145.3 0 62.6 47.7 44.2 64.2c-35.7 32.1-46.6 73.8-44.1 123.9 2.5 50.1 23.3 133 73 174.9l-4.7 66.3c-1.3 17.6 15 29.9 29.8 23L192 404c27.1 7.2 55.4 11.2 84.7 11.2 144 0 235.3-77.1 235.3-207.2-.1-83.9-34.7-133.2-68-158.1zm-32.3 273.7c-14.7 30.6-67.6 62.6-93.5 62.6-20.3 0-82.3-56.1-137.9-111.7S68.6 172.1 68.6 151.8c0-25.9 32-78.8 62.6-93.5 13.9-6.6 28.9-3.4 36.3 8.3l30.9 49c6.6 10.4 4.6 24.1-4.6 32.1l-24.5 21.3c-6.1 5.3-7.5 14.1-3.3 21 21.5 35.1 50.7 64.3 85.8 85.8 6.9 4.2 15.7 2.8 21-3.3l21.3-24.5c8-9.2 21.7-11.1 32.1-4.6l49 30.9c11.7 7.4 14.9 22.4 8.3 36.3z"/></svg>'
 
-    <div class="support-container">
-        <div style="font-size: 50px; margin-bottom: 10px;">👤</div>
-        <h2 style="margin:0; font-weight: 800; letter-spacing: -0.5px;">Денис Маслюк</h2>
-        <p style="margin:5px 0 0; color: #3b82f6; font-size: 12px; font-weight: 600; text-transform: uppercase;">IT Director • System Architect</p>
-
-        <div class="contact-box">
-            <div style="margin-bottom: 15px;">
-                <span class="label">Contact Phone</span>
-                <span class="value">+373 6803 1705</span>
+    # Формируем контент без использования f-строк внутри основного блока (чтобы избежать конфликтов с {})
+    html_layout = f"""
+    <div style="text-align: center; font-family: 'Inter', sans-serif;">
+        <div style="width: 70px; height: 70px; background: #2563eb; border-radius: 50%; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; font-size: 35px; border: 2px solid #3b82f6;">👨‍💻</div>
+        <h2 style="margin:0; font-weight: 700; font-size: 22px;">Денис Маслюк</h2>
+        <p style="margin:5px 0 25px; color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px;">IT Director • Architect</p>
+        
+        <div style="background: rgba(128,128,128,0.05); border: 1px solid rgba(128,128,128,0.1); border-radius: 12px; padding: 18px; margin-bottom: 20px; text-align: left;">
+            <div style="margin-bottom: 12px;">
+                <span style="color: #64748b; font-size: 10px; font-weight: 700; display: block; margin-bottom: 2px;">CONTACT PHONE</span>
+                <span style="font-size: 15px; font-weight: 600;">+373 6803 1705</span>
             </div>
             <div>
-                <span class="label">Business Email</span>
-                <span class="value">denis2305den4ik@gmail.com</span>
+                <span style="color: #64748b; font-size: 10px; font-weight: 700; display: block; margin-bottom: 2px;">BUSINESS EMAIL</span>
+                <span style="font-size: 14px; font-weight: 600;">denis2305den4ik@gmail.com</span>
             </div>
         </div>
 
-        <div class="btn-grid">
-            <a href="https://wa.me/37368031705" target="_blank" class="btn wa">
-                <svg style="width:18px;height:18px;fill:white;margin-right:8px" viewBox="0 0 448 512"><path d="M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 39.1 10.2 77.3 29.6 111L0 480l117.7-30.9c32.4 17.7 68.9 27 106.1 27h.1c122.3 0 224.1-99.6 224.1-222 0-59.3-25.2-115-67.1-157zm-157 341.6c-33.2 0-65.7-8.9-94-25.7l-6.7-4-69.8 18.3L72 359.2l-4.4-7c-18.5-29.4-28.2-63.3-28.2-98.2 0-101.7 82.8-184.5 184.6-184.5 49.3 0 95.6 19.2 130.4 54.1 34.8 34.9 56.2 81.2 56.1 130.5 0 101.8-84.9 184.6-186.6 184.6zm101.2-138.2c-5.5-2.8-32.8-16.2-37.9-18-5.1-1.9-8.8-2.8-12.5 2.8-3.7 5.6-14.3 18-17.6 21.8-3.2 3.7-6.5 4.2-12 1.4-5.5-2.8-23.1-8.5-44-27.1-16.2-14.5-27.2-32.4-30.3-37.9-3.2-5.5-.3-8.5 2.5-11.2 2.5-2.5 5.5-6.5 8.3-9.7 2.8-3.3 3.7-5.6 5.6-9.3 1.8-3.7.9-6.9-.5-9.7-1.4-2.8-12.5-30.1-17.1-41.2-4.5-10.8-9.1-9.3-12.5-9.5-3.2-.2-6.9-.2-10.6-.2-3.7 0-9.7 1.4-14.8 6.9-5.1 5.6-19.4 19-19.4 46.3 0 27.3 19.9 53.7 22.6 57.4 2.8 3.7 39.1 59.7 94.8 83.8 13.2 5.8 23.5 9.2 31.5 11.8 13.3 4.2 25.4 3.6 35 2.2 10.7-1.5 32.8-13.4 37.4-26.4 4.6-13 4.6-24.1 3.2-26.4-1.3-2.5-5-3.9-10.5-6.6z"/></svg>
-                WhatsApp
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <a href="https://wa.me/37368031705" target="_blank" style="text-decoration:none;">
+                <div style="background:#22c55e; color:white; padding:12px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px;">
+                    {wa_svg} WhatsApp
+                </div>
             </a>
-            <a href="viber://chat?number=%2B37368031705" target="_blank" class="btn vb">
-                <svg style="width:18px;height:18px;fill:white;margin-right:8px" viewBox="0 0 512 512"><path d="M444 49.9C431.3 38.2 379.9 0 265.3 0 145.3 0 62.6 47.7 44.2 64.2c-35.7 32.1-46.6 73.8-44.1 123.9 2.5 50.1 23.3 133 73 174.9l-4.7 66.3c-1.3 17.6 15 29.9 29.8 23L192 404c27.1 7.2 55.4 11.2 84.7 11.2 144 0 235.3-77.1 235.3-207.2-.1-83.9-34.7-133.2-68-158.1zm-32.3 273.7c-14.7 30.6-67.6 62.6-93.5 62.6-20.3 0-82.3-56.1-137.9-111.7S68.6 172.1 68.6 151.8c0-25.9 32-78.8 62.6-93.5 13.9-6.6 28.9-3.4 36.3 8.3l30.9 49c6.6 10.4 4.6 24.1-4.6 32.1l-24.5 21.3c-6.1 5.3-7.5 14.1-3.3 21 21.5 35.1 50.7 64.3 85.8 85.8 6.9 4.2 15.7 2.8 21-3.3l21.3-24.5c8-9.2 21.7-11.1 32.1-4.6l49 30.9c11.7 7.4 14.9 22.4 8.3 36.3z"/></svg>
-                Viber
+            <a href="viber://chat?number=%2B37368031705" target="_blank" style="text-decoration:none;">
+                <div style="background:#7360f2; color:white; padding:12px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px;">
+                    {vb_svg} Viber
+                </div>
             </a>
         </div>
     </div>
     """
-    st.markdown(support_html, unsafe_allow_html=True) # Ключевой параметр здесь!
+    st.markdown(html_layout, unsafe_allow_html=True)
     
 def login_form():
     st.markdown("""
