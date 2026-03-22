@@ -44,6 +44,9 @@ from database import insert_data # Твоя функция Supabase
 import qrcode
 from io import BytesIO
 
+import streamlit as st
+from auth import login_form
+
 # --- РЕЖИМ ВИТРИНЫ ---
 if "shelf" in st.query_params:
     shelf_id = st.query_params["shelf"]
@@ -2109,9 +2112,6 @@ elif selected == "Настройки":
             if c_no.button("ОТМЕНА", use_container_width=True):
                 st.session_state.confirm_delete_all = False
                 st.rerun()
-
-import streamlit as st
-from auth import login_form
 
 # 1. Проверяем, авторизован ли пользователь
 if 'user' not in st.session_state:
