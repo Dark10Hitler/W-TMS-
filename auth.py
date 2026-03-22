@@ -2,7 +2,7 @@ import streamlit as st
 from supabase import create_client
 
 # Подключение к Supabase (берем из секретов)
-supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+supabase = create_client(st.secrets["url"], st.secrets["key"])
 
 def login_form():
     st.title("🔒 IMPERIA WMS")
