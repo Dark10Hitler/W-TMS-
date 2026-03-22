@@ -1303,13 +1303,51 @@ st.set_page_config(layout="wide", page_title="W&TMS", page_icon="🏛️")
 def apply_system_styles():
     st.markdown("""
     <style>
-        header { visibility: hidden; height: 0px; }
+        /* Удаляем стандартные элементы Streamlit */
+        header { visibility: hidden; }
         [data-testid="stHeader"] { display: none; }
+        
+        /* Общий фон и шрифты */
         html, body, [data-testid="stAppViewContainer"] {
-            font-family: 'Segoe UI', sans-serif !important;
-            background-color: #F3F3F3 !important;
+            background-color: #F8F9FA !important;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         }
-        [data-testid="stSidebar"] { background-color: #FFFFFF !important; }
+
+        /* Красивый блок компании в сайдбаре */
+        .company-box {
+            background: linear-gradient(135deg, #ffffff 0%, #f1f4f9 100%);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #E0E4E8;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+        }
+        .company-name {
+            color: #1A1C1E;
+            font-size: 18px;
+            font-weight: 700;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .user-badge {
+            color: #5F6368;
+            font-size: 13px;
+            margin-top: 5px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        /* Контейнер основного контента */
+        .block-container {
+            padding: 2rem 3rem !important;
+        }
+        
+        /* Тонкий скроллбар */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-thumb { background: #d1d1d1; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
     
@@ -1320,10 +1358,6 @@ if 'user' not in st.session_state:
 
 # 2. ПРИМЕНЯЕМ СТИЛИ
 apply_system_styles()
-
-# 3. ПОДГОТОВКА ДАННЫХ
-user_data = st.session_state.user_data
-company = user_data['companies']
 
 # Динамическая сборка меню на основе колонок из DB
 options = []
@@ -1340,24 +1374,58 @@ if company.get('module_ai'): options.append("AI-support"); icons.append("robot")
 options.extend(["Настройки", "Выйти"])
 icons.extend(["gear", "box-arrow-right"])
 
-# 4. ОТРИСОВКА НОВОГО МЕНЮ
+# Извлекаем данные (уже проверено, что они есть после логина)
+user_data = st.session_state.user_data
+company_info = user_data['companies']
+full_name = user_data.get('full_name', 'Сотрудник')
+role = user_data.get('role', 'worker')
+
 with st.sidebar:
-    # Твой красивый HTML заголовок
-    st.markdown("""
-        <div style='padding: 10px 0px;'>
-            <h2 style='color: #1E1E1E; font-family: "Segoe UI"; font-size: 22px; font-weight: 600;'>
-                📦 LOGISTICS W&TMS
-            </h2>
-            <p style='color: #666; font-size: 12px; margin-top: -10px;'>Warehouse Management System</p>
+    # --- БЛОК КОМПАНИИ (Супер дизайн) ---
+    st.markdown(f"""
+        <div class="company-box">
+            <div class="company-name">
+                🏢 {company_info['company_name']}
+            </div>
+            <div class="user-badge">
+                👤 {full_name} <span style="opacity: 0.5;">|</span> {role}
+            </div>
         </div>
     """, unsafe_allow_html=True)
 
+    # --- НАВИГАЦИЯ ---
+    st.markdown("<p style='margin-left: 10px; font-weight: 600; color: #80868B; font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;'>Навигация</p>", unsafe_allow_html=True)
+    
     selected = option_menu(
         menu_title=None,
         options=options,
         icons=icons,
-        styles={ # Твои стили Windows Light из прошлого сообщения
-            "nav-link-selected": {"background-color": "#E8F0FE", "color": "#1A73E8", "border-left": "4px solid #1A73E8"}
+        default_index=0,
+        styles={
+            "container": {
+                "padding": "5px!important", 
+                "background-color": "transparent"
+            },
+            "icon": {
+                "color": "#5F6368", 
+                "font-size": "20px" # Увеличенные иконки
+            }, 
+            "nav-link": {
+                "font-size": "15px", # Увеличенный шрифт
+                "font-weight": "500",
+                "text-align": "left", 
+                "margin": "5px 0px", 
+                "height": "48px", # Увеличенная высота кнопки для удобства клика
+                "border-radius": "8px",
+                "color": "#3C4043",
+                "--hover-color": "#F1F3F4"
+            },
+            "nav-link-selected": {
+                "background-color": "#E8F0FE", 
+                "color": "#1A73E8", 
+                "font-weight": "600",
+                "box-shadow": "none"
+            },
         }
     )
 
