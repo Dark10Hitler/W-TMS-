@@ -2323,7 +2323,7 @@ elif selected == "Настройки":
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                         for t in selected_tables:
                             try:
-                                data = get_company_data(t).execute().data
+                                data = get_company_data("table").eq("warehouse_id", selected_warehouse).execute()
                                 if data:
                                     # Имя листа в Excel не может быть длиннее 31 символа
                                     pd.DataFrame(data).to_excel(writer, sheet_name=t[:31], index=False)
