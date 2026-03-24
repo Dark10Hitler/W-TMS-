@@ -303,22 +303,19 @@ if 'user' not in st.session_state:
 # 4. ПРИМЕНЯЕМ СТИЛИ (Только для авторизованных)
 apply_system_styles()
 
-# 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ (Чтобы они были доступны для меню)
-
-user_data = st.session_state.user_data
-
-company = user_data['companies'] 
-
-company_info = user_data['companies'] 
+# 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ (Безопасно)
+# Используем .get() с пустым словарем по умолчанию, чтобы избежать KeyError
+user_data = st.session_state.get('user_data', {})
+company = user_data.get('companies', {})  # Теперь 'company' точно существует как dict
 
 full_name = user_data.get('full_name', 'Сотрудник')
-
 role = user_data.get('role', 'worker')
 
 # 6. СОБИРАЕМ СПИСКИ ДЛЯ МЕНЮ (На основе доступов из базы)
 options = []
 icons = []
 
+# Используем .get() для проверки флагов модулей (вернет False, если ключа нет)
 if company.get('module_base'):
     options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
     icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
@@ -326,14 +323,16 @@ if company.get('module_base'):
 if company.get('module_map'): 
     options.append("Карта")
     icons.append("map")
+
 if company.get('module_analytics'): 
     options.append("Аналитика")
     icons.append("graph-up-arrow")
+
 if company.get('module_ai'): 
     options.append("AI-support")
     icons.append("robot")
 
-# Добавляем системные кнопки в конец списка
+# Добавляем системные кнопки
 options.extend(["Настройки", "Выйти"])
 icons.extend(["gear", "box-arrow-right"])
 
