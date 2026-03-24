@@ -52,14 +52,21 @@ from streamlit_option_menu import option_menu
 import pandas as pd
 
 def get_company_data(table_name):
+    """
+    Функция должна возвращать ОБЪЕКТ ЗАПРОСА (билдер), 
+    а не результат выполнения (.execute())
+    """
     c_id = st.session_state.get('company_id')
     
-    # КРИТИЧЕСКИ ВАЖНО: Тут НЕ должно быть .execute() в конце!
-    # Мы возвращаем "заготовку" запроса с уже наложенным фильтром по компании.
-    if not c_id:
-        return supabase.table(table_name).eq("company_id", "00000000-0000-0000-0000-000000000000")
+    # 1. Сначала просто создаем обращение к таблице
+    query = supabase.table(table_name)
     
-    return supabase.table(table_name).eq("company_id", c_id)
+    # 2. Если ID компании нет, фильтруем по "пустому" UUID, чтобы не упало
+    if not c_id:
+        return query.eq("company_id", "00000000-0000-0000-0000-000000000000")
+    
+    # 3. ВОЗВРАЩАЕМ БИЛДЕР С ФИЛЬТРОМ (без .execute()!)
+    return query.eq("company_id", c_id)
 
 # 1. Настройка страницы (Всегда первая)
 st.set_page_config(
@@ -296,13 +303,11 @@ if 'user' not in st.session_state:
 # 4. ПРИМЕНЯЕМ СТИЛИ (Только для авторизованных)
 apply_system_styles()
 
-# Раздел 5: Извлечение (Замени весь блок)
+# 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ (Безопасно)
+# Используем .get() с пустым словарем по умолчанию, чтобы избежать KeyError
 user_data = st.session_state.get('user_data', {})
-# Если в профиле компания подтянулась как список, берем первый элемент, если как дикт - берем его
-raw_company = user_data.get('companies', {})
-company = raw_company[0] if isinstance(raw_company, list) and len(raw_company) > 0 else raw_company
+company = user_data.get('companies', {})  # Теперь 'company' точно существует как dict
 
-company_info = company
 full_name = user_data.get('full_name', 'Сотрудник')
 role = user_data.get('role', 'worker')
 
