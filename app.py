@@ -304,9 +304,11 @@ if 'user' not in st.session_state:
 apply_system_styles()
 
 # 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ (Безопасно)
-# Используем .get() с пустым словарем по умолчанию, чтобы избежать KeyError
 user_data = st.session_state.get('user_data', {})
-company = user_data.get('companies', {})  # Теперь 'company' точно существует как dict
+
+# Создаем обе переменные, чтобы и Раздел №6 (company) и Раздел №7 (company_info) работали
+company = user_data.get('companies', {})
+company_info = company  # Это решит NameError!
 
 full_name = user_data.get('full_name', 'Сотрудник')
 role = user_data.get('role', 'worker')
