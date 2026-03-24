@@ -303,12 +303,19 @@ if 'user' not in st.session_state:
 # 4. ПРИМЕНЯЕМ СТИЛИ (Только для авторизованных)
 apply_system_styles()
 
-# 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ (Чтобы они были доступны для меню)
-user_data = st.session_state.user_data
-company = user_data['companies'] 
-company_info = user_data['companies'] 
+# 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ (Безопасный метод)
+user_data = st.session_state.get('user_data', {})
+
+# Используем .get(), чтобы если данных нет, приложение не выдавало ошибку KeyError
+# Если 'companies' это словарь/объект, берем его. Если нет — ставим пустой словарь.
+company_info = user_data.get('companies', {})
+
+# Если в базе это была просто строка или ID, можно подстраховаться так:
+company_name = company_info.get('name', 'Моя компания') if isinstance(company_info, dict) else "Компания"
+
 full_name = user_data.get('full_name', 'Сотрудник')
 role = user_data.get('role', 'worker')
+company_id = st.session_state.get('company_id')
 
 # 6. СОБИРАЕМ СПИСКИ ДЛЯ МЕНЮ (На основе доступов из базы)
 options = []
