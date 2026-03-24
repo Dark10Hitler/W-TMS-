@@ -166,9 +166,8 @@ def get_actual_cells(warehouse_id):
 import json
 from supabase import create_client, Client
 
-# --- НАСТРОЙКИ ПОДКЛЮЧЕНИЯ ---
-url = "YOUR_SUPABASE_URL"
-key = "YOUR_SUPABASE_KEY"
+url = "https://grdyokwemanzcpmfvhps.supabase.co"
+key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdyZHlva3dlbWFuemNwbWZ2aHBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0OTg0NTMsImV4cCI6MjA4OTA3NDQ1M30.CL_UETOVA-Fw1b4vJc_rQUUiuE44cWD2qDYWPog4S0w"
 supabase: Client = create_client(url, key)
 
 def migrate_warehouses():
