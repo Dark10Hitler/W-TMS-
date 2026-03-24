@@ -95,25 +95,34 @@ def login_form():
 
         if st.button("Access Terminal", use_container_width=True, type="primary"):
             try:
-                # 1. Пробуем войти в Auth
+        # 1. Пробуем войти в Auth
                 auth_response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                
+        
                 if auth_response.user:
                     st.session_state.user = auth_response.user
-                    
-                    # 2. Пробуем получить профиль
+            
+            # 2. ПОЛУЧАЕМ ПРОФИЛЬ И ПРИВЯЗКУ К КОМПАНИИ
                     try:
-                        user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", auth_response.user.id).single().execute()
-                        
-                        if user_profile.data:
-                            st.session_state.user_data = user_profile.data
+                # Берем данные профиля и ID его компании
+                        res = supabase.table("profiles") \
+                            .select("*, company_id") \
+                            .eq("id", auth_response.user.id) \
+                            .single() \
+                            .execute()
+                
+                        if res.data:
+                    # КРИТИЧЕСКИ ВАЖНО: сохраняем ID компании для всех будущих фильтров
+                            st.session_state.user_data = res.data
+                            st.session_state.company_id = res.data.get('company_id') 
                             st.session_state.saved_email = email
+                    
                             st.success("Успешный вход!")
                             st.rerun()
                         else:
-                            st.error("Данные профиля отсутствуют в БД.")
+                            st.error("Профиль не найден в базе данных.")
                     except Exception as profile_err:
-                        st.error(f"Ошибка БД: {profile_err}")
+                        st.error(f"Ошибка загрузки профиля: {profile_err}")
+                
             except Exception as auth_err:
                 st.error("Неверный логин или пароль")
 
