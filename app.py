@@ -311,7 +311,7 @@ user_data = st.session_state.get('user_data', {})
 company_info = user_data.get('companies', {})
 
 # Если в базе это была просто строка или ID, можно подстраховаться так:
-company_name = company_info.get('name', 'Моя компания') if isinstance(company_info, dict) else "Компания"
+company = company_info.get('name', 'Моя компания') if isinstance(company_info, dict) else "Компания"
 
 full_name = user_data.get('full_name', 'Сотрудник')
 role = user_data.get('role', 'worker')
