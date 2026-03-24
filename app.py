@@ -340,7 +340,7 @@ icons.extend(["gear", "box-arrow-right"])
 with st.sidebar:
     # Безопасно достаем название компании. 
     # Пробуем ключ 'company_name', если нет - 'name', если нет - 'Моя компания'
-    display_company = company_info.get('company_name') or company_info.get('name') or "Моя компания"
+    display_company = company_info.get('company_name')
 
     # --- БЛОК КОМПАНИИ (Дизайн) ---
     st.markdown(f"""
