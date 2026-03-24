@@ -336,13 +336,17 @@ if company.get('module_ai'):
 options.extend(["Настройки", "Выйти"])
 icons.extend(["gear", "box-arrow-right"])
 
-# 7. ОТРИСОВКА САЙДБАРА (Теперь все переменные определены)
+# 7. ОТРИСОВКА САЙДБАРА
 with st.sidebar:
+    # Безопасно достаем название компании. 
+    # Пробуем ключ 'company_name', если нет - 'name', если нет - 'Моя компания'
+    display_company = company_info.get('company_name') or company_info.get('name') or "Моя компания"
+
     # --- БЛОК КОМПАНИИ (Дизайн) ---
     st.markdown(f"""
         <div class="company-box">
             <div class="company-name">
-                🏢 {company_info['company_name']}
+                🏢 {display_company}
             </div>
             <div class="user-badge">
                 👤 {full_name} <span style="opacity: 0.5;">|</span> {role}
