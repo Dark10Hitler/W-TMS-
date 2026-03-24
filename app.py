@@ -2052,33 +2052,33 @@ elif selected == "База Данных":
         if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
             with st.spinner("Синхронизация..."):
         # 0. Получаем ID компании текущего пользователя
-            current_company_id = st.session_state.get('company_id')
+                current_company_id = st.session_state.get('company_id')
         
-            final_url = item['image_url'] if item else None
-            if new_img: 
-                final_url = upload_to_cloudinary(new_img, "inventory")
+                final_url = item['image_url'] if item else None
+                if new_img: 
+                    final_url = upload_to_cloudinary(new_img, "inventory")
         
         # 1. Добавляем company_id в полезную нагрузку (payload)
-            payload = {
-                "name": name, 
-                "image_url": final_url, 
-                "warehouse": wh, 
-                "cell": cell, 
-                "last_updated": datetime.now().isoformat(),
-                "company_id": current_company_id  # <--- Обязательно для новых записей
-            }
+                payload = {
+                    "name": name, 
+                    "image_url": final_url, 
+                    "warehouse": wh, 
+                    "cell": cell, 
+                    "last_updated": datetime.now().isoformat(),
+                    "company_id": current_company_id  # <--- Обязательно для новых записей
+                }
         
-            if item: 
+                if item: 
             # 2. Обновляем: добавляем двойную проверку (ID товара + ID компании)
-                supabase.table("global_inventory").update(payload) \
-                    .eq("id", item['id']) \
-                    .eq("company_id", current_company_id) \
-                    .execute()
-            else: 
+                    supabase.table("global_inventory").update(payload) \
+                        .eq("id", item['id']) \
+                        .eq("company_id", current_company_id) \
+                        .execute()
+                else: 
             # 3. Создаем новый: компания уже в payload
-                supabase.table("global_inventory").insert(payload).execute()
+                    supabase.table("global_inventory").insert(payload).execute()
         
-            st.rerun()
+                st.rerun()
 
     # 3. Кнопки управления
     col_btn1, col_btn2 = st.columns(2)
