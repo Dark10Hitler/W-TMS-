@@ -52,14 +52,21 @@ from streamlit_option_menu import option_menu
 import pandas as pd
 
 def get_company_data(table_name):
+    """
+    Функция должна возвращать ОБЪЕКТ ЗАПРОСА (билдер), 
+    а не результат выполнения (.execute())
+    """
     c_id = st.session_state.get('company_id')
     
-    # Если юзер не залогинен, возвращаем пустой запрос, который не упадет
-    if not c_id or c_id == "None":
-        # Возвращаем фильтр, который заведомо ничего не найдет, но не выдаст ошибку типа
-        return supabase.table(table_name).eq("id", "00000000-0000-0000-0000-000000000000")
-        
-    return supabase.table(table_name).eq("company_id", c_id)
+    # 1. Сначала просто создаем обращение к таблице
+    query = supabase.table(table_name)
+    
+    # 2. Если ID компании нет, фильтруем по "пустому" UUID, чтобы не упало
+    if not c_id:
+        return query.eq("company_id", "00000000-0000-0000-0000-000000000000")
+    
+    # 3. ВОЗВРАЩАЕМ БИЛДЕР С ФИЛЬТРОМ (без .execute()!)
+    return query.eq("company_id", c_id)
 
 # 1. Настройка страницы (Всегда первая)
 st.set_page_config(
