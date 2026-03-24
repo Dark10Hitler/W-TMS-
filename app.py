@@ -1500,7 +1500,7 @@ def show_profile():
 
     # --- 1. ПЕРВИЧНАЯ ЗАГРУЗКА В SESSION STATE ---
 # Получаем ID компании текущего пользователя
-current_company_id = st.session_state.get('company_id')
+    current_company_id = st.session_state.get('company_id')
 
     if 'mgr_data' not in st.session_state:
         try:
