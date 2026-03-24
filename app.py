@@ -1543,7 +1543,7 @@ def show_profile():
     avatar_url = st.session_state.mgr_data.get('avatar_url') or "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
     work_url = st.session_state.mgr_data.get('workplace_photo_url') or "https://img.freepik.com/premium-photo/modern-warehouse-with-racks-goods-generative-ai_124507-449.jpg"
 
-current_company_id = st.session_state.get('company_id')
+    current_company_id = st.session_state.get('company_id')
 
     with col_face:
         st.image(avatar_url, caption="Фото управляющего", use_container_width=True)
