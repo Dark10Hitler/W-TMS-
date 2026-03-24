@@ -303,58 +303,60 @@ if 'user' not in st.session_state:
 # 4. ПРИМЕНЯЕМ СТИЛИ (Только для авторизованных)
 apply_system_styles()
 
-# 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ (Безопасно)
-# Используем .get() с пустым словарем по умолчанию, чтобы избежать KeyError
+# --- 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ ---
 user_data = st.session_state.get('user_data', {})
-company = user_data.get('companies', {})  # Теперь 'company' точно существует как dict
 
+# ВАЖНО: Supabase часто возвращает связанные таблицы как СПИСОК [{...}]
+raw_company = user_data.get('companies', {})
+if isinstance(raw_company, list) and len(raw_company) > 0:
+    company = raw_company[0]
+else:
+    company = raw_company
+
+# Создаем синоним, чтобы Раздел 7 не падал
+company_info = company 
+
+# Берем имя из профиля (у тебя там сейчас названия компаний записаны)
 full_name = user_data.get('full_name', 'Сотрудник')
 role = user_data.get('role', 'worker')
 
-# 6. СОБИРАЕМ СПИСКИ ДЛЯ МЕНЮ (На основе доступов из базы)
+# --- 6. СОБИРАЕМ СПИСКИ ДЛЯ МЕНЮ ---
 options = []
 icons = []
 
-# Используем .get() для проверки флагов модулей (вернет False, если ключа нет)
-if company.get('module_base'):
+# Проверяем модули (используем .get, чтобы не упасть если компания None)
+if company and company.get('module_base'):
     options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
     icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
 
-if company.get('module_map'): 
+if company and company.get('module_map'): 
     options.append("Карта")
     icons.append("map")
 
-if company.get('module_analytics'): 
+if company and company.get('module_analytics'): 
     options.append("Аналитика")
     icons.append("graph-up-arrow")
 
-if company.get('module_ai'): 
-    options.append("AI-support")
-    icons.append("robot")
-
-# Добавляем системные кнопки
+# Системные кнопки (всегда видны)
 options.extend(["Настройки", "Выйти"])
 icons.extend(["gear", "box-arrow-right"])
 
-# 7. ОТРИСОВКА САЙДБАРА
+# --- 7. ОТРИСОВКА САЙДБАРА ---
 with st.sidebar:
-    # Безопасно достаем название компании. 
-    # Пробуем ключ 'company_name', если нет - 'name', если нет - 'Моя компания'
-    display_company = company_info.get('company_name')
+    # Берем company_name из таблицы companies (как на твоем скрине)
+    display_company = company_info.get('company_name', 'Моя компания') if company_info else "Загрузка..."
 
-    # --- БЛОК КОМПАНИИ (Дизайн) ---
     st.markdown(f"""
         <div class="company-box">
             <div class="company-name">
                 🏢 {display_company}
             </div>
             <div class="user-badge">
-                👤 {full_name} <span style="opacity: 0.5;">|</span> {role}
+                👤 {full_name} <span style="opacity: 0.5;">|</span> {role.upper()}
             </div>
         </div>
     """, unsafe_allow_html=True)
 
-    # --- ЗАГОЛОВОК НАВИГАЦИИ ---
     st.markdown("<p style='margin-left: 10px; font-weight: 600; color: #80868B; font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;'>Навигация</p>", unsafe_allow_html=True)
     
     # --- САМО МЕНЮ ---
