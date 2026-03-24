@@ -51,6 +51,12 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 import pandas as pd
 
+def get_company_data(table_name):
+    """Универсальная функция для получения данных только своей компании"""
+    return supabase.table(table_name) \
+        .select("*") \
+        .eq("company_id", st.session_state.get('company_id'))
+
 # 1. Настройка страницы (Всегда первая)
 st.set_page_config(
     layout="wide", 
@@ -238,7 +244,13 @@ if "shelf" in st.query_params:
 
     try:
         # Загружаем товары для конкретной полки напрямую из Supabase
-        products = supabase.table("global_inventory").select("*").eq("cell", shelf_id).execute().data
+        # Было: .eq("cell", shelf_id)
+# Стало:
+        products = supabase.table("global_inventory") \
+        .select("*") \
+        .eq("company_id", st.session_state.get('company_id')) \
+        .eq("cell", shelf_id) \
+        .execute().data
         
         if products:
             for p in products:
@@ -394,9 +406,15 @@ def sync_to_inventory(doc_id, items_list, doc_type):
             inventory_records.append(record)
     
     if inventory_records:
-        # Сохраняем/обновляем в общую таблицу
-        # on_conflict='doc_id, product_name' гарантирует, что мы не создадим дублей
-        supabase.table("inventory").upsert(inventory_records, on_conflict="doc_id,product_name").execute()
+    # 1. Обязательно добавляем ID компании в каждую запись перед отправкой
+        for record in inventory_records:
+            record["company_id"] = st.session_state.get('company_id')
+
+    # 2. Выполняем upsert, добавив company_id в конфликт (чтобы не затереть чужие данные)
+        supabase.table("inventory").upsert(
+            inventory_records, 
+            on_conflict="doc_id,product_name,company_id"
+        ).execute()
 
 def get_moldova_time():
     tz = pytz.timezone('Europe/Chisinau')
@@ -496,7 +514,11 @@ def sync_all_from_supabase():
 def load_data_from_supabase(table_name):
     try:
         # 1. Запрос к Supabase
-        response = supabase.table(table_name).select("*").order("created_at", desc=True).execute()
+        # Используем твою готовую функцию, которая уже содержит .eq("company_id", ...)
+        response = get_company_data("orders").order("created_at", desc=True).execute()
+
+# Далее извлекаем чистые данные
+        data = response.data
         
         # 2. ПРОВЕРКА ДАННЫХ (Исправление ошибки конструктора)
         # Проверяем, что response.data существует и является списком
@@ -621,15 +643,28 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
             # Обновляем счетчик позиций
             db_payload["items_count"] = len(items_df)
 
-        # 3. ВЫБОР ОПЕРАЦИИ (INSERT / UPDATE)
-        if entry_id:
-            # Обновляем существующую запись
-            response = supabase.table(table_name).update(db_payload).eq("id", entry_id).execute()
-        else:
-            # Создаем новую
-            if "id" not in db_payload: db_payload["id"] = generate_id()
-            response = supabase.table(table_name).insert(db_payload).execute()
+        # Получаем ID компании из сессии
+        current_company_id = st.session_state.get('company_id')
 
+# 3. ВЫБОР ОПЕРАЦИИ (INSERT / UPDATE)
+        if entry_id:
+    # Обновляем существующую запись
+    # Добавляем .eq("company_id", ...), чтобы юзер DeWolt не смог 
+    # случайно (или специально) обновить заказ Termolux, просто подменив ID
+            response = supabase.table(table_name).update(db_payload) \
+            .eq("id", entry_id) \
+            .eq("company_id", current_company_id) \
+            .execute()
+        else:
+    # Создаем новую
+    # Обязательно добавляем ID компании в полезную нагрузку (payload)
+            db_payload["company_id"] = current_company_id
+    
+            if "id" not in db_payload: 
+                db_payload["id"] = generate_id()
+        
+            response = supabase.table(table_name).insert(db_payload).execute()
+            
         return True, response
 
     except Exception as e:
@@ -709,7 +744,11 @@ def get_full_inventory_df():
         # ===== ПРИХОДЫ (ARRIVALS) =====
         try:
             # Прямой запрос без промежуточной функции
-            response = supabase.table("arrivals").select("*").execute()
+            # Используем твою универсальную функцию для фильтрации по company_id
+            response = get_company_data("arrivals").execute()
+
+# Если нужна сортировка по дате (как в предыдущем примере)
+            response = get_company_data("arrivals").order("created_at", desc=True).execute()
             arrivals_data = pd.DataFrame(response.data) if response.data else pd.DataFrame()
         except Exception as e:
             st.warning(f"⚠️ Ошибка загрузки приходов: {e}")
@@ -761,7 +800,13 @@ def get_full_inventory_df():
         
         # ===== ЗАКАЗЫ (ORDERS) =====
         try:
-            response = supabase.table("orders").select("*").execute()
+            # 1. Получаем только свои заявки через твою функцию
+            response = get_company_data("orders").execute()
+
+# 2. Если хочешь, чтобы новые заявки были сверху (сортировка):
+            response = get_company_data("orders").order("created_at", desc=True).execute()
+
+# 3. Извлекаем данные для таблицы
             orders_data = pd.DataFrame(response.data) if response.data else pd.DataFrame()
         except Exception as e:
             st.warning(f"⚠️ Ошибка загрузки заказов: {e}")
@@ -819,7 +864,15 @@ def get_saved_location(product_name):
     """Ищет рекомендованный адрес товара в БД Supabase"""
     try:
         from database import supabase
-        response = supabase.table("product_locations").select("address").eq("product", product_name).execute()
+        # 1. Используем универсальную функцию для фильтрации по компании
+# 2. Добавляем фильтр по конкретному товару
+        response = get_company_data("product_locations") \
+            .select("address") \
+            .eq("product", product_name) \
+            .execute()
+
+# Извлекаем список адресов
+        addresses = [row['address'] for row in response.data]
         if response.data:
             return response.data[0]['address']
         return "НЕИЗВЕСТНО"
@@ -1446,21 +1499,39 @@ def show_profile():
     st.markdown("<h1 class='section-head'>👤 Цифровой Профиль Управляющего</h1>", unsafe_allow_html=True)
 
     # --- 1. ПЕРВИЧНАЯ ЗАГРУЗКА В SESSION STATE ---
-    # Мы загружаем данные из базы в сессию только если их там еще нет
+# Получаем ID компании текущего пользователя
+current_company_id = st.session_state.get('company_id')
+
     if 'mgr_data' not in st.session_state:
         try:
-            res = supabase.table("manager_profile").select("*").order("id").limit(1).execute()
+        # 1. Используем фильтр по компании вместо простого limit(1)
+            res = supabase.table("manager_profile") \
+                .select("*") \
+                .eq("company_id", current_company_id) \
+                .execute()
+        
             if res.data:
+            # Берем первый профиль именно ЭТОЙ компании
                 st.session_state.mgr_data = res.data[0]
             else:
-                st.warning("Профиль не найден. Создайте его.")
+                st.warning(f"Профиль для компании {st.session_state.get('company_name', '')} не найден.")
+            
                 if st.button("➕ Создать профиль"):
-                    supabase.table("manager_profile").insert({"full_name": "Новый Управляющий"}).execute()
-                    del st.session_state.mgr_data # Сброс для перезагрузки
-                    st.rerun()
-                return
+                # 2. При создании ОБЯЗАТЕЛЬНО привязываем его к компании
+                    new_profile = {
+                        "full_name": "Новый Управляющий",
+                        "company_id": current_company_id
+                    }
+                    supabase.table("manager_profile").insert(new_profile).execute()
+                
+                # Очищаем сессию, чтобы на следующем прогоне данные подтянулись
+                if 'mgr_data' in st.session_state:
+                    del st.session_state.mgr_data
+                st.rerun()
+            return
+            
         except Exception as e:
-            st.error(f"Ошибка базы: {e}")
+            st.error(f"Ошибка базы при загрузке профиля: {e}")
             return
 
     # Локальная ссылка для удобства доступа к данным в текущем стейте
@@ -1472,24 +1543,41 @@ def show_profile():
     avatar_url = st.session_state.mgr_data.get('avatar_url') or "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
     work_url = st.session_state.mgr_data.get('workplace_photo_url') or "https://img.freepik.com/premium-photo/modern-warehouse-with-racks-goods-generative-ai_124507-449.jpg"
 
+current_company_id = st.session_state.get('company_id')
+
     with col_face:
         st.image(avatar_url, caption="Фото управляющего", use_container_width=True)
         new_avatar = st.file_uploader("🖼️ Сменить фото", type=['png', 'jpg', 'jpeg'], key="upd_ava")
         if new_avatar and st.button("💾 Загрузить лицо"):
-            url = upload_image_to_supabase(new_avatar.name, new_avatar.getvalue())
+        # СОВЕТ: Добавляй ID компании в название файла, чтобы они не перемешивались в хранилище
+            file_name = f"{current_company_id}_avatar_{new_avatar.name}"
+            url = upload_image_to_supabase(file_name, new_avatar.getvalue())
+        
             if url:
-                supabase.table("manager_profile").update({"avatar_url": url}).eq("id", m_id).execute()
-                st.session_state.mgr_data['avatar_url'] = url # Сразу обновляем в сессии
+            # Безопасное обновление: проверяем и ID профиля, и ID компании
+                supabase.table("manager_profile").update({"avatar_url": url}) \
+                    .eq("id", m_id) \
+                    .eq("company_id", current_company_id) \
+                    .execute()
+            
+                st.session_state.mgr_data['avatar_url'] = url
                 st.rerun()
 
     with col_workplace:
         st.image(work_url, caption=st.session_state.mgr_data.get('workplace_name') or "Место работы", use_container_width=True)
         new_work = st.file_uploader("🏗️ Сменить фото склада", type=['png', 'jpg', 'jpeg'], key="upd_work")
         if new_work and st.button("💾 Загрузить склад"):
-            url = upload_image_to_supabase(new_work.name, new_work.getvalue())
+            file_name = f"{current_company_id}_work_{new_work.name}"
+            url = upload_image_to_supabase(file_name, new_work.getvalue())
+        
             if url:
-                supabase.table("manager_profile").update({"workplace_photo_url": url}).eq("id", m_id).execute()
-                st.session_state.mgr_data['workplace_photo_url'] = url # Сразу обновляем в сессии
+            # Безопасное обновление
+                supabase.table("manager_profile").update({"workplace_photo_url": url}) \
+                    .eq("id", m_id) \
+                    .eq("company_id", current_company_id) \
+                    .execute()
+            
+                st.session_state.mgr_data['workplace_photo_url'] = url
                 st.rerun()
 
     st.markdown("---")
@@ -1564,60 +1652,81 @@ def show_profile():
     if st.button("💾 ЗАФИКСИРОВАТЬ ИЗМЕНЕНИЯ В БАЗЕ", type="primary", use_container_width=True):
         try:
             with st.spinner("Синхронизация с облаком..."):
+            # Получаем ID компании из сессии
+                current_company_id = st.session_state.get('company_id')
+            
                 update_payload = {}
                 for k, v in current_state.items():
-                    # Приведение типов для базы
                     if k == 'employees_count':
-                        # Убираем лишние пробелы и проверяем, число ли это
                         clean_val = str(v).strip()
                         update_payload[k] = int(clean_val) if clean_val.isdigit() else 0
                     else:
                         update_payload[k] = v if str(v).strip() != "" else None
-                
-                # Обновляем в Supabase
-                supabase.table("manager_profile").update(update_payload).eq("id", m_id).execute()
-                
-                # Обновляем Session State, чтобы при следующем прогоне данные были актуальны
+            
+            # --- КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ ---
+            # Добавляем фильтр .eq("company_id", ...), чтобы гарантировать, 
+            # что мы не заденем чужой профиль
+                supabase.table("manager_profile").update(update_payload) \
+                    .eq("id", m_id) \
+                    .eq("company_id", current_company_id) \
+                    .execute()
+            # ------------------------------
+            
+            # Обновляем Session State локально
                 st.session_state.mgr_data.update(update_payload)
-                
+            
                 st.success("✅ Профиль успешно сохранен в базе данных!")
                 time.sleep(1)
                 st.rerun()
-                
+            
         except Exception as e:
             st.error(f"Ошибка сохранения: {e}")
     
 def delete_entry(table_key, entry_id):
     """
-    Удаляет запись из Supabase и синхронизирует локальное состояние.
+    Удаляет запись из Supabase и синхронизирует локальное состояние, 
+    строго проверяя принадлежность записи текущей компании.
     """
     try:
-        # 1. УДАЛЕНИЕ ИЗ ОБЛАКА (Supabase)
-        # Мы обращаемся к таблице по ключу и удаляем строку, где id совпадает
-        response = supabase.table(table_key).delete().eq("id", entry_id).execute()
-        
-        # Проверяем, не пустой ли ответ (если данных нет, значит в БД записи не было)
-        if hasattr(response, 'data'):
-            
-            # 2. УДАЛЕНИЕ ИЗ ЛОКАЛЬНОЙ ПАМЯТИ
-            # Оставляем в стейте только те строки, id которых НЕ равен удаленному
-            st.session_state[table_key] = st.session_state[table_key][
-                st.session_state[table_key]['id'] != entry_id
-            ]
-            
-            # Если удаляем из дочерних таблиц (orders/arrivals), 
-            # нужно не забыть удалить и из сводной таблицы 'main'
-            if table_key != 'main' and 'main' in st.session_state:
-                st.session_state['main'] = st.session_state['main'][
-                    st.session_state['main']['id'] != entry_id
-                ]
-                # Опционально: удалить и из БД таблицы main, если они там дублируются
-                supabase.table("main").delete().eq("id", entry_id).execute()
+        # 0. ПОЛУЧАЕМ ТЕКУЩУЮ КОМПАНИЮ
+        current_company_id = st.session_state.get('company_id')
+        if not current_company_id:
+            st.error("Ошибка: Компания не определена. Выполните вход заново.")
+            return
 
-            # 3. УВЕДОМЛЕНИЕ
-            st.toast(f"🗑️ Запись {entry_id} успешно удалена из системы", icon="🚮")
-            time.sleep(0.5)
-            st.rerun()
+        # 1. УДАЛЕНИЕ ИЗ ОБЛАКА (Supabase)
+        # КРИТИЧНО: добавляем .eq("company_id", ...), чтобы не удалить чужое!
+        response = supabase.table(table_key).delete() \
+            .eq("id", entry_id) \
+            .eq("company_id", current_company_id) \
+            .execute()
+        
+        # Если в ответе нет данных, значит запись либо не найдена, либо она чужая
+        if not response.data:
+            st.warning("Запись не найдена или у вас нет прав на её удаление.")
+            return
+
+        # 2. УДАЛЕНИЕ ИЗ ЛОКАЛЬНОЙ ПАМЯТИ (Streamlit Session State)
+        # Удаляем из текущей таблицы в стейте
+        if table_key in st.session_state:
+            df = st.session_state[table_key]
+            st.session_state[table_key] = df[df['id'] != entry_id]
+            
+        # Если удаляем из дочерних таблиц, чистим и сводную 'main'
+        if table_key != 'main' and 'main' in st.session_state:
+            main_df = st.session_state['main']
+            st.session_state['main'] = main_df[main_df['id'] != entry_id]
+            
+            # Также удаляем из БД таблицы main с проверкой компании
+            supabase.table("main").delete() \
+                .eq("id", entry_id) \
+                .eq("company_id", current_company_id) \
+                .execute()
+
+        # 3. УВЕДОМЛЕНИЕ
+        st.toast(f"🗑️ Запись успешно удалена из системы", icon="🚮")
+        time.sleep(0.5)
+        st.rerun()
             
     except Exception as e:
         st.error(f"❌ Ошибка при удалении из базы данных: {e}")
@@ -1942,14 +2051,34 @@ elif selected == "База Данных":
 
         if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
             with st.spinner("Синхронизация..."):
-                final_url = item['image_url'] if item else None
-                if new_img: final_url = upload_to_cloudinary(new_img, "inventory")
-                
-                payload = {"name": name, "image_url": final_url, "warehouse": wh, "cell": cell, "last_updated": datetime.now().isoformat()}
-                
-                if item: supabase.table("global_inventory").update(payload).eq("id", item['id']).execute()
-                else: supabase.table("global_inventory").insert(payload).execute()
-                st.rerun()
+        # 0. Получаем ID компании текущего пользователя
+            current_company_id = st.session_state.get('company_id')
+        
+            final_url = item['image_url'] if item else None
+            if new_img: 
+                final_url = upload_to_cloudinary(new_img, "inventory")
+        
+        # 1. Добавляем company_id в полезную нагрузку (payload)
+            payload = {
+                "name": name, 
+                "image_url": final_url, 
+                "warehouse": wh, 
+                "cell": cell, 
+                "last_updated": datetime.now().isoformat(),
+                "company_id": current_company_id  # <--- Обязательно для новых записей
+            }
+        
+            if item: 
+            # 2. Обновляем: добавляем двойную проверку (ID товара + ID компании)
+                supabase.table("global_inventory").update(payload) \
+                    .eq("id", item['id']) \
+                    .eq("company_id", current_company_id) \
+                    .execute()
+            else: 
+            # 3. Создаем новый: компания уже в payload
+                supabase.table("global_inventory").insert(payload).execute()
+        
+            st.rerun()
 
     # 3. Кнопки управления
     col_btn1, col_btn2 = st.columns(2)
@@ -1960,16 +2089,18 @@ elif selected == "База Данных":
         if st.button("🖨 QR И ССЫЛКА ПОЛКИ", use_container_width=True): 
             qr_generator()
 
-    # 4. ЛОГИКА ЗАГРУЗКИ И ФИЛЬТРАЦИИ (КРИТИЧЕСКИЙ МОМЕНТ)
+# 4. ЛОГИКА ЗАГРУЗКИ И ФИЛЬТРАЦИИ (ИСПРАВЛЕНО)
     try:
-        # Получаем свежие данные
-        all_data = supabase.table("global_inventory").select("*").order("name").execute().data
-        
-        # Фильтруем список на основе ввода в поиске
+    # 1. Используем твою универсальную функцию для фильтрации по компании на стороне сервера
+        query = get_company_data("global_inventory").order("name")
+    
+    # 2. Если есть поисковый запрос, добавляем фильтр прямо в запрос к базе (ilike - поиск без учета регистра)
         if search_query:
-            display_items = [i for i in all_data if search_query in i['name'].lower()]
-        else:
-            display_items = all_data
+        # ilike позволяет искать подстроку прямо в базе данных
+            query = query.ilike("name", f"%{search_query}%")
+    
+    # 3. Выполняем запрос — теперь в all_data только НУЖНЫЕ данные
+        display_items = query.execute().data
             
     except Exception as e:
         st.error(f"Ошибка связи с базой: {e}")
@@ -1995,9 +2126,23 @@ elif selected == "База Данных":
                         st.session_state[f"map_{prod['id']}"] = not st.session_state.get(f"map_{prod['id']}", False)
                 with c_act:
                     ce, cd = st.columns(2)
-                    if ce.button("✏️", key=f"ed_{prod['id']}"): product_editor(prod)
+    
+    # Кнопка редактирования
+                    if ce.button("✏️", key=f"ed_{prod['id']}"): 
+                        product_editor(prod)
+        
+    # Кнопка удаления (БЕЗОПАСНАЯ)
                     if cd.button("🗑️", key=f"dl_{prod['id']}"):
-                        supabase.table("global_inventory").delete().eq("id", prod['id']).execute()
+        # 1. Получаем ID компании текущего юзера
+                        current_company_id = st.session_state.get('company_id')
+        
+        # 2. Удаляем с двойным фильтром: по ID товара И по ID компании
+                        supabase.table("global_inventory").delete() \
+                            .eq("id", prod['id']) \
+                            .eq("company_id", current_company_id) \
+                            .execute()
+        
+        # 3. Обновляем страницу, чтобы товар исчез из списка
                         st.rerun()
 
                 # Карта внутри списка
@@ -2039,7 +2184,7 @@ elif selected == "Настройки":
             
             try:
                 # 1. Запрос из актуальной базы global_inventory
-                raw_inv = supabase.table("global_inventory").select("name, cell").eq("warehouse", wh_to_show).execute()
+                raw_inv = get_company_data("global_inventory").select("name, cell").eq("warehouse", wh_to_show).execute()
                 
                 # 2. Группировка товаров по ячейкам
                 cell_content = {}
@@ -2115,7 +2260,17 @@ elif selected == "Настройки":
                 if st.form_submit_button("💾 Сохранить в базу", use_container_width=True):
                     if new_email and new_name:
                         try:
-                            supabase.table("profiles").insert({"email": new_email, "full_name": new_name, "role": new_role}).execute()
+            # СОЗДАЕМ PAYLOAD С ПРИВЯЗКОЙ К КОМПАНИИ
+                            new_employee = {
+                                "email": new_email, 
+                                "full_name": new_name, 
+                                "role": new_role,
+                                "company_id": st.session_state.get('company_id') # <--- ГЛАВНОЕ ДОБАВЛЕНИЕ
+                            }
+            
+            # ОТПРАВЛЯЕМ В ТАБЛИЦУ
+                            supabase.table("profiles").insert(new_employee).execute()
+            
                             st.success(f"Сотрудник {new_name} успешно добавлен!")
                             time.sleep(1)
                             st.rerun()
@@ -2147,7 +2302,7 @@ elif selected == "Настройки":
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                         for t in selected_tables:
                             try:
-                                data = supabase.table(t).select("*").execute().data
+                                data = get_company_data(t).execute().data
                                 if data:
                                     # Имя листа в Excel не может быть длиннее 31 символа
                                     pd.DataFrame(data).to_excel(writer, sheet_name=t[:31], index=False)
@@ -2218,13 +2373,13 @@ elif selected == "Настройки":
                         my_bar.progress((idx) / len(tables_to_clean), text=f"Очистка: {table}...")
                         try:
                             # 1. Получаем все ID
-                            res = supabase.table(table).select("id").execute()
+                            res = get_company_data(table).select("id").execute()
                             if res.data:
                                 ids = [row['id'] for row in res.data]
                                 # 2. Удаляем пачками по 500
                                 for i in range(0, len(ids), 500):
                                     chunk = ids[i:i + 500]
-                                    supabase.table(table).delete().in_("id", chunk).execute()
+                                    supabase.table(table).delete().in_("id", chunk).eq("company_id", st.session_state.get('company_id')).execute()
                                 total_deleted += len(ids)
                         except Exception:
                             # Если таблицы нет, просто пропускаем
