@@ -1995,11 +1995,14 @@ elif selected == "База Данных":
     try:
         # Получаем свежие данные
         c_id = st.session_state.get('company_id')
-        all_data = supabase.table("global_inventory") 
-            .select("*") 
-            .eq("company_id", c_id) 
-            .order("name") 
-            .execute().data
+        all_data = (
+            supabase.table("global_inventory")
+            .select("*")
+            .eq("company_id", c_id)
+            .order("name")
+            .execute()
+            .data
+        )
         
         # Фильтруем список на основе ввода в поиске
         if search_query:
