@@ -645,11 +645,11 @@ def save_to_supabase(table_name, data_dict, entry_id=None):
         # 3. ВЫБОР ОПЕРАЦИИ (INSERT / UPDATE)
         if entry_id:
             # Обновляем существующую запись
-            response = supabase.table(table_name).update(db_payload).eq("id", entry_id).execute()
+            response = supabase.table(table_name).update(db_ad).eq("id", entry_id).execute()
         else:
             # Создаем новую
-            if "id" not in db_payload: db_payload["id"] = generate_id()
-            response = supabase.table(table_name).insert(db_payload).execute()
+            if "id" not in db_ad: db_ad["id"] = generate_id()
+            response = supabase.table(table_name).insert(db_ad).execute()
 
         return True, response
 
@@ -851,9 +851,9 @@ def save_new_location(product_name, location):
     """Запоминает ячейку для товара в облаке (UPSERT)"""
     try:
         from database import supabase
-        payload = {"product": product_name, "address": location}
+        ad = {"product": product_name, "address": location}
         # Используем upsert: если товар есть — обновит адрес, если нет — создаст
-        supabase.table("product_locations").upsert(payload, on_conflict="product").execute()
+        supabase.table("product_locations").upsert(ad, on_conflict="product").execute()
     except Exception as e:
         st.error(f"Ошибка сохранения топологии: {e}")
 
@@ -1122,7 +1122,7 @@ def save_doc(key, name, qty, price, client, tc, driver):
 
     # 2. ПОДГОТОВКА ДЛЯ БАЗЫ ДАННЫХ (Маппинг на English)
     # Используем нашу ранее созданную логику маппинга
-    db_payload = {
+    db_ad = {
         "id": new_id,
         "status": "НОВЫЙ",
         "client_name": client,
@@ -1585,13 +1585,13 @@ def show_profile():
     if st.button("💾 ЗАФИКСИРОВАТЬ ИЗМЕНЕНИЯ В БАЗЕ", type="primary", use_container_width=True):
         try:
             with st.spinner("Синхронизация с облаком..."):
-                update_payload = {}
+                update_ad = {}
                 for k, v in current_state.items():
                     # Приведение типов для базы
                     if k == 'employees_count':
                         # Убираем лишние пробелы и проверяем, число ли это
                         clean_val = str(v).strip()
-                        update_payload[k] = int(clean_val) if clean_val.isdigit() else 0
+                        update_ad[k] = int(clean_val) if clean_val.isdigit() else 0
                     else:
                         update_payload[k] = v if str(v).strip() != "" else None
                 
@@ -1966,10 +1966,20 @@ elif selected == "База Данных":
                 final_url = item['image_url'] if item else None
                 if new_img: final_url = upload_to_cloudinary(new_img, "inventory")
                 
-                payload = {"name": name, "image_url": final_url, "warehouse": wh, "cell": cell, "last_updated": datetime.now().isoformat()}
-                
-                if item: supabase.table("global_inventory").update(payload).eq("id", item['id']).execute()
-                else: supabase.table("global_inventory").insert(payload).execute()
+                # Добавляем company_id в полезную нагрузку
+                payload = {
+                    "name": name, 
+                    "image_url": final_url, 
+                    "warehouse": wh, 
+                    "cell": cell, 
+                    "company_id": st.session_state.company_id, # КРИТИЧНО!
+                    "last_updated": datetime.now().isoformat()
+                }
+
+                if item: 
+                    supabase.table("global_inventory").update(payload).eq("id", item['id']).execute()
+                else: 
+                    supabase.table("global_inventory").insert(payload).execute()
                 st.rerun()
 
     # 3. Кнопки управления
@@ -1984,7 +1994,12 @@ elif selected == "База Данных":
     # 4. ЛОГИКА ЗАГРУЗКИ И ФИЛЬТРАЦИИ (КРИТИЧЕСКИЙ МОМЕНТ)
     try:
         # Получаем свежие данные
-        all_data = supabase.table("global_inventory").select("*").order("name").execute().data
+        c_id = st.session_state.get('company_id')
+        all_data = supabase.table("global_inventory") \
+            .select("*") \
+            .eq("company_id", c_id) \
+            .order("name") \
+            .execute().data
         
         # Фильтруем список на основе ввода в поиске
         if search_query:
@@ -2060,7 +2075,12 @@ elif selected == "Настройки":
             
             try:
                 # 1. Запрос из актуальной базы global_inventory
-                raw_inv = supabase.table("global_inventory").select("name, cell").eq("warehouse", wh_to_show).execute()
+                # 1. Запрос из актуальной базы с фильтром по компании
+                raw_inv = supabase.table("global_inventory") \
+                    .select("name, cell") \
+                    .eq("warehouse", wh_to_show) \
+                    .eq("company_id", st.session_state.company_id) \ # Добавляем этот фильтр
+                    .execute()
                 
                 # 2. Группировка товаров по ячейкам
                 cell_content = {}
@@ -2136,7 +2156,12 @@ elif selected == "Настройки":
                 if st.form_submit_button("💾 Сохранить в базу", use_container_width=True):
                     if new_email and new_name:
                         try:
-                            supabase.table("profiles").insert({"email": new_email, "full_name": new_name, "role": new_role}).execute()
+                            supabase.table("profiles").insert({
+                                "email": new_email, 
+                                "full_name": new_name, 
+                                "role": new_role,
+                                "company_id": st.session_state.company_id # Привязываем к компании
+                                }).execute()
                             st.success(f"Сотрудник {new_name} успешно добавлен!")
                             time.sleep(1)
                             st.rerun()
@@ -2168,7 +2193,7 @@ elif selected == "Настройки":
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                         for t in selected_tables:
                             try:
-                                data = supabase.table(t).select("*").execute().data
+                                data = supabase.table(t).select("*").eq("company_id", st.session_state.company_id).execute().data
                                 if data:
                                     # Имя листа в Excel не может быть длиннее 31 символа
                                     pd.DataFrame(data).to_excel(writer, sheet_name=t[:31], index=False)
@@ -2235,21 +2260,33 @@ elif selected == "Настройки":
                     progress_text = "Идет очистка базы данных. Пожалуйста, подождите..."
                     my_bar = st.progress(0, text=progress_text)
                     
+                    # 1. Получаем ID текущей компании
+                    c_id = st.session_state.get('company_id')
+                    
+                    if not c_id:
+                        st.error("Ошибка: ID компании не найден. Очистка невозможна.")
+                        st.stop()
+
+                    total_deleted = 0
+                    progress_text = "Идет безопасная очистка данных вашей компании..."
+                    my_bar = st.progress(0, text=progress_text)
+                    
                     for idx, table in enumerate(tables_to_clean):
-                        my_bar.progress((idx) / len(tables_to_clean), text=f"Очистка: {table}...")
+                        # Обновляем прогресс
+                        current_progress = (idx) / len(tables_to_clean)
+                        my_bar.progress(current_progress, text=f"Очистка таблицы: {table}...")
+                        
                         try:
-                            # 1. Получаем все ID
-                            res = supabase.table(table).select("id").execute()
-                            if res.data:
-                                ids = [row['id'] for row in res.data]
-                                # 2. Удаляем пачками по 500
-                                for i in range(0, len(ids), 500):
-                                    chunk = ids[i:i + 500]
-                                    supabase.table(table).delete().in_("id", chunk).execute()
-                                total_deleted += len(ids)
-                        except Exception:
-                            # Если таблицы нет, просто пропускаем
-                            pass
+                            # Удаляем данные ТОЛЬКО текущей компании
+                            response = supabase.table(table).delete().eq("company_id", c_id).execute()
+                            
+                            # Считаем количество удаленных строк для отчета
+                            if response.data:
+                                total_deleted += len(response.data)
+                                
+                        except Exception as table_err:
+                            # Если в таблице нет колонки company_id, пропускаем её
+                            continue
                             
                     my_bar.progress(1.0, text="Удаление завершено!")
                     
