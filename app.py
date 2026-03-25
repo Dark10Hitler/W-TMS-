@@ -51,6 +51,31 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 import pandas as pd
 
+def get_company_data(table_name):
+    """
+    Универсальная функция для загрузки данных текущей компании.
+    """
+    # Берем ID компании, который мы сохранили при логине
+    c_id = st.session_state.get('company_id')
+    
+    if not c_id:
+        st.error("Критическая ошибка: ID компании не найден. Перезайдите в систему.")
+        return []
+
+    try:
+        # ПРАВИЛЬНЫЙ ПОРЯДОК: table -> select -> filter -> execute
+        query = supabase.table(table_name).select("*").eq("company_id", c_id)
+        
+        # Добавляем сортировку по дате, если это реестр
+        if table_name in ["main_registry", "orders", "arrivals"]:
+            query = query.order("created_at", desc=True)
+            
+        response = query.execute()
+        return response.data
+    except Exception as e:
+        st.error(f"Ошибка загрузки {table_name}: {e}")
+        return []
+
 # 1. Настройка страницы (Всегда первая)
 st.set_page_config(
     layout="wide", 
@@ -495,52 +520,49 @@ def sync_all_from_supabase():
 
 def load_data_from_supabase(table_name):
     try:
-        # 1. Запрос к Supabase
-        response = supabase.table(table_name).select("*").order("created_at", desc=True).execute()
+        # 1. Извлекаем ID компании текущего пользователя
+        c_id = st.session_state.get('company_id')
         
-        # 2. ПРОВЕРКА ДАННЫХ (Исправление ошибки конструктора)
-        # Проверяем, что response.data существует и является списком
+        if not c_id:
+            st.error("❌ Ошибка: ID компании не найден в сессии. Пожалуйста, перезайдите.")
+            return pd.DataFrame()
+
+        # 2. Запрос к Supabase с фильтрацией
+        # ВАЖНО: .eq("company_id", c_id) гарантирует изоляцию данных
+        response = supabase.table(table_name) \
+            .select("*") \
+            .eq("company_id", c_id) \
+            .order("created_at", desc=True) \
+            .execute()
+        
+        # 3. ПРОВЕРКА ДАННЫХ
         raw_data = response.data
         if raw_data is None or not isinstance(raw_data, list):
-            st.warning(f"⚠️ Данные для {table_name} не получены или имеют неверный формат.")
             return pd.DataFrame(columns=TABLE_STRUCT.get(table_name, []))
             
-        # Теперь безопасно создаем DataFrame
         df = pd.DataFrame(raw_data)
         
-        # Если в базе 0 записей, создаем пустой DF с нужными колонками
         if df.empty:
             return pd.DataFrame(columns=TABLE_STRUCT.get(table_name, []))
 
         # --- КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ ДЛЯ JSON/DICT ---
-        # Чтобы не было ошибок хеширования и проблем с AgGrid
         for col in df.columns:
-            # Проверяем, есть ли в колонке словари или списки
             if df[col].apply(lambda x: isinstance(x, (dict, list))).any():
                 df[col] = df[col].apply(lambda x: str(x) if x is not None else None)
 
-        # 3. Маппинг (как у вас был)
+        # 4. Маппинг имен колонок
         RENAME_MAP = {
             "id": "id",
             "status": "Статус",
             "client_name": "Клиент",
             "items_count": "Кол-во позиций",
-            "total_volume": "Общий объем (м3)",
             "total_sum": "Сумма заявки",
-            "client_address": "Адрес клиента",
             "driver_name": "Водитель",
             "vehicle_number": "ТС (Госномер)",
-            "loading_efficiency": "КПД загрузки",
-            "phone": "Телефон",
             "event_date": "Когда",
-            "event_time": "Время",
-            "location": "Где",
             "subject": "Что именно",
             "reason": "Почему (Причина)",
-            "approved_by": "Кто одобрил",
-            "parent_id": "Связь с ID",
-            "transport": "На чем",
-            "items_data": "items_data" # Системное поле
+            "company_id": "ID Компании" # Можно оставить для проверки, потом скрыть в AgGrid
         }
         
         current_rename = {k: v for k, v in RENAME_MAP.items() if k in df.columns}
@@ -550,7 +572,6 @@ def load_data_from_supabase(table_name):
 
     except Exception as e:
         st.error(f"🚨 Критическая ошибка загрузки {table_name}: {str(e)}")
-        # Возвращаем пустой DF, чтобы приложение не "падало" полностью
         return pd.DataFrame()
 
 # --- ГЛОБАЛЬНАЯ СИНХРОНИЗАЦИЯ ---
