@@ -529,10 +529,10 @@ def load_data_from_supabase(table_name):
 
         # 2. Запрос к Supabase с фильтрацией
         # ВАЖНО: .eq("company_id", c_id) гарантирует изоляцию данных
-        response = supabase.table(table_name) \
-            .select("*") \
-            .eq("company_id", c_id) \
-            .order("created_at", desc=True) \
+        response = supabase.table(table_name) 
+            .select("*") 
+            .eq("company_id", c_id) 
+            .order("created_at", desc=True) 
             .execute()
         
         # 3. ПРОВЕРКА ДАННЫХ
@@ -1995,10 +1995,10 @@ elif selected == "База Данных":
     try:
         # Получаем свежие данные
         c_id = st.session_state.get('company_id')
-        all_data = supabase.table("global_inventory") \
-            .select("*") \
-            .eq("company_id", c_id) \
-            .order("name") \
+        all_data = supabase.table("global_inventory") 
+            .select("*") 
+            .eq("company_id", c_id) 
+            .order("name") 
             .execute().data
         
         # Фильтруем список на основе ввода в поиске
@@ -2076,10 +2076,10 @@ elif selected == "Настройки":
             try:
                 # 1. Запрос из актуальной базы global_inventory
                 # 1. Запрос из актуальной базы с фильтром по компании
-                raw_inv = supabase.table("global_inventory") \
-                    .select("name, cell") \
-                    .eq("warehouse", wh_to_show) \
-                    .eq("company_id", st.session_state.company_id) \ # Добавляем этот фильтр
+                raw_inv = supabase.table("global_inventory") 
+                    .select("name, cell") 
+                    .eq("warehouse", wh_to_show) 
+                    .eq("company_id", st.session_state.company_id)  
                     .execute()
                 
                 # 2. Группировка товаров по ячейкам
