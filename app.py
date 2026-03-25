@@ -52,21 +52,10 @@ from streamlit_option_menu import option_menu
 import pandas as pd
 
 def get_company_data(table_name):
-    """
-    Функция должна возвращать ОБЪЕКТ ЗАПРОСА (билдер), 
-    а не результат выполнения (.execute())
-    """
-    c_id = st.session_state.get('company_id')
-    
-    # 1. Сначала просто создаем обращение к таблице
-    query = supabase.table(table_name)
-    
-    # 2. Если ID компании нет, фильтруем по "пустому" UUID, чтобы не упало
-    if not c_id:
-        return query.eq("company_id", "00000000-0000-0000-0000-000000000000")
-    
-    # 3. ВОЗВРАЩАЕМ БИЛДЕР С ФИЛЬТРОМ (без .execute()!)
-    return query.eq("company_id", c_id)
+    """Универсальная функция для получения данных только своей компании"""
+    return supabase.table(table_name) \
+        .select("*") \
+        .eq("company_id", st.session_state.get('company_id'))
 
 # 1. Настройка страницы (Всегда первая)
 st.set_page_config(
@@ -303,60 +292,50 @@ if 'user' not in st.session_state:
 # 4. ПРИМЕНЯЕМ СТИЛИ (Только для авторизованных)
 apply_system_styles()
 
-# --- 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ ---
-user_data = st.session_state.get('user_data', {})
-
-# ВАЖНО: Supabase часто возвращает связанные таблицы как СПИСОК [{...}]
-raw_company = user_data.get('companies', {})
-if isinstance(raw_company, list) and len(raw_company) > 0:
-    company = raw_company[0]
-else:
-    company = raw_company
-
-# Создаем синоним, чтобы Раздел 7 не падал
-company_info = company 
-
-# Берем имя из профиля (у тебя там сейчас названия компаний записаны)
+# 5. ИЗВЛЕКАЕМ ДАННЫЕ ИЗ СЕССИИ (Чтобы они были доступны для меню)
+user_data = st.session_state.user_data
+company = user_data['companies'] 
+company_info = user_data['companies'] 
 full_name = user_data.get('full_name', 'Сотрудник')
 role = user_data.get('role', 'worker')
 
-# --- 6. СОБИРАЕМ СПИСКИ ДЛЯ МЕНЮ ---
+# 6. СОБИРАЕМ СПИСКИ ДЛЯ МЕНЮ (На основе доступов из базы)
 options = []
 icons = []
 
-# Проверяем модули (используем .get, чтобы не упасть если компания None)
-if company and company.get('module_base'):
+if company.get('module_base'):
     options.extend(["Main", "Заявки", "Приходы", "Брак", "Дополнения", "База Данных"])
     icons.extend(["house", "clipboard2-check", "box-arrow-in-down", "exclamation-octagon", "plus-circle", "database-fill"])
 
-if company and company.get('module_map'): 
+if company.get('module_map'): 
     options.append("Карта")
     icons.append("map")
-
-if company and company.get('module_analytics'): 
+if company.get('module_analytics'): 
     options.append("Аналитика")
     icons.append("graph-up-arrow")
+if company.get('module_ai'): 
+    options.append("AI-support")
+    icons.append("robot")
 
-# Системные кнопки (всегда видны)
+# Добавляем системные кнопки в конец списка
 options.extend(["Настройки", "Выйти"])
 icons.extend(["gear", "box-arrow-right"])
 
-# --- 7. ОТРИСОВКА САЙДБАРА ---
+# 7. ОТРИСОВКА САЙДБАРА (Теперь все переменные определены)
 with st.sidebar:
-    # Берем company_name из таблицы companies (как на твоем скрине)
-    display_company = company_info.get('company_name', 'Моя компания') if company_info else "Загрузка..."
-
+    # --- БЛОК КОМПАНИИ (Дизайн) ---
     st.markdown(f"""
         <div class="company-box">
             <div class="company-name">
-                🏢 {display_company}
+                🏢 {company_info['company_name']}
             </div>
             <div class="user-badge">
-                👤 {full_name} <span style="opacity: 0.5;">|</span> {role.upper()}
+                👤 {full_name} <span style="opacity: 0.5;">|</span> {role}
             </div>
         </div>
     """, unsafe_allow_html=True)
 
+    # --- ЗАГОЛОВОК НАВИГАЦИИ ---
     st.markdown("<p style='margin-left: 10px; font-weight: 600; color: #80868B; font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;'>Навигация</p>", unsafe_allow_html=True)
     
     # --- САМО МЕНЮ ---
@@ -1521,7 +1500,7 @@ def show_profile():
 
     # --- 1. ПЕРВИЧНАЯ ЗАГРУЗКА В SESSION STATE ---
 # Получаем ID компании текущего пользователя
-    current_company_id = st.session_state.get('company_id')
+current_company_id = st.session_state.get('company_id')
 
     if 'mgr_data' not in st.session_state:
         try:
@@ -1564,7 +1543,7 @@ def show_profile():
     avatar_url = st.session_state.mgr_data.get('avatar_url') or "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
     work_url = st.session_state.mgr_data.get('workplace_photo_url') or "https://img.freepik.com/premium-photo/modern-warehouse-with-racks-goods-generative-ai_124507-449.jpg"
 
-    current_company_id = st.session_state.get('company_id')
+current_company_id = st.session_state.get('company_id')
 
     with col_face:
         st.image(avatar_url, caption="Фото управляющего", use_container_width=True)
@@ -2073,33 +2052,33 @@ elif selected == "База Данных":
         if st.button("💾 СОХРАНИТЬ ИЗМЕНЕНИЯ", use_container_width=True, type="primary"):
             with st.spinner("Синхронизация..."):
         # 0. Получаем ID компании текущего пользователя
-                current_company_id = st.session_state.get('company_id')
+            current_company_id = st.session_state.get('company_id')
         
-                final_url = item['image_url'] if item else None
-                if new_img: 
-                    final_url = upload_to_cloudinary(new_img, "inventory")
+            final_url = item['image_url'] if item else None
+            if new_img: 
+                final_url = upload_to_cloudinary(new_img, "inventory")
         
         # 1. Добавляем company_id в полезную нагрузку (payload)
-                payload = {
-                    "name": name, 
-                    "image_url": final_url, 
-                    "warehouse": wh, 
-                    "cell": cell, 
-                    "last_updated": datetime.now().isoformat(),
-                    "company_id": current_company_id  # <--- Обязательно для новых записей
-                }
+            payload = {
+                "name": name, 
+                "image_url": final_url, 
+                "warehouse": wh, 
+                "cell": cell, 
+                "last_updated": datetime.now().isoformat(),
+                "company_id": current_company_id  # <--- Обязательно для новых записей
+            }
         
-                if item: 
+            if item: 
             # 2. Обновляем: добавляем двойную проверку (ID товара + ID компании)
-                    supabase.table("global_inventory").update(payload) \
-                        .eq("id", item['id']) \
-                        .eq("company_id", current_company_id) \
-                        .execute()
-                else: 
+                supabase.table("global_inventory").update(payload) \
+                    .eq("id", item['id']) \
+                    .eq("company_id", current_company_id) \
+                    .execute()
+            else: 
             # 3. Создаем новый: компания уже в payload
-                    supabase.table("global_inventory").insert(payload).execute()
+                supabase.table("global_inventory").insert(payload).execute()
         
-                st.rerun()
+            st.rerun()
 
     # 3. Кнопки управления
     col_btn1, col_btn2 = st.columns(2)
@@ -2323,7 +2302,7 @@ elif selected == "Настройки":
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                         for t in selected_tables:
                             try:
-                                data = get_company_data("table").eq("warehouse_id", selected_warehouse).execute()
+                                data = get_company_data(t).execute().data
                                 if data:
                                     # Имя листа в Excel не может быть длиннее 31 символа
                                     pd.DataFrame(data).to_excel(writer, sheet_name=t[:31], index=False)
