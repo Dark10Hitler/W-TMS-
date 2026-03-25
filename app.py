@@ -527,13 +527,13 @@ def load_data_from_supabase(table_name):
             st.error("❌ Ошибка: ID компании не найден в сессии. Пожалуйста, перезайдите.")
             return pd.DataFrame()
 
-        # 2. Запрос к Supabase с фильтрацией
-        # ВАЖНО: .eq("company_id", c_id) гарантирует изоляцию данных
-        response = supabase.table(table_name) 
-            .select("*") 
-            .eq("company_id", c_id) 
-            .order("created_at", desc=True) 
+        response = (
+            supabase.table(table_name)
+            .select("*")
+            .eq("company_id", c_id)
+            .order("created_at", desc=True)
             .execute()
+        )
         
         # 3. ПРОВЕРКА ДАННЫХ
         raw_data = response.data
