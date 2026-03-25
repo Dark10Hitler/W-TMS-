@@ -95,27 +95,49 @@ def login_form():
 
         if st.button("Access Terminal", use_container_width=True, type="primary"):
             try:
-                # 1. Пробуем войти в Auth
+        # 1. Авторизация в Supabase Auth
                 auth_response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                
+        
                 if auth_response.user:
-                    st.session_state.user = auth_response.user
-                    
-                    # 2. Пробуем получить профиль
-                    try:
-                        user_profile = supabase.table("profiles").select("*, companies(*)").eq("id", auth_response.user.id).single().execute()
-                        
-                        if user_profile.data:
-                            st.session_state.user_data = user_profile.data
-                            st.session_state.saved_email = email
-                            st.success("Успешный вход!")
-                            st.rerun()
-                        else:
-                            st.error("Данные профиля отсутствуют в БД.")
-                    except Exception as profile_err:
-                        st.error(f"Ошибка БД: {profile_err}")
-            except Exception as auth_err:
-                st.error("Неверный логин или пароль")
+            # 2. Получаем профиль пользователя и данные его компании одним запросом
+            # Мы используем JOIN (companies(*)), чтобы сразу достать название и настройки фирмы
+                    user_id = auth_response.user.id
+                    profile_res = supabase.table("profiles") \
+                        .select("*, companies(*)") \
+                        .eq("id", user_id) \
+                        .single() \
+                        .execute()
+            
+                    user_profile = profile_res.data
+            
+                    if user_profile:
+                # 3. КРИТИЧЕСКИЙ ШАГ: Очищаем старую сессию перед записью новой
+                        st.session_state.clear()
+                
+                # 4. Сохраняем данные в session_state
+                        st.session_state.user = auth_response.user
+                        st.session_state.user_data = user_profile
+                
+                # Явно выносим company_id на верхний уровень для удобства фильтрации
+                        st.session_state.company_id = user_profile.get('company_id')
+                
+                # Сохраняем название компании (для отображения в сайдбаре)
+                        if user_profile.get('companies'):
+                            st.session_state.company_name = user_profile['companies'].get('company_name')
+
+                        st.session_state.logged_in = True
+                        st.success(f"Добро пожаловать, {user_profile.get('full_name', 'Пользователь')}!")
+                        st.rerun()
+                    else:
+                        st.error("Ошибка: Профиль пользователя не найден в таблице profiles.")
+    
+            except Exception as e:
+        # Ловим ошибки: неверный пароль, отсутствие связи с БД и т.д.
+                error_msg = str(e)
+                if "Invalid login credentials" in error_msg:
+                    st.error("Неверный логин или пароль.")
+                else:
+                    st.error(f"Критическая ошибка входа: {error_msg}")
 
         if st.button("System Support", use_container_width=True):
             show_support_modal()
