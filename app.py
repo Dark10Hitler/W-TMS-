@@ -2079,11 +2079,12 @@ elif selected == "Настройки":
             try:
                 # 1. Запрос из актуальной базы global_inventory
                 # 1. Запрос из актуальной базы с фильтром по компании
-                raw_inv = supabase.table("global_inventory") 
+                raw_inv = (supabase.table("global_inventory") 
                     .select("name, cell") 
                     .eq("warehouse", wh_to_show) 
                     .eq("company_id", st.session_state.company_id)  
                     .execute()
+                )
                 
                 # 2. Группировка товаров по ячейкам
                 cell_content = {}
