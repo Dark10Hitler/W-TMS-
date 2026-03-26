@@ -697,6 +697,12 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
             st.error("❌ Заполните обязательные поля и добавьте фото!")
             return
 
+        # --- ФИКС 1: ПОЛУЧАЕМ ID КОМПАНИИ ---
+        c_id = st.session_state.get('company_id')
+        if not c_id:
+            st.error("❌ Ошибка авторизации: ID компании не найден. Перезайдите в систему.")
+            return
+
         moldova_tz = pytz.timezone('Europe/Chisinau')
         now_md = datetime.now(moldova_tz)
         defect_id = f"DEF-{uuid.uuid4().hex[:6].upper()}"
@@ -721,6 +727,7 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
         with st.spinner("💾 Запись в базу данных..."):
             payload = {
                 "id": defect_id,
+                "company_id": str(c_id),
                 "created_at": now_md.isoformat(),
                 "item_name": item_name_input.strip(),
                 "quantity": float(defect_qty),
@@ -740,7 +747,8 @@ def create_defect_modal(table_key="defects", *args, **kwargs):
                 # Обновляем UI таблицу в памяти
                 ui_row = {
                     "📝 Ред.": "⚙️", 
-                    "id": defect_id, 
+                    "id": defect_id,
+                    "ID Компании": c_id,
                     "Товар": item_name_input.strip(),
                     "Кол-во": defect_qty, 
                     "Тип дефекта": d_type, 
