@@ -17,7 +17,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 import streamlit.components.v1 as components
 import os
 import plotly.graph_objects as go
-from constants import WAREHOUSE_MAP, TABLE_STRUCT, DRIVER_COLUMNS, VEHICLE_COLUMNS, NOMENCLATURE_COLUMNS
+from constants import TABLE_STRUCT, DRIVER_COLUMNS, VEHICLE_COLUMNS, NOMENCLATURE_COLUMNS
 from constants import ORDER_COLUMNS, ARRIVAL_COLUMNS, EXTRA_COLUMNS, DEFECT_COLUMNS, MAIN_COLUMNS
 from config import edit_arrival_modal, edit_defect_modal, edit_extra_modal, edit_order_modal
 from config import show_extra_details_modal, show_arrival_details_modal, show_defect_details_modal, show_order_details_modal
@@ -50,6 +50,29 @@ from auth import login_form
 import streamlit as st
 from streamlit_option_menu import option_menu
 import pandas as pd
+
+# --- ЗАГРУЗКА ДИНАМИЧЕСКОЙ ТОПОЛОГИИ ---
+def load_dynamic_topology():
+    topology_data = get_company_data("warehouse_topology")
+    
+    # Превращаем список из БД в удобный словарь: { "Склад 1": ["A1", "A2"], "Склад 2": ["B1"] }
+    warehouse_map = {}
+    if topology_data:
+        for row in topology_data:
+            wh_name = row['warehouse_name']
+            cell_name = row['cell_name']
+            if wh_name not in warehouse_map:
+                warehouse_map[wh_name] = []
+            warehouse_map[wh_name].append(cell_name)
+    
+    # Если данных нет вообще (новая компания), даем пустой шаблон или инфо
+    return warehouse_map
+
+# Вызываем загрузку (после проверки авторизации)
+WAREHOUSE_MAP = load_dynamic_topology()
+
+def get_actual_cells(warehouse_name):
+    return WAREHOUSE_MAP.get(warehouse_name, [])
 
 def get_company_data(table_name):
     """
@@ -263,7 +286,10 @@ if "shelf" in st.query_params:
 
     try:
         # Загружаем товары для конкретной полки напрямую из Supabase
-        products = supabase.table("global_inventory").select("*").eq("cell", shelf_id).execute().data
+        products = supabase.table("global_inventory") \
+        .select("*") \
+        .eq("cell", shelf_id) \
+        .execute().data
         
         if products:
             for p in products:
@@ -1946,13 +1972,23 @@ elif selected == "База Данных":
         st.image(buf.getvalue(), width=200, caption=f"QR-код для {cell}")
         st.download_button("💾 СКАЧАТЬ QR", buf.getvalue(), f"QR_{cell}.png", use_container_width=True, type="primary")
 
-    @st.dialog("📦 Изменение данных товара")
+   @st.dialog("📦 Изменение данных товара")
     def product_editor(item=None):
+        if not WAREHOUSE_MAP:
+            st.error("❌ У вашей компании не настроена топология склада. Обратитесь к админу.")
+            return
+
+        wh_options = list(WAREHOUSE_MAP.keys())
         name = st.text_input("Название", value=item['name'] if item else "")
-        wh = st.selectbox("Склад", list(WAREHOUSE_MAP.keys()), 
-                          index=list(WAREHOUSE_MAP.keys()).index(item['warehouse']) if item else 0)
-        cell = st.selectbox("Ячейка", get_actual_cells(wh), 
-                           index=get_actual_cells(wh).index(item['cell']) if item else 0)
+    
+    # Выбор склада из динамического списка
+        wh = st.selectbox("Склад", wh_options, 
+                      index=wh_options.index(item['warehouse']) if item and item['warehouse'] in wh_options else 0)
+    
+    # Выбор ячейки из динамического списка
+        cell_options = get_actual_cells(wh)
+        cell = st.selectbox("Ячейка", cell_options,
+                           index=cell_options.index(item['cell']) if item and item['cell'] in cell_options else 0)
         
         new_img = st.file_uploader("📸 Сменить фото", type=['jpg', 'png'])
         
