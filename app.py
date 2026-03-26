@@ -51,29 +51,6 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 import pandas as pd
 
-# --- ЗАГРУЗКА ДИНАМИЧЕСКОЙ ТОПОЛОГИИ ---
-def load_dynamic_topology():
-    topology_data = get_company_data("warehouse_topology")
-    
-    # Превращаем список из БД в удобный словарь: { "Склад 1": ["A1", "A2"], "Склад 2": ["B1"] }
-    warehouse_map = {}
-    if topology_data:
-        for row in topology_data:
-            wh_name = row['warehouse_name']
-            cell_name = row['cell_name']
-            if wh_name not in warehouse_map:
-                warehouse_map[wh_name] = []
-            warehouse_map[wh_name].append(cell_name)
-    
-    # Если данных нет вообще (новая компания), даем пустой шаблон или инфо
-    return warehouse_map
-
-# Вызываем загрузку (после проверки авторизации)
-WAREHOUSE_MAP = load_dynamic_topology()
-
-def get_actual_cells(warehouse_name):
-    return WAREHOUSE_MAP.get(warehouse_name, [])
-
 def get_company_data(table_name):
     """
     Универсальная функция для загрузки данных текущей компании.
@@ -98,6 +75,29 @@ def get_company_data(table_name):
     except Exception as e:
         st.error(f"Ошибка загрузки {table_name}: {e}")
         return []
+
+# --- ЗАГРУЗКА ДИНАМИЧЕСКОЙ ТОПОЛОГИИ ---
+def load_dynamic_topology():
+    topology_data = get_company_data("warehouse_topology")
+    
+    # Превращаем список из БД в удобный словарь: { "Склад 1": ["A1", "A2"], "Склад 2": ["B1"] }
+    warehouse_map = {}
+    if topology_data:
+        for row in topology_data:
+            wh_name = row['warehouse_name']
+            cell_name = row['cell_name']
+            if wh_name not in warehouse_map:
+                warehouse_map[wh_name] = []
+            warehouse_map[wh_name].append(cell_name)
+    
+    # Если данных нет вообще (новая компания), даем пустой шаблон или инфо
+    return warehouse_map
+
+# Вызываем загрузку (после проверки авторизации)
+WAREHOUSE_MAP = load_dynamic_topology()
+
+def get_actual_cells(warehouse_name):
+    return WAREHOUSE_MAP.get(warehouse_name, [])
 
 # 1. Настройка страницы (Всегда первая)
 st.set_page_config(
