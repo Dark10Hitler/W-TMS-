@@ -388,6 +388,12 @@ def create_arrival_modal(table_key="arrivals", *args, **kwargs):
             st.error("❌ Заполните Поставщика, № Документа и прикрепите ФОТО!")
             return
 
+        # --- НОВОЕ: ПОЛУЧАЕМ ID КОМПАНИИ ---
+        c_id = st.session_state.get('company_id')
+        if not c_id:
+            st.error("❌ Ошибка авторизации: ID компании не найден. Перезайдите в систему.")
+            return
+
         moldova_tz = pytz.timezone('Europe/Chisinau')
         now_md = datetime.now(moldova_tz)
         arrival_id = f"IN-{uuid.uuid4().hex[:6].upper()}"
@@ -414,6 +420,7 @@ def create_arrival_modal(table_key="arrivals", *args, **kwargs):
 
         payload = {
             "id": arrival_id,
+            "company_id": str(c_id),
             "status": "ПРИЕМКА",
             "client_name": client_name,
             "doc_number": doc_num,
@@ -442,6 +449,7 @@ def create_arrival_modal(table_key="arrivals", *args, **kwargs):
                     for i in items_list:
                         inv_rows.append({
                             "doc_id": arrival_id,
+                            "company_id": str(c_id),
                             "item_name": str(i.get('Название товара') or 'Неизвестно'),
                             "quantity": float(i.get('Кол-во') or 0.0),
                             "warehouse_id": "1",
