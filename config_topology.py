@@ -12,71 +12,61 @@ class WarehouseManager:
     @staticmethod
     def add_rack_design(fig, x_start, y_start, rows, slots, color, name_prefix, 
                         tiers_config=3, orientation='V', is_box=False, warehouse_id="", highlighted_cell=None):
-        num_sections = slots // 2
+        
+        # 1. Исправляем количество секций (убираем деление на 2, если slots - это реальное число секций)
+        num_sections = int(slots) 
         z_step = 1.2
-        section_length = 2.0 
+        section_length = 1.2 # Компактный размер секции
 
-        # Обработка конфигурации ярусов (из БД может прийти int или list)
-        if isinstance(tiers_config, (int, float)):
-            tiers_per_section = [int(tiers_config)] * num_sections
-        else:
-            tiers_per_section = tiers_config
-
-        if is_box:
-            max_t = max(tiers_per_section) if isinstance(tiers_per_section, list) else tiers_config
-            z_max = max_t * z_step
-            width = rows * 1.5
-            length = num_sections * section_length
-            x_size = width if orientation == 'V' else length
-            y_size = length if orientation == 'V' else width
-            
-            addr = f"WH{warehouse_id}-{name_prefix}-ZONE"
-            final_color = 'red' if highlighted_cell == addr else color
-            
-            fig.add_trace(go.Mesh3d(
-                x=[x_start, x_start, x_start+x_size, x_start+x_size, x_start, x_start, x_start+x_size, x_start+x_size],
-                y=[y_start, y_start+y_size, y_start+y_size, y_start, y_start, y_start+y_size, y_start+y_size, y_start],
-                z=[0, 0, 0, 0, z_max, z_max, z_max, z_max],
-                i=[7,0,0,0,4,4,6,6,4,0,3,2], j=[3,4,1,2,5,6,5,2,0,1,6,3], k=[0,7,2,3,6,7,1,1,5,5,7,6],
-                color=final_color, opacity=0.5, name=addr, text=addr, hoverinfo="text",
-                customdata=[addr]
-            ))
-            return
+        # 2. Обработка ярусов
+        try:
+            current_tiers = int(tiers_config)
+        except:
+            current_tiers = 1
 
         for r in range(rows):
             for sec_idx in range(num_sections):
-                current_tiers = int(tiers_per_section[sec_idx])
                 z_max = current_tiers * z_step
                 
+                # Отрисовка каркаса (линии)
                 for s_frame in [sec_idx * section_length, (sec_idx + 1) * section_length]:
                     fx = x_start + (r * 1.5 if orientation == 'V' else s_frame)
                     fy = y_start + (s_frame if orientation == 'V' else r * 1.5)
                     fig.add_trace(go.Scatter3d(
-                        x=[fx, fx, None, fx + (0.8 if orientation == 'V' else 0), fx + (0.8 if orientation == 'V' else 0)],
-                        y=[fy, fy, None, fy + (0 if orientation == 'V' else 0.8), fy + (0 if orientation == 'V' else 0.8)],
+                        x=[fx, fx, None, fx + (0.5 if orientation == 'V' else 0), fx + (0.5 if orientation == 'V' else 0)],
+                        y=[fy, fy, None, fy + (0 if orientation == 'V' else 0.5), fy + (0 if orientation == 'V' else 0.5)],
                         z=[0, z_max, None, 0, z_max],
-                        mode='lines', line=dict(color='#2c3e50', width=2), showlegend=False, hoverinfo='none'
+                        mode='lines', line=dict(color='#444', width=1), showlegend=False, hoverinfo='none'
                     ))
                 
+                # 3. ГЕНЕРАЦИЯ ЯЧЕЕК И ИМЕН
                 for t in range(current_tiers):
-                    tier_label = string.ascii_uppercase[t]
+                    tier_num = t + 1
                     z0 = t * z_step
+                    
+                    # ГЛАВНОЕ ИЗМЕНЕНИЕ: Формат имени ст-1-01-1
+                    # Это должно совпадать с тем, что возвращает get_actual_cells
+                    addr = f"{name_prefix}-{sec_idx+1:02d}-{tier_num}"
+                    
+                    # ПРОВЕРКА ПОДСВЕТКИ
+                    final_color = 'red' if highlighted_cell == addr else color
+
                     x_node = x_start + (r * 1.5 if orientation == 'V' else sec_idx * section_length)
                     y_node = y_start + (sec_idx * section_length if orientation == 'V' else r * 1.5)
                     dx = 0.8 if orientation == 'V' else section_length
                     dy = section_length if orientation == 'V' else 0.8
                     dz = 0.1
                     
-                    addr = f"WH{warehouse_id}-{name_prefix}-R{r+1}-S{sec_idx+1}-{tier_label}"
-                    final_color = 'red' if highlighted_cell == addr else color
-
                     fig.add_trace(go.Mesh3d(
                         x=[x_node, x_node, x_node+dx, x_node+dx, x_node, x_node, x_node+dx, x_node+dx],
                         y=[y_node, y_node+dy, y_node+dy, y_node, y_node, y_node+dy, y_node+dy, y_node],
                         z=[z0, z0, z0, z0, z0+dz, z0+dz, z0+dz, z0+dz],
                         i=[7,0,0,0,4,4,6,6,4,0,3,2], j=[3,4,1,2,5,6,5,2,0,1,6,3], k=[0,7,2,3,6,7,1,1,5,5,7,6],
-                        color=final_color, opacity=0.8, name=addr, text=addr, hoverinfo="text",
-                        customdata=[addr]
+                        color=final_color, 
+                        opacity=0.9 if highlighted_cell == addr else 0.7, 
+                        name=addr, 
+                        text=addr, 
+                        hovertemplate="<b>%{text}</b><extra></extra>"
                     ))
 
 # --- УНИВЕРСАЛЬНЫЙ СБОРЩИК СКЛАДА ИЗ БД ---
@@ -135,9 +125,9 @@ def get_warehouse_figure(warehouse_id, highlighted_cell=None):
         paper_bgcolor='#1e1e1e',
         plot_bgcolor='#1e1e1e',
         scene=dict(
-            aspectmode='data',
-            xaxis=dict(title="Длина (м)", gridcolor='#34495e'),
-            yaxis=dict(title="Ширина (м)", gridcolor='#34495e'),
+            aspectmode='data', # Сжимает карту под размер стеллажей (убирает пустоту)
+            xaxis=dict(title="", showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(title="", showgrid=False, zeroline=False, showticklabels=False),
             zaxis=dict(title="Ярус", gridcolor='#34495e'),
         ),
         clickmode='event+select',
