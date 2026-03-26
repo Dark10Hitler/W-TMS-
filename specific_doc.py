@@ -165,6 +165,12 @@ def create_modal(table_key):
             st.error("❌ Укажите клиента!")
             return
 
+        # --- НОВОЕ: ПОЛУЧАЕМ ID КОМПАНИИ ---
+        c_id = st.session_state.get('company_id')
+        if not c_id:
+            st.error("❌ Ошибка авторизации: ID компании не найден. Пожалуйста, перезайдите в систему.")
+            return
+
         # --- 1. ВРЕМЯ И ИДЕНТИФИКАТОРЫ ---
         import cloudinary.uploader  # Импорт внутри для надежности
         
@@ -209,6 +215,7 @@ def create_modal(table_key):
         # PAYLOAD ДЛЯ ТАБЛИЦЫ ORDERS
         supabase_payload = {
             "id": order_id,
+            "company_id": c_id,
             "status": selected_status,
             "client_name": input_client,
             "items_count": len(parsed_items_df),
@@ -243,6 +250,7 @@ def create_modal(table_key):
                     p_qty = item.get('Количество') or item.get('Кол-во') or item.get('qty') or 0
                     
                     inventory_payload.append({
+                        "company_id": c_id,
                         "doc_id": order_id,
                         "item_name": str(p_name),
                         "quantity": float(p_qty),
@@ -261,6 +269,7 @@ def create_modal(table_key):
 
             # --- 6. ОБНОВЛЕНИЕ ИНТЕРФЕЙСА (Session State) ---
             ui_row = {
+                "ID Компании": c_id,
                 "📝 Ред.": "⚙️", 
                 "id": order_id, 
                 "🔍 Просмотр": "👀 Посмотреть",
