@@ -549,6 +549,12 @@ def create_extras_modal(*args, **kwargs):
             st.error("❌ Заполните обязательные поля: 'Кто одобрил' и 'Причина'!")
             return
 
+        # --- ФИКС 1: ПОЛУЧАЕМ ID КОМПАНИИ ---
+        c_id = st.session_state.get('company_id')
+        if not c_id:
+            st.error("❌ Ошибка авторизации: ID компании не найден. Перезайдите в систему.")
+            return
+
         extra_id = f"EXT-{str(uuid.uuid4())[:6].upper()}"
         photo_url = None
 
@@ -566,6 +572,7 @@ def create_extras_modal(*args, **kwargs):
         # 2. ПОДГОТОВКА PAYLOAD ДЛЯ SUPABASE
         supabase_payload = {
             "id": extra_id,
+            "company_id": str(c_id),
             "approved_by": approved_by,
             "executor": executor,
             "subject_type": subject_type,
@@ -593,6 +600,7 @@ def create_extras_modal(*args, **kwargs):
         # 4. ОБНОВЛЕНИЕ ЛОКАЛЬНОГО ИНТЕРФЕЙСА (Session State)
         ui_extra_data = {
             "📝 Ред.": "⚙️", 
+            "ID Компании": c_id,
             "id": extra_id, 
             "Кто одобрил": approved_by,
             "Что именно": subject_type, 
