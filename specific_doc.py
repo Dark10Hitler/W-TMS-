@@ -215,7 +215,7 @@ def create_modal(table_key):
         # PAYLOAD ДЛЯ ТАБЛИЦЫ ORDERS
         supabase_payload = {
             "id": order_id,
-            "company_id": c_id,
+            "company_id": str(c_id),
             "status": selected_status,
             "client_name": input_client,
             "items_count": len(parsed_items_df),
@@ -250,7 +250,7 @@ def create_modal(table_key):
                     p_qty = item.get('Количество') or item.get('Кол-во') or item.get('qty') or 0
                     
                     inventory_payload.append({
-                        "company_id": c_id,
+                        "company_id": str(c_id),
                         "doc_id": order_id,
                         "item_name": str(p_name),
                         "quantity": float(p_qty),
