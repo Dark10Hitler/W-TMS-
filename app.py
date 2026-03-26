@@ -106,7 +106,7 @@ def load_dynamic_topology():
             for s in range(1, slots + 1):
                 for t in range(1, tiers + 1):
                     # Формат: ПРФ-01-1 (Префикс-Секция-Ярус)
-                    cell_id = f"{prefix}-{s:02d}-{t}"
+                    cell_id = f"{prefix}-{slot:02d}-{tier}"
                     warehouse_map[wh_name].append(cell_id)
     
     return warehouse_map
