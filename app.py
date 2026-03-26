@@ -76,21 +76,39 @@ def get_company_data(table_name):
         st.error(f"Ошибка загрузки {table_name}: {e}")
         return []
 
-# --- ЗАГРУЗКА ДИНАМИЧЕСКОЙ ТОПОЛОГИИ ---
 def load_dynamic_topology():
-    topology_data = get_company_data("warehouse_topology")
+    # Загружаем строки из таблицы warehouse_topology для текущей компании
+    topology_rows = get_company_data("warehouse_topology")
     
-    # Превращаем список из БД в удобный словарь: { "Склад 1": ["A1", "A2"], "Склад 2": ["B1"] }
+    # Итоговый словарь, который ожидает остальной код
     warehouse_map = {}
-    if topology_data:
-        for row in topology_data:
-            wh_name = row['warehouse_name']
-            cell_name = row['cell_name']
+    
+    if topology_rows:
+        for row in topology_rows:
+            # ФИКС: Используем 'wh_id' вместо 'warehouse_name'
+            wh_name = row.get('wh_id', 'Unknown Warehouse')
+            prefix = row.get('prefix', 'CELL')
+            slots = row.get('slots_count', 1)
+            
+            # Извлекаем количество ярусов из tiers_config (может быть строкой "4" или числом)
+            try:
+                raw_tiers = row.get('tiers_config', '1')
+                # Если это список/словарь (jsonb), берем длину или значение, 
+                # но судя по SQL запросу выше, там просто число в кавычках
+                tiers = int(raw_tiers) if isinstance(raw_tiers, (str, int)) else 1
+            except:
+                tiers = 1
+
             if wh_name not in warehouse_map:
                 warehouse_map[wh_name] = []
-            warehouse_map[wh_name].append(cell_name)
+            
+            # Генерируем список ячеек на лету на основе параметров ряда
+            for s in range(1, slots + 1):
+                for t in range(1, tiers + 1):
+                    # Формат: ПРФ-01-1 (Префикс-Секция-Ярус)
+                    cell_id = f"{prefix}-{s:02d}-{t}"
+                    warehouse_map[wh_name].append(cell_id)
     
-    # Если данных нет вообще (новая компания), даем пустой шаблон или инфо
     return warehouse_map
 
 # Вызываем загрузку (после проверки авторизации)
