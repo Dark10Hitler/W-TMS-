@@ -1972,7 +1972,7 @@ elif selected == "База Данных":
         st.image(buf.getvalue(), width=200, caption=f"QR-код для {cell}")
         st.download_button("💾 СКАЧАТЬ QR", buf.getvalue(), f"QR_{cell}.png", use_container_width=True, type="primary")
 
-   @st.dialog("📦 Изменение данных товара")
+    @st.dialog("📦 Изменение данных товара")
     def product_editor(item=None):
         if not WAREHOUSE_MAP:
             st.error("❌ У вашей компании не настроена топология склада. Обратитесь к админу.")
