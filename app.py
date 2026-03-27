@@ -112,7 +112,11 @@ def load_dynamic_topology():
     return warehouse_map
 
 # Вызываем загрузку (после проверки авторизации)
-WAREHOUSE_MAP = load_dynamic_topology()
+# Безопасная загрузка топологии: грузим только если мы уже вошли в систему
+if 'company_id' in st.session_state:
+    WAREHOUSE_MAP = load_dynamic_topology()
+else:
+    WAREHOUSE_MAP = {} # Оставляем пустым до момента авторизации
 
 def get_actual_cells(warehouse_name):
     return WAREHOUSE_MAP.get(warehouse_name, [])
