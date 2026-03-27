@@ -65,7 +65,6 @@ class WarehouseManager:
                         color=final_color, 
                         opacity=0.9 if highlighted_cell == addr else 0.7, 
                         name=addr, 
-                        text=addr, 
                         hovertemplate="<b>%{name}</b><extra></extra>"
                     ))
 
