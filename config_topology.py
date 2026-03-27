@@ -64,8 +64,12 @@ class WarehouseManager:
                         i=[7,0,0,0,4,4,6,6,4,0,3,2], j=[3,4,1,2,5,6,5,2,0,1,6,3], k=[0,7,2,3,6,7,1,1,5,5,7,6],
                         color=final_color, 
                         opacity=0.9 if highlighted_cell == addr else 0.7, 
-                        name=addr, 
-                        hovertemplate="<b>%{name}</b><extra></extra>"
+                        # --- ВОТ ЭТОТ БЛОК ИСПРАВЛЯЕТ ПРОЧЕРК ---
+                        name=addr,
+                        customdata=[addr], # Продублируем данные сюда
+                        hoverinfo="all",
+                        hovertemplate=f"<b>{addr}</b><extra></extra>" # Мы вставляем переменную прямо в строку
+                        # ----------------------------------------
                     ))
 
 # --- УНИВЕРСАЛЬНЫЙ СБОРЩИК СКЛАДА ИЗ БД ---
