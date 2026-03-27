@@ -66,7 +66,7 @@ class WarehouseManager:
                         opacity=0.9 if highlighted_cell == addr else 0.7, 
                         name=addr, 
                         text=addr, 
-                        hovertemplate="<b>%{text}</b><extra></extra>"
+                        hovertemplate="<b>%{name}</b><extra></extra>"
                     ))
 
 # --- УНИВЕРСАЛЬНЫЙ СБОРЩИК СКЛАДА ИЗ БД ---
