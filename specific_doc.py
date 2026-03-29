@@ -56,128 +56,80 @@ def create_modal(table_key):
     import pytz
     import uuid
     import time
+    import cloudinary.uploader
 
     # --- 0. ИНИЦИАЛИЗАЦИЯ СОСТОЯНИЙ ---
-    if "picking_mode" not in st.session_state:
-        st.session_state.picking_mode = False
     if "tsd_cart" not in st.session_state:
         st.session_state.tsd_cart = []
 
-    # =========================================================
-    # ЭКРАН СБОРКИ (ТСД) - ПОКАЗЫВАЕТСЯ ПРИ НАЖАТИИ НА КНОПКУ
-    # =========================================================
-    if st.session_state.picking_mode:
-        st.subheader("📱 Режим сборки ТСД")
-        
-        # Верхняя панель: Поиск по ячейке
-        col_scan, col_back = st.columns([3, 1])
-        scanned_cell = col_scan.text_input("📍 Отсканируйте штрихкод полки", placeholder="Наведите сканер (Enter)...", key="tsd_scan_input")
-        
-        if col_back.button("⬅️ Отмена", use_container_width=True):
-            st.session_state.picking_mode = False
-            st.rerun()
+    # Создаем две профессиональные вкладки
+    tab_docs, tab_tsd = st.tabs(["📋 Параметры документа", "📱 Сборка через ТСД"])
 
+    # =========================================================
+    # ВКЛАДКА 2: СБОРКА ЧЕРЕЗ ТСД (Сканирование и добавление)
+    # =========================================================
+    with tab_tsd:
+        st.markdown("### 🔍 Поиск и добавление товара")
+        
+        # Поле для сканера
+        c_scan, c_info = st.columns([2, 1])
+        scanned_cell = c_scan.text_input("📍 Отсканируйте ячейку / полку", placeholder="Наведите сканер...", key="main_tsd_scan")
+        
         if scanned_cell:
-            # Имитируем запрос к БД (в будущем здесь будет supabase.table('inventory')...)
-            # Для примера возьмем товары:
+            # ТУТ: Реальный запрос к твоей базе inventory
+            # items = supabase.table('inventory').select('*').eq('cell_address', scanned_cell).execute()
+            # Пока используем mock_data для примера:
             mock_data = [
-                {"Название товара": "Шина Michelin 205/55 R16", "Остаток": 10, "Цена": 1500, "Объем": 0.08},
-                {"Название товара": "Диск Skoda Octavia A7", "Остаток": 4, "Цена": 2500, "Объем": 0.05}
+                {"item_name": "Шина Michelin 205/55 R16", "stock": 10, "price": 1500, "vol": 0.08},
+                {"item_name": "Диск Skoda Octavia A7", "stock": 4, "price": 2500, "vol": 0.05}
             ]
-            
-            st.write(f"**Товары на ячейке `{scanned_cell}`:**")
+
+            st.write(f"📦 Найдено на ячейке `{scanned_cell}`:")
             for i, item in enumerate(mock_data):
-                c1, c2, c3 = st.columns([3, 1, 1])
-                c1.write(f"📦 {item['Название товара']} (Доступно: {item['Остаток']})")
-                pick_qty = c2.number_input("Кол-во", min_value=1, max_value=item['Остаток'], key=f"qty_{i}")
-                if c3.button("➕", key=f"add_{i}"):
+                col_name, col_q, col_btn = st.columns([3, 1, 1])
+                col_name.write(f"**{item['item_name']}**")
+                pick_qty = col_q.number_input("Кол-во", min_value=1, max_value=item['stock'], key=f"q_tsd_{i}")
+                
+                # ТА САМАЯ КНОПКА ДОБАВЛЕНИЯ
+                if col_btn.button("➕ Добавить", key=f"btn_add_{i}", use_container_width=True):
                     st.session_state.tsd_cart.append({
-                        "Название товара": item['Название товара'],
+                        "Название товара": item['item_name'],
                         "Количество": pick_qty,
-                        "Цена": item['Цена'],
-                        "Объем": item['Объем'],
+                        "Цена": item['price'],
+                        "Объем": item['vol'],
                         "Адрес": scanned_cell,
                         "Статус": "🟢 В наличии"
                     })
-                    st.toast(f"Добавлено: {item['Название товара']}")
-                    st.rerun()
+                    st.toast(f"Добавлено: {item['item_name']}")
+                    # rerun не нужен, данные в session_state сохранятся
 
         st.divider()
 
-        # Нижняя панель: Таблица сборки
+        # Таблица текущей сборки (Редактируемая)
         if st.session_state.tsd_cart:
-            st.markdown("### 🛒 Лист текущей сборки")
+            st.markdown("### 🛒 Текущий состав сборки")
             df_cart = pd.DataFrame(st.session_state.tsd_cart)
             
             edited_cart = st.data_editor(
                 df_cart,
                 column_config={
                     "Статус": st.column_config.SelectboxColumn(
-                        "Статус товара",
-                        options=["🟢 В наличии", "🟡 Не нашли", "🔴 Отсутствует"],
+                        "Статус", 
+                        options=["🟢 В наличии", "🟡 Проверить", "🔴 Отсутствует"],
                         width="medium"
                     ),
                     "Количество": st.column_config.NumberColumn("Шт.", min_value=1)
                 },
                 disabled=["Название товара", "Адрес", "Цена", "Объем"],
                 use_container_width=True,
-                key="tsd_editor"
+                key="tsd_tab_editor"
             )
-
-            if st.button("🚀 ТОВАРЫ СОБРАНЫ!!!", use_container_width=True, type="primary"):
-                # Сохраняем в сессию финальный результат сборки
-                st.session_state.final_items_df = edited_cart[edited_cart["Статус"] == "🟢 В наличии"]
-                st.session_state.picking_mode = False
+            
+            if st.button("🗑️ Очистить сборку", type="secondary"):
+                st.session_state.tsd_cart = []
                 st.rerun()
-        return # Останавливаем выполнение, чтобы не рисовать основную форму
-
-    # =========================================================
-    # ОСНОВНОЙ ЭКРАН ЗАЯВКИ
-    # =========================================================
-    
-    # 1. ПОДГОТОВКА ПРОФИЛЯ
-    try:
-        operator_name = st.session_state.profile_data.iloc[0]['Значение']
-    except:
-        operator_name = "Системный администратор"
-
-    st.subheader(f"📦 Регистрация документа: {table_key.upper()}")
-    st.info(f"👤 **Оператор:** {operator_name}")
-
-    # --- 1. ВЫБОР СПОСОБА СБОРКИ ---
-    st.markdown("### 1️⃣ Спецификация товаров")
-    c1, c2 = st.columns(2)
-    
-    if c1.button("📱 СОБРАТЬ С ПОМОЩЬЮ ТСД", use_container_width=True):
-        st.session_state.picking_mode = True
-        st.rerun()
-
-    uploaded_file = c2.file_uploader("📥 Или загрузите Excel", type=["xlsx", "xls", "csv"], label_visibility="collapsed")
-
-    # Переменные для данных
-    parsed_items_df = pd.DataFrame()
-    total_vol = 0.0
-    total_sum = 0.0
-
-    # Подхватываем данные из ТСД
-    if "final_items_df" in st.session_state and not st.session_state.final_items_df.empty:
-        parsed_items_df = st.session_state.final_items_df
-        total_sum = (parsed_items_df['Количество'] * parsed_items_df.get('Цена', 0)).sum()
-        total_vol = (parsed_items_df['Количество'] * parsed_items_df.get('Объем', 0.05)).sum()
-        st.success(f"✅ Собрано через ТСД: {len(parsed_items_df)} поз.")
-
-    # Подхватываем данные из Excel (если ТСД не использовался)
-    elif uploaded_file:
-        try:
-            df = pd.read_excel(uploaded_file) if "xls" in uploaded_file.name else pd.read_csv(uploaded_file)
-            # (Тут твоя старая логика поиска колонок Excel...)
-            name_col = next((c for c in df.columns if any(x in c.lower() for x in ['назван', 'товар', 'наимен'])), None)
-            if name_col:
-                df = df.rename(columns={name_col: 'Название товара'})
-                parsed_items_df = df
-                st.success(f"✅ Загружено из файла: {len(df)} поз.")
-        except Exception as e:
-            st.error(f"Ошибка Excel: {e}")
+        else:
+            st.info("Корзина ТСД пуста. Отсканируйте ячейку выше, чтобы добавить товары.")
 
 
     # --- 2. ФОРМА ВВОДА ДАННЫХ ---
