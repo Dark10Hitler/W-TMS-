@@ -209,19 +209,6 @@ def create_modal(table_key):
     elif not st.session_state.excel_items.empty:
         parsed_items_df = st.session_state.excel_items
 
-    # РАСЧЕТ ИТОГОВ (для базы)
-    total_sum = 0
-    total_vol = 0
-    if not parsed_items_df.empty:
-        # Пытаемся найти колонки количества и цены вне зависимости от регистра
-        q_col = next((c for c in parsed_items_df.columns if c.lower() in ['количество', 'кол-во', 'qty']), 'Количество')
-        p_col = next((c for c in parsed_items_df.columns if c.lower() in ['цена', 'price', 'mdl']), 'Цена')
-        v_col = next((c for c in parsed_items_df.columns if c.lower() in ['объем', 'vol', 'volume']), 'Объем')
-
-        total_sum = (parsed_items_df[q_col] * parsed_items_df.get(p_col, 0)).sum()
-        total_vol = (parsed_items_df[q_col] * parsed_items_df.get(v_col, 0.05)).sum()
-
-    st.divider()
     # --- 2. ФОРМА ВВОДА ДАННЫХ ---
     st.markdown("### 2️⃣ Параметры логистики")
     with st.form(f"full_create_form_{table_key}", clear_on_submit=False):
