@@ -82,36 +82,6 @@ def create_modal(table_key):
     tab_excel, tab_tsd = st.tabs(["📄 Загрузка из Excel", "📱 Режим сканера (ТСД)"])
 
     # ==========================================
-    # ВКЛАДКА 1: СТАРЫЙ МЕТОД (EXCEL)
-    # ==========================================
-    with tab_excel:
-        uploaded_file = st.file_uploader("📥 Выберите Excel или CSV для разбора позиций", type=["xlsx", "xls", "csv"])
-        if uploaded_file:
-            try:
-                if "xls" in uploaded_file.name:
-                    df = pd.read_excel(uploaded_file)
-                else:
-                    df = pd.read_csv(uploaded_file)
-                
-                name_col = next((c for c in df.columns if any(x in c.lower() for x in ['назван', 'товар', 'наимен', 'item', 'product'])), None)
-                if not name_col:
-                    name_col = st.selectbox("Выберите колонку с названием товара", df.columns)
-                df = df.rename(columns={name_col: 'Название товара'})
-                
-                vol_col = next((c for c in df.columns if any(x in c.lower() for x in ['объем', 'м3', 'vol'])), None)
-                sum_col = next((c for c in df.columns if any(x in c.lower() for x in ['сумма', 'цена', 'total', 'price'])), None)
-                
-                if vol_col: total_vol = float(df[vol_col].sum())
-                if sum_col: total_sum = float(df[sum_col].sum())
-                if 'Адрес' not in df.columns:
-                    df['Адрес'] = "НЕ НАЗНАЧЕНО"
-                
-                parsed_items_df = df
-                st.success(f"✅ Обработано: {len(df)} поз. | Объем: {total_vol:.2f} м3")
-            except Exception as e:
-                st.error(f"❌ Ошибка парсинга: {e}")
-
-    # ==========================================
     # ВКЛАДКА 2: НОВЫЙ МЕТОД (СБОРКА ЧЕРЕЗ ТСД)
     # ==========================================
     with tab_tsd:
