@@ -17,4 +17,3 @@ xlsxwriter
 cloudinary
 qrcode
 Pillow
-streamlit-barcode-scanner
