@@ -58,16 +58,34 @@ def create_modal(table_key):
     import time
     import cloudinary.uploader
 
-    # --- 0. ИНИЦИАЛИЗАЦИЯ СОСТОЯНИЙ ---
+    # --- 0. ИНИЦИАЛИЗАЦИЯ ---
     if "tsd_cart" not in st.session_state:
         st.session_state.tsd_cart = []
+    if "excel_items" not in st.session_state:
+        st.session_state.excel_items = pd.DataFrame()
+    
+    # Переменная для хранения итогового списка товаров
+    parsed_items_df = pd.DataFrame()
 
-    # Создаем две профессиональные вкладки
-    tab_docs, tab_tsd = st.tabs(["📋 Параметры документа", "📱 Сборка через ТСД"])
+    # --- 1. СПЕЦИФИКАЦИЯ ТОВАРОВ (ВКЛАДКИ) ---
+    st.markdown("### 1️⃣ Спецификация товаров")
+    tab_excel, tab_tsd = st.tabs(["📥 Загрузка Excel/CSV", "📱 Сборка через ТСД"])
 
-    # =========================================================
-    # ВКЛАДКА 2: СБОРКА ЧЕРЕЗ ТСД (Сканирование и добавление)
-    # =========================================================
+    with tab_excel:
+        uploaded_file = st.file_uploader("Выберите файл спецификации", type=["xlsx", "xls", "csv"], key="excel_uploader")
+        if uploaded_file:
+            try:
+                if "xls" in uploaded_file.name:
+                    st.session_state.excel_items = pd.read_excel(uploaded_file)
+                else:
+                    st.session_state.excel_items = pd.read_csv(uploaded_file)
+                st.success(f"✅ Файл загружен: {len(st.session_state.excel_items)} строк")
+            except Exception as e:
+                st.error(f"Ошибка парсинга: {e}")
+        
+        if not st.session_state.excel_items.empty:
+            st.dataframe(st.session_state.excel_items, use_container_width=True, height=200)
+
     # =========================================================
     # ВКЛАДКА 2: ПРОФЕССИОНАЛЬНАЯ СБОРКА ТСД
     # =========================================================
@@ -178,8 +196,32 @@ def create_modal(table_key):
                 st.rerun()
         else:
             st.info("Корзина пуста. Отсканируйте ячейку выше, чтобы начать сборку.")
+            
+        if st.session_state.tsd_cart:
+            st.markdown("🛒 **Собрано вручную:**")
+            tsd_df = pd.DataFrame(st.session_state.tsd_cart)
+            st.dataframe(tsd_df, use_container_width=True, height=200)
 
+    # --- ОБЪЕДИНЕНИЕ ДАННЫХ ---
+    # Приоритет ТСД, если он не пустой, иначе Excel
+    if st.session_state.tsd_cart:
+        parsed_items_df = pd.DataFrame(st.session_state.tsd_cart)
+    elif not st.session_state.excel_items.empty:
+        parsed_items_df = st.session_state.excel_items
 
+    # РАСЧЕТ ИТОГОВ (для базы)
+    total_sum = 0
+    total_vol = 0
+    if not parsed_items_df.empty:
+        # Пытаемся найти колонки количества и цены вне зависимости от регистра
+        q_col = next((c for c in parsed_items_df.columns if c.lower() in ['количество', 'кол-во', 'qty']), 'Количество')
+        p_col = next((c for c in parsed_items_df.columns if c.lower() in ['цена', 'price', 'mdl']), 'Цена')
+        v_col = next((c for c in parsed_items_df.columns if c.lower() in ['объем', 'vol', 'volume']), 'Объем')
+
+        total_sum = (parsed_items_df[q_col] * parsed_items_df.get(p_col, 0)).sum()
+        total_vol = (parsed_items_df[q_col] * parsed_items_df.get(v_col, 0.05)).sum()
+
+    st.divider()
     # --- 2. ФОРМА ВВОДА ДАННЫХ ---
     st.markdown("### 2️⃣ Параметры логистики")
     with st.form(f"full_create_form_{table_key}", clear_on_submit=False):
