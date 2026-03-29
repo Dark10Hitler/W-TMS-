@@ -18,3 +18,4 @@ cloudinary
 qrcode[pil]
 Pillow
 cloudinary
+streamlit-barcode-scanner
