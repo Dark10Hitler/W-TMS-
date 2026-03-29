@@ -68,68 +68,116 @@ def create_modal(table_key):
     # =========================================================
     # ВКЛАДКА 2: СБОРКА ЧЕРЕЗ ТСД (Сканирование и добавление)
     # =========================================================
+    # =========================================================
+    # ВКЛАДКА 2: ПРОФЕССИОНАЛЬНАЯ СБОРКА ТСД
+    # =========================================================
     with tab_tsd:
-        st.markdown("### 🔍 Поиск и добавление товара")
+        st.markdown("### 📱 Терминал Сбора Данных")
         
-        # Поле для сканера
-        c_scan, c_info = st.columns([2, 1])
-        scanned_cell = c_scan.text_input("📍 Отсканируйте ячейку / полку", placeholder="Наведите сканер...", key="main_tsd_scan")
+        # 1. Секция сканирования
+        c_scan, c_refresh = st.columns([4, 1])
+        scanned_cell = c_scan.text_input(
+            "📍 Отсканируйте штрихкод ячейки", 
+            placeholder="Наведите сканер на адрес полки (напр. A-10-1)...", 
+            key="tsd_cell_scan_input"
+        )
         
-        if scanned_cell:
-            # ТУТ: Реальный запрос к твоей базе inventory
-            # items = supabase.table('inventory').select('*').eq('cell_address', scanned_cell).execute()
-            # Пока используем mock_data для примера:
-            mock_data = [
-                {"item_name": "Шина Michelin 205/55 R16", "stock": 10, "price": 1500, "vol": 0.08},
-                {"item_name": "Диск Skoda Octavia A7", "stock": 4, "price": 2500, "vol": 0.05}
-            ]
+        if c_refresh.button("🔄 Сброс", use_container_width=True):
+            st.rerun()
 
-            st.write(f"📦 Найдено на ячейке `{scanned_cell}`:")
-            for i, item in enumerate(mock_data):
-                col_name, col_q, col_btn = st.columns([3, 1, 1])
-                col_name.write(f"**{item['item_name']}**")
-                pick_qty = col_q.number_input("Кол-во", min_value=1, max_value=item['stock'], key=f"q_tsd_{i}")
+        if scanned_cell:
+            st.markdown(f"🔍 **Товары в ячейке:** `{scanned_cell}`")
+            
+            # --- ЗАПРОС К SUPABASE ---
+            # Ищем товары, которые числятся на этой полке в твоей таблице inventory
+            try:
+                response = supabase.table("inventory")\
+                    .select("item_name, quantity, price, volume")\
+                    .eq("cell_address", scanned_cell)\
+                    .eq("company_id", st.session_state.get('company_id'))\
+                    .execute()
                 
-                # ТА САМАЯ КНОПКА ДОБАВЛЕНИЯ
-                if col_btn.button("➕ Добавить", key=f"btn_add_{i}", use_container_width=True):
-                    st.session_state.tsd_cart.append({
-                        "Название товара": item['item_name'],
-                        "Количество": pick_qty,
-                        "Цена": item['price'],
-                        "Объем": item['vol'],
-                        "Адрес": scanned_cell,
-                        "Статус": "🟢 В наличии"
-                    })
-                    st.toast(f"Добавлено: {item['item_name']}")
-                    # rerun не нужен, данные в session_state сохранятся
+                found_items = response.data
+            except Exception as e:
+                st.error(f"Ошибка БД: {e}")
+                found_items = []
+
+            if found_items:
+                for i, item in enumerate(found_items):
+                    # Профессиональный UI карточки товара
+                    with st.container(border=True):
+                        col_info, col_qty, col_act = st.columns([3, 1, 1])
+                        
+                        stock_now = item.get('quantity', 0)
+                        item_name = item.get('item_name', 'Без названия')
+                        
+                        col_info.write(f"**{item_name}**")
+                        col_info.caption(f"Остаток: {stock_now} шт. | Цена: {item.get('price', 0)} MDL")
+                        
+                        # Ввод количества (не больше чем есть на полке)
+                        pick_val = col_qty.number_input(
+                            "Кол-во", 
+                            min_value=1, 
+                            max_value=int(stock_now) if stock_now > 0 else 1, 
+                            key=f"input_qty_{i}_{scanned_cell}"
+                        )
+                        
+                        # КНОПКА ДОБАВЛЕНИЯ
+                        if col_act.button("➕ Добавить", key=f"btn_add_{i}_{scanned_cell}", use_container_width=True, type="primary"):
+                            if stock_now <= 0:
+                                st.error("Товара нет в наличии!")
+                            else:
+                                # Добавляем в корзину session_state
+                                st.session_state.tsd_cart.append({
+                                    "Название товара": item_name,
+                                    "Количество": pick_val,
+                                    "Цена": item.get('price', 0),
+                                    "Объем": item.get('volume', 0.05),
+                                    "Адрес": scanned_cell,
+                                    "Статус": "🟢 В наличии"
+                                })
+                                st.toast(f"✅ {item_name} добавлен!")
+                                time.sleep(0.5)
+                                st.rerun()
+            else:
+                st.warning(f"Ячейка {scanned_cell} пуста или не существует в базе.")
 
         st.divider()
 
-        # Таблица текущей сборки (Редактируемая)
+        # 2. Секция управления корзиной сборки
         if st.session_state.tsd_cart:
-            st.markdown("### 🛒 Текущий состав сборки")
+            st.markdown(f"### 🛒 Состав текущей сборки ({len(st.session_state.tsd_cart)})")
+            
             df_cart = pd.DataFrame(st.session_state.tsd_cart)
             
-            edited_cart = st.data_editor(
+            # Профессиональный редактор таблицы
+            edited_df = st.data_editor(
                 df_cart,
                 column_config={
                     "Статус": st.column_config.SelectboxColumn(
-                        "Статус", 
-                        options=["🟢 В наличии", "🟡 Проверить", "🔴 Отсутствует"],
-                        width="medium"
+                        "Состояние",
+                        options=["🟢 В наличии", "🟡 Не нашли", "🔴 Брак/Отсутствует"],
+                        width="medium",
+                        help="Укажите фактическое состояние товара при сборке"
                     ),
-                    "Количество": st.column_config.NumberColumn("Шт.", min_value=1)
+                    "Количество": st.column_config.NumberColumn("Собрано (шт)", min_value=1),
+                    "Цена": st.column_config.NumberColumn("Цена MDL", format="%.2f"),
+                    "Адрес": st.column_config.TextColumn("Ячейка", disabled=True)
                 },
-                disabled=["Название товара", "Адрес", "Цена", "Объем"],
+                disabled=["Название товара", "Объем", "Адрес"],
                 use_container_width=True,
-                key="tsd_tab_editor"
+                key="tsd_editor_table"
             )
-            
-            if st.button("🗑️ Очистить сборку", type="secondary"):
+
+            # Синхронизируем изменения из таблицы обратно в session_state
+            st.session_state.tsd_cart = edited_df.to_dict(orient='records')
+
+            # Кнопка полной очистки
+            if st.button("🗑️ Полностью очистить список сборки", use_container_width=True):
                 st.session_state.tsd_cart = []
                 st.rerun()
         else:
-            st.info("Корзина ТСД пуста. Отсканируйте ячейку выше, чтобы добавить товары.")
+            st.info("Корзина пуста. Отсканируйте ячейку выше, чтобы начать сборку.")
 
 
     # --- 2. ФОРМА ВВОДА ДАННЫХ ---
