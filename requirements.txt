@@ -15,7 +15,6 @@ openpyxl
 geopy
 xlsxwriter
 cloudinary
-qrcode[pil]
+qrcode
 Pillow
-cloudinary
 streamlit-barcode-scanner
