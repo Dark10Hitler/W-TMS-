@@ -50,163 +50,70 @@ def get_full_inventory_df():
 @st.dialog("📝 Создание новой заявки / документа", width="large")
 def create_modal(table_key):
     from database import supabase
-    import pandas as pd
-    import numpy as np
-    from datetime import datetime
-    import pytz
-    import uuid
-    import time
-    import cloudinary.uploader
-
-    # --- 0. ИНИЦИАЛИЗАЦИЯ ---
-    if "tsd_cart" not in st.session_state:
-        st.session_state.tsd_cart = []
-    if "excel_items" not in st.session_state:
-        st.session_state.excel_items = pd.DataFrame()
     
-    # Переменная для хранения итогового списка товаров
+    # 1. ПОДГОТОВКА КОЛОНОК И ПРОФИЛЯ
+    try:
+        # Пытаемся взять глобальную структуру, если нет - дефолт
+        columns = TABLE_STRUCT.get(table_key, ORDER_COLUMNS) 
+    except:
+        columns = []
+
+    st.subheader(f"📦 Регистрация нового документа: {table_key.upper()}")
+    
+    try:
+        operator_name = st.session_state.profile_data.iloc[0]['Значение']
+    except:
+        operator_name = "Системный администратор"
+    
+    st.info(f"👤 **Оператор:** {operator_name}")
+
+    # --- 1. ПАРСИНГ ФАЙЛА СПЕЦИФИКАЦИИ ---
+    st.markdown("### 1️⃣ Загрузка спецификации")
+    uploaded_file = st.file_uploader("📥 Выберите Excel или CSV для разбора позиций", type=["xlsx", "xls", "csv"])
+    
     parsed_items_df = pd.DataFrame()
+    total_vol = 0.0
+    total_sum = 0.0
 
-    # --- 1. СПЕЦИФИКАЦИЯ ТОВАРОВ (ВКЛАДКИ) ---
-    st.markdown("### 1️⃣ Спецификация товаров")
-    tab_excel, tab_tsd = st.tabs(["📥 Загрузка Excel/CSV", "📱 Сборка через ТСД"])
-
-    with tab_excel:
-        uploaded_file = st.file_uploader("Выберите файл спецификации", type=["xlsx", "xls", "csv"], key="excel_uploader")
-        if uploaded_file:
-            try:
-                if "xls" in uploaded_file.name:
-                    st.session_state.excel_items = pd.read_excel(uploaded_file)
-                else:
-                    st.session_state.excel_items = pd.read_csv(uploaded_file)
-                st.success(f"✅ Файл загружен: {len(st.session_state.excel_items)} строк")
-            except Exception as e:
-                st.error(f"Ошибка парсинга: {e}")
-        
-        if not st.session_state.excel_items.empty:
-            st.dataframe(st.session_state.excel_items, use_container_width=True, height=200)
-
-    # =========================================================
-    # ВКЛАДКА: ПРОФЕССИОНАЛЬНЫЙ ТСД (SCANNER + DATABASE)
-    # =========================================================
-    with tab_tsd:
-        st.markdown("### 📱 Терминал Сбора Данных")
-        
-        import streamlit.components.v1 as components
-
-        # Проверка на HTTPS (важно для камеры)
-        st.caption("⚠️ Камера работает только через HTTPS соединение.")
-
-        # HTML + JS: Прямой запуск камеры без лишних меню
-        scanner_html = """
-        <div id="scanner-container" style="width: 100%; position: relative;">
-            <div id="interactive" style="width: 100%; height: 300px; border-radius: 10px; border: 2px solid #333; background: #000;"></div>
-            <div id="scanned-result" style="margin-top: 10px; font-weight: bold; color: #00ff00;"></div>
-        </div>
-
-        <script src="https://unpkg.com/html5-qrcode"></script>
-        <script>
-            const html5QrCode = new Html5Qrcode("interactive");
-            const config = { fps: 15, qrbox: { width: 250, height: 150 } };
-
-            // Функция запуска
-            const startScanner = () => {
-                html5QrCode.start(
-                    { facingMode: "environment" }, // Использовать заднюю камеру
-                    config,
-                    (decodedText) => {
-                        // Визуальный отклик
-                        document.getElementById('scanned-result').innerText = "Считано: " + decodedText;
-                        
-                        // Передача в Streamlit
-                        window.parent.postMessage({
-                            type: 'streamlit:set_widget_value',
-                            key: 'tsd_search_input',
-                            value: decodedText
-                        }, '*');
-                        
-                        // Короткая вибрация (на Android)
-                        if (navigator.vibrate) navigator.vibrate(100);
-                    },
-                    (errorMessage) => { /* Игнорируем ошибки сканирования кадра */ }
-                ).catch((err) => {
-                    console.error("Ошибка камеры:", err);
-                    document.getElementById('interactive').innerHTML = "<p style='color:red; padding:20px;'>Ошибка доступа к камере. Убедитесь, что сайт использует HTTPS и разрешение дано.</p>";
-                });
-            };
-
-            // Автостарт через секунду после загрузки
-            setTimeout(startScanner, 1000);
-        </script>
-        """
-        
-        # Отрисовка сканера
-        components.html(scanner_html, height=400)
-
-        # Поле ввода, куда JS "впечатает" результат
-        search_query = st.text_input(
-            "🔍 Отсканированный код или название", 
-            key="tsd_search_input",
-            help="Сюда попадет код со сканера автоматически"
-        )
-
-        if search_query:
-            try:
-                # Поиск в твоей таблице global_inventory
-                res = supabase.table("global_inventory").select("*")\
-                    .or_(f"name.ilike.%{search_query}%,cell.eq.{search_query}")\
-                    .eq("company_id", st.session_state.get('company_id'))\
-                    .execute()
-                
-                found_items = res.data
-            except Exception as e:
-                st.error(f"Ошибка БД: {e}")
-                found_items = []
-
-            if found_items:
-                st.info(f"Найдено: {len(found_items)}")
-                for i, item in enumerate(found_items):
-                    with st.container(border=True):
-                        c1, c2, c3 = st.columns([1, 2, 1])
-                        
-                        # Фото из Cloudinary
-                        if item.get('image_url'):
-                            c1.image(item['image_url'], use_container_width=True)
-                        
-                        c2.subheader(item.get('name'))
-                        c2.caption(f"📍 Склад: {item.get('warehouse')} | Ячейка: {item.get('cell')}")
-                        
-                        pick_qty = c3.number_input("Кол-во", min_value=1, value=1, key=f"q_tsd_{i}_{item.get('id')}")
-                        if c3.button("➕ Добавить", key=f"b_tsd_{i}_{item.get('id')}", use_container_width=True, type="primary"):
-                            st.session_state.tsd_cart.append({
-                                "Название товара": item.get('name'),
-                                "Количество": pick_qty,
-                                "Цена": 0,
-                                "Объем": 0.05,
-                                "Адрес": item.get('cell'),
-                                "warehouse_id": item.get('warehouse'),
-                                "Статус": "🟢 Собрано"
-                            })
-                            st.toast("✅ Добавлено!")
-                            st.rerun()
+    if uploaded_file:
+        try:
+            if "xls" in uploaded_file.name:
+                df = pd.read_excel(uploaded_file)
             else:
-                st.warning("Ничего не найдено. Попробуйте другой код или введите название вручную.")
-
-        # Отображение корзины
-        if st.session_state.tsd_cart:
-            st.divider()
-            st.markdown("### 🛒 Состав сборки")
-            st.dataframe(pd.DataFrame(st.session_state.tsd_cart), use_container_width=True)
-            if st.button("🗑️ Очистить"):
-                st.session_state.tsd_cart = []
-                st.rerun()
+                df = pd.read_csv(uploaded_file)
                 
-    # --- ОБЪЕДИНЕНИЕ ДАННЫХ ---
-    # Приоритет ТСД, если он не пустой, иначе Excel
-    if st.session_state.tsd_cart:
-        parsed_items_df = pd.DataFrame(st.session_state.tsd_cart)
-    elif not st.session_state.excel_items.empty:
-        parsed_items_df = st.session_state.excel_items
+            # Ищем колонку товара автоматически
+            name_col = next((c for c in df.columns if any(x in c.lower() for x in ['назван', 'товар', 'наимен', 'item', 'product'])), None)
+            
+            if not name_col:
+                st.warning("⚠️ Не найдена колонка с товаром автоматически.")
+                name_col = st.selectbox("Выберите колонку с названием товара", df.columns)
+            
+            df = df.rename(columns={name_col: 'Название товара'})
+            
+            # Поиск объема и суммы
+            vol_col = next((c for c in df.columns if any(x in c.lower() for x in ['объем', 'м3', 'vol'])), None)
+            sum_col = next((c for c in df.columns if any(x in c.lower() for x in ['сумма', 'цена', 'total', 'price'])), None)
+            qty_col = next((c for c in df.columns if any(x in c.lower() for x in ['кол', 'qty', 'count'])), None)
+            
+            if vol_col: total_vol = float(df[vol_col].sum())
+            if sum_col: total_sum = float(df[sum_col].sum())
+            
+            if 'Адрес' not in df.columns:
+                df['Адрес'] = "НЕ НАЗНАЧЕНО"
+            
+            parsed_items_df = df
+            st.success(f"✅ Обработано: {len(df)} поз. | Объем: {total_vol:.2f} м3 | Сумма: {total_sum:.2f}")
+            
+            with st.expander("👀 Предпросмотр позиций"):
+                st.dataframe(df.head(10), use_container_width=True)
+
+        except Exception as e:
+            st.error(f"❌ Ошибка парсинга: {e}")
+
+    # Блок фото фактуры
+    st.markdown("### 📎 Документальное подтверждение")
+    uploaded_invoice_photo = st.file_uploader("📸 Фото фактуры / ТТН (скан или фото)", type=['png', 'jpg', 'jpeg'], key="inv_photo")
 
     # --- 2. ФОРМА ВВОДА ДАННЫХ ---
     st.markdown("### 2️⃣ Параметры логистики")
