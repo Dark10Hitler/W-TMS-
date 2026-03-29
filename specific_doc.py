@@ -91,57 +91,68 @@ def create_modal(table_key):
     # =========================================================
     with tab_tsd:
         st.markdown("### 📱 Терминал Сбора Данных")
-
-        # 1. HTML5-QRCode Сканнер (Работает через браузер телефона)
+        
         import streamlit.components.v1 as components
 
-        # Используем session_state для хранения результата сканирования между реранами
-        if "last_scanned_code" not in st.session_state:
-            st.session_state.last_scanned_code = ""
+        # Проверка на HTTPS (важно для камеры)
+        st.caption("⚠️ Камера работает только через HTTPS соединение.")
 
-        # Код сканера с JS-мостиком в Streamlit
-        # Мы ловим текст штрихкода и записываем его в невидимый для юзера инпут
-        st.markdown("---")
-        st.caption("📷 Наведите камеру на штрихкод товара или ячейки")
-        
-        scanner_code = """
-        <div id="reader" style="width:100%; border-radius:10px; overflow:hidden; border: 1px solid #444;"></div>
+        # HTML + JS: Прямой запуск камеры без лишних меню
+        scanner_html = """
+        <div id="scanner-container" style="width: 100%; position: relative;">
+            <div id="interactive" style="width: 100%; height: 300px; border-radius: 10px; border: 2px solid #333; background: #000;"></div>
+            <div id="scanned-result" style="margin-top: 10px; font-weight: bold; color: #00ff00;"></div>
+        </div>
+
         <script src="https://unpkg.com/html5-qrcode"></script>
         <script>
-            function onScanSuccess(decodedText, decodedResult) {
-                // Передаем значение в родительское окно (Streamlit)
-                window.parent.postMessage({
-                    type: 'streamlit:set_widget_value',
-                    key: 'tsd_search_input',
-                    value: decodedText
-                }, '*');
-                
-                // Звуковой сигнал (опционально)
-                const audio = new Audio('https://www.soundjay.com/buttons/beep-07a.mp3');
-                audio.play();
-            }
+            const html5QrCode = new Html5Qrcode("interactive");
+            const config = { fps: 15, qrbox: { width: 250, height: 150 } };
 
-            let html5QrcodeScanner = new Html5QrcodeScanner(
-                "reader", { fps: 15, qrbox: {width: 250, height: 150} }
-            );
-            html5QrcodeScanner.render(onScanSuccess);
+            // Функция запуска
+            const startScanner = () => {
+                html5QrCode.start(
+                    { facingMode: "environment" }, // Использовать заднюю камеру
+                    config,
+                    (decodedText) => {
+                        // Визуальный отклик
+                        document.getElementById('scanned-result').innerText = "Считано: " + decodedText;
+                        
+                        // Передача в Streamlit
+                        window.parent.postMessage({
+                            type: 'streamlit:set_widget_value',
+                            key: 'tsd_search_input',
+                            value: decodedText
+                        }, '*');
+                        
+                        // Короткая вибрация (на Android)
+                        if (navigator.vibrate) navigator.vibrate(100);
+                    },
+                    (errorMessage) => { /* Игнорируем ошибки сканирования кадра */ }
+                ).catch((err) => {
+                    console.error("Ошибка камеры:", err);
+                    document.getElementById('interactive').innerHTML = "<p style='color:red; padding:20px;'>Ошибка доступа к камере. Убедитесь, что сайт использует HTTPS и разрешение дано.</p>";
+                });
+            };
+
+            // Автостарт через секунду после загрузки
+            setTimeout(startScanner, 1000);
         </script>
         """
-        components.html(scanner_code, height=380)
+        
+        # Отрисовка сканера
+        components.html(scanner_html, height=400)
 
-        # 2. Поле поиска (Сюда JS автоматически подставит код после сканирования)
-        # Также можно писать название товара вручную
+        # Поле ввода, куда JS "впечатает" результат
         search_query = st.text_input(
-            "🔍 Результат сканера / Поиск по названию", 
-            key="tsd_search_input", 
-            placeholder="Ожидание сканирования или введите название..."
+            "🔍 Отсканированный код или название", 
+            key="tsd_search_input",
+            help="Сюда попадет код со сканера автоматически"
         )
 
-        # 3. Логика поиска в global_inventory
         if search_query:
             try:
-                # Ищем по названию (name) ИЛИ по адресу ячейки (cell) 
-                # (Если у тебя есть колонка barcode, добавь её в .or_)
+                # Поиск в твоей таблице global_inventory
                 res = supabase.table("global_inventory").select("*")\
                     .or_(f"name.ilike.%{search_query}%,cell.eq.{search_query}")\
                     .eq("company_id", st.session_state.get('company_id'))\
@@ -149,70 +160,47 @@ def create_modal(table_key):
                 
                 found_items = res.data
             except Exception as e:
-                st.error(f"Ошибка базы данных: {e}")
+                st.error(f"Ошибка БД: {e}")
                 found_items = []
 
             if found_items:
-                st.info(f"Найдено совпадений: {len(found_items)}")
+                st.info(f"Найдено: {len(found_items)}")
                 for i, item in enumerate(found_items):
                     with st.container(border=True):
-                        col_img, col_txt, col_btn = st.columns([1, 2, 1])
+                        c1, c2, c3 = st.columns([1, 2, 1])
                         
-                        # Вывод фото из Cloudinary (image_url)
+                        # Фото из Cloudinary
                         if item.get('image_url'):
-                            col_img.image(item['image_url'], use_container_width=True)
-                        else:
-                            col_img.warning("Нет фото")
-
-                        # Инфо о товаре
-                        item_name = item.get('name', 'Без названия')
-                        col_txt.markdown(f"**{item_name}**")
-                        col_txt.caption(f"📍 Склад: {item.get('warehouse')} | Ячейка: {item.get('cell')}")
+                            c1.image(item['image_url'], use_container_width=True)
                         
-                        # Ввод количества и кнопка
-                        pick_qty = col_btn.number_input("Кол-во", min_value=1, value=1, key=f"q_{item.get('id')}_{i}")
+                        c2.subheader(item.get('name'))
+                        c2.caption(f"📍 Склад: {item.get('warehouse')} | Ячейка: {item.get('cell')}")
                         
-                        if col_btn.button("➕ Добавить", key=f"b_{item.get('id')}_{i}", use_container_width=True, type="primary"):
-                            # Добавляем в корзину сборки
+                        pick_qty = c3.number_input("Кол-во", min_value=1, value=1, key=f"q_tsd_{i}_{item.get('id')}")
+                        if c3.button("➕ Добавить", key=f"b_tsd_{i}_{item.get('id')}", use_container_width=True, type="primary"):
                             st.session_state.tsd_cart.append({
-                                "Название товара": item_name,
+                                "Название товара": item.get('name'),
                                 "Количество": pick_qty,
-                                "Цена": 0, # Цену можно подтянуть, если она есть в базе
+                                "Цена": 0,
                                 "Объем": 0.05,
                                 "Адрес": item.get('cell'),
                                 "warehouse_id": item.get('warehouse'),
                                 "Статус": "🟢 Собрано"
                             })
-                            st.toast(f"✅ {item_name} добавлен!")
-                            # Очищаем ввод для следующего сканирования
+                            st.toast("✅ Добавлено!")
                             st.rerun()
             else:
-                st.warning(f"Товар '{search_query}' не найден в системе.")
+                st.warning("Ничего не найдено. Попробуйте другой код или введите название вручную.")
 
-        st.divider()
-
-        # 4. Список текущей сборки (Корзина)
+        # Отображение корзины
         if st.session_state.tsd_cart:
-            st.markdown(f"#### 🛒 Текущий список ({len(st.session_state.tsd_cart)})")
-            cart_df = pd.DataFrame(st.session_state.tsd_cart)
-            
-            # Интерактивная таблица для финальных правок
-            edited_df = st.data_editor(
-                cart_df,
-                column_config={
-                    "Количество": st.column_config.NumberColumn("Шт", min_value=1),
-                    "Статус": st.column_config.SelectboxColumn("Статус", options=["🟢 Собрано", "🔴 Брак", "🟡 Не нашли"])
-                },
-                disabled=["Название товара", "Адрес", "warehouse_id"],
-                use_container_width=True,
-                key="tsd_final_table"
-            )
-            st.session_state.tsd_cart = edited_df.to_dict(orient='records')
-
-            if st.button("🗑️ Очистить сборку", use_container_width=True):
+            st.divider()
+            st.markdown("### 🛒 Состав сборки")
+            st.dataframe(pd.DataFrame(st.session_state.tsd_cart), use_container_width=True)
+            if st.button("🗑️ Очистить"):
                 st.session_state.tsd_cart = []
                 st.rerun()
-
+                
     # --- ОБЪЕДИНЕНИЕ ДАННЫХ ---
     # Приоритет ТСД, если он не пустой, иначе Excel
     if st.session_state.tsd_cart:
