@@ -87,98 +87,129 @@ def create_modal(table_key):
             st.dataframe(st.session_state.excel_items, use_container_width=True, height=200)
 
     # =========================================================
-    # ВКЛАДКА: ТСД СО СКАНЕРОМ КАМЕРЫ
+    # ВКЛАДКА: ПРОФЕССИОНАЛЬНЫЙ ТСД (SCANNER + DATABASE)
     # =========================================================
     with tab_tsd:
         st.markdown("### 📱 Терминал Сбора Данных")
-        
-        # 1. Секция сканирования и поиска
-        col_scan, col_search = st.columns([1, 1])
-        
-        with col_scan:
-            st.write("📷 **Сканер штрихкода**")
-            # Используем компонент для открытия камеры на телефоне
-            # Если библиотеки нет, используй: pip install streamlit-barcode-scanner
-            from streamlit_barcode_scanner import barcode_scanner
-            barcode = barcode_scanner(key="barcode_reader")
-        
-        with col_search:
-            st.write("🔍 **Ручной поиск**")
-            manual_search = st.text_input("Название или артикул", placeholder="Начните вводить...", key="manual_search_input")
 
-        # Определяем, что именно мы ищем (результат сканера или ручной ввод)
-        search_query = barcode if barcode else manual_search
+        # 1. HTML5-QRCode Сканнер (Работает через браузер телефона)
+        import streamlit.components.v1 as components
 
+        # Используем session_state для хранения результата сканирования между реранами
+        if "last_scanned_code" not in st.session_state:
+            st.session_state.last_scanned_code = ""
+
+        # Код сканера с JS-мостиком в Streamlit
+        # Мы ловим текст штрихкода и записываем его в невидимый для юзера инпут
+        st.markdown("---")
+        st.caption("📷 Наведите камеру на штрихкод товара или ячейки")
+        
+        scanner_code = """
+        <div id="reader" style="width:100%; border-radius:10px; overflow:hidden; border: 1px solid #444;"></div>
+        <script src="https://unpkg.com/html5-qrcode"></script>
+        <script>
+            function onScanSuccess(decodedText, decodedResult) {
+                // Передаем значение в родительское окно (Streamlit)
+                window.parent.postMessage({
+                    type: 'streamlit:set_widget_value',
+                    key: 'tsd_search_input',
+                    value: decodedText
+                }, '*');
+                
+                // Звуковой сигнал (опционально)
+                const audio = new Audio('https://www.soundjay.com/buttons/beep-07a.mp3');
+                audio.play();
+            }
+
+            let html5QrcodeScanner = new Html5QrcodeScanner(
+                "reader", { fps: 15, qrbox: {width: 250, height: 150} }
+            );
+            html5QrcodeScanner.render(onScanSuccess);
+        </script>
+        """
+        components.html(scanner_code, height=380)
+
+        # 2. Поле поиска (Сюда JS автоматически подставит код после сканирования)
+        # Также можно писать название товара вручную
+        search_query = st.text_input(
+            "🔍 Результат сканера / Поиск по названию", 
+            key="tsd_search_input", 
+            placeholder="Ожидание сканирования или введите название..."
+        )
+
+        # 3. Логика поиска в global_inventory
         if search_query:
             try:
-                # Ищем в global_inventory по штрихкоду (barcode) или названию (name)
-                # Предположим, колонка со штрихкодом называется 'barcode' или 'id'
+                # Ищем по названию (name) ИЛИ по адресу ячейки (cell) 
+                # (Если у тебя есть колонка barcode, добавь её в .or_)
                 res = supabase.table("global_inventory").select("*")\
-                    .or_(f"name.ilike.%{search_query}%,barcode.eq.{search_query}")\
+                    .or_(f"name.ilike.%{search_query}%,cell.eq.{search_query}")\
                     .eq("company_id", st.session_state.get('company_id'))\
                     .execute()
                 
                 found_items = res.data
             except Exception as e:
-                st.error(f"Ошибка поиска в базе: {e}")
+                st.error(f"Ошибка базы данных: {e}")
                 found_items = []
 
             if found_items:
-                st.success(f"Найдено совпадений: {len(found_items)}")
+                st.info(f"Найдено совпадений: {len(found_items)}")
                 for i, item in enumerate(found_items):
                     with st.container(border=True):
-                        c1, c2, c3 = st.columns([1, 2, 1])
+                        col_img, col_txt, col_btn = st.columns([1, 2, 1])
                         
-                        # Фото товара
+                        # Вывод фото из Cloudinary (image_url)
                         if item.get('image_url'):
-                            c1.image(item['image_url'], use_container_width=True)
+                            col_img.image(item['image_url'], use_container_width=True)
                         else:
-                            c1.warning("Нет фото")
+                            col_img.warning("Нет фото")
+
+                        # Инфо о товаре
+                        item_name = item.get('name', 'Без названия')
+                        col_txt.markdown(f"**{item_name}**")
+                        col_txt.caption(f"📍 Склад: {item.get('warehouse')} | Ячейка: {item.get('cell')}")
                         
-                        # Инфо
-                        c2.subheader(item.get('name', 'Без названия'))
-                        c2.write(f"📍 Склад: `{item.get('warehouse')}`")
-                        c2.write(f"📦 Ячейка: `{item.get('cell')}`")
+                        # Ввод количества и кнопка
+                        pick_qty = col_btn.number_input("Кол-во", min_value=1, value=1, key=f"q_{item.get('id')}_{i}")
                         
-                        # Ввод и добавление
-                        qty_to_add = c3.number_input("Кол-во", min_value=1, value=1, key=f"qty_tsd_{i}")
-                        if c3.button("➕ В корзину", key=f"add_tsd_{i}", use_container_width=True, type="primary"):
+                        if col_btn.button("➕ Добавить", key=f"b_{item.get('id')}_{i}", use_container_width=True, type="primary"):
+                            # Добавляем в корзину сборки
                             st.session_state.tsd_cart.append({
-                                "Название товара": item.get('name'),
-                                "Количество": qty_to_add,
-                                "Цена": 0, 
+                                "Название товара": item_name,
+                                "Количество": pick_qty,
+                                "Цена": 0, # Цену можно подтянуть, если она есть в базе
                                 "Объем": 0.05,
                                 "Адрес": item.get('cell'),
                                 "warehouse_id": item.get('warehouse'),
                                 "Статус": "🟢 Собрано"
                             })
-                            st.toast(f"Добавлено: {item.get('name')}")
-                            time.sleep(0.5)
+                            st.toast(f"✅ {item_name} добавлен!")
+                            # Очищаем ввод для следующего сканирования
                             st.rerun()
             else:
-                st.error(f"Товар с данными '{search_query}' не найден в global_inventory")
+                st.warning(f"Товар '{search_query}' не найден в системе.")
 
         st.divider()
 
-        # 2. Таблица сборки
+        # 4. Список текущей сборки (Корзина)
         if st.session_state.tsd_cart:
-            st.markdown("### 🛒 Состав текущей сборки")
-            df_cart = pd.DataFrame(st.session_state.tsd_cart)
+            st.markdown(f"#### 🛒 Текущий список ({len(st.session_state.tsd_cart)})")
+            cart_df = pd.DataFrame(st.session_state.tsd_cart)
             
-            # Редактируемая таблица
-            edited_cart = st.data_editor(
-                df_cart,
+            # Интерактивная таблица для финальных правок
+            edited_df = st.data_editor(
+                cart_df,
                 column_config={
                     "Количество": st.column_config.NumberColumn("Шт", min_value=1),
                     "Статус": st.column_config.SelectboxColumn("Статус", options=["🟢 Собрано", "🔴 Брак", "🟡 Не нашли"])
                 },
                 disabled=["Название товара", "Адрес", "warehouse_id"],
                 use_container_width=True,
-                key="tsd_editor_v2"
+                key="tsd_final_table"
             )
-            st.session_state.tsd_cart = edited_cart.to_dict(orient='records')
-            
-            if st.button("🗑️ Очистить список", type="secondary"):
+            st.session_state.tsd_cart = edited_df.to_dict(orient='records')
+
+            if st.button("🗑️ Очистить сборку", use_container_width=True):
                 st.session_state.tsd_cart = []
                 st.rerun()
 
