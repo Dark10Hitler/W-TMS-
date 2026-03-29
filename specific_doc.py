@@ -67,53 +67,137 @@ def create_modal(table_key):
     
     st.info(f"👤 **Оператор:** {operator_name}")
 
-    # --- 1. ПАРСИНГ ФАЙЛА СПЕЦИФИКАЦИИ ---
-    st.markdown("### 1️⃣ Загрузка спецификации")
-    uploaded_file = st.file_uploader("📥 Выберите Excel или CSV для разбора позиций", type=["xlsx", "xls", "csv"])
-    
+    # Инициализация "корзины сборки" в сессии (чтобы данные не пропадали при обновлении)
+    if "tsd_cart" not in st.session_state:
+        st.session_state.tsd_cart = []
+
+    # Глобальные переменные для итогов
     parsed_items_df = pd.DataFrame()
     total_vol = 0.0
     total_sum = 0.0
 
-    if uploaded_file:
-        try:
-            if "xls" in uploaded_file.name:
-                df = pd.read_excel(uploaded_file)
-            else:
-                df = pd.read_csv(uploaded_file)
+    st.markdown("### 1️⃣ Формирование списка товаров")
+
+    # Создаем профессиональные вкладки для выбора метода работы
+    tab_excel, tab_tsd = st.tabs(["📄 Загрузка из Excel", "📱 Режим сканера (ТСД)"])
+
+    # ==========================================
+    # ВКЛАДКА 1: СТАРЫЙ МЕТОД (EXCEL)
+    # ==========================================
+    with tab_excel:
+        uploaded_file = st.file_uploader("📥 Выберите Excel или CSV для разбора позиций", type=["xlsx", "xls", "csv"])
+        if uploaded_file:
+            try:
+                if "xls" in uploaded_file.name:
+                    df = pd.read_excel(uploaded_file)
+                else:
+                    df = pd.read_csv(uploaded_file)
                 
-            # Ищем колонку товара автоматически
-            name_col = next((c for c in df.columns if any(x in c.lower() for x in ['назван', 'товар', 'наимен', 'item', 'product'])), None)
-            
-            if not name_col:
-                st.warning("⚠️ Не найдена колонка с товаром автоматически.")
-                name_col = st.selectbox("Выберите колонку с названием товара", df.columns)
-            
-            df = df.rename(columns={name_col: 'Название товара'})
-            
-            # Поиск объема и суммы
-            vol_col = next((c for c in df.columns if any(x in c.lower() for x in ['объем', 'м3', 'vol'])), None)
-            sum_col = next((c for c in df.columns if any(x in c.lower() for x in ['сумма', 'цена', 'total', 'price'])), None)
-            qty_col = next((c for c in df.columns if any(x in c.lower() for x in ['кол', 'qty', 'count'])), None)
-            
-            if vol_col: total_vol = float(df[vol_col].sum())
-            if sum_col: total_sum = float(df[sum_col].sum())
-            
-            if 'Адрес' not in df.columns:
-                df['Адрес'] = "НЕ НАЗНАЧЕНО"
-            
-            parsed_items_df = df
-            st.success(f"✅ Обработано: {len(df)} поз. | Объем: {total_vol:.2f} м3 | Сумма: {total_sum:.2f}")
-            
-            with st.expander("👀 Предпросмотр позиций"):
-                st.dataframe(df.head(10), use_container_width=True)
+                name_col = next((c for c in df.columns if any(x in c.lower() for x in ['назван', 'товар', 'наимен', 'item', 'product'])), None)
+                if not name_col:
+                    name_col = st.selectbox("Выберите колонку с названием товара", df.columns)
+                df = df.rename(columns={name_col: 'Название товара'})
+                
+                vol_col = next((c for c in df.columns if any(x in c.lower() for x in ['объем', 'м3', 'vol'])), None)
+                sum_col = next((c for c in df.columns if any(x in c.lower() for x in ['сумма', 'цена', 'total', 'price'])), None)
+                
+                if vol_col: total_vol = float(df[vol_col].sum())
+                if sum_col: total_sum = float(df[sum_col].sum())
+                if 'Адрес' not in df.columns:
+                    df['Адрес'] = "НЕ НАЗНАЧЕНО"
+                
+                parsed_items_df = df
+                st.success(f"✅ Обработано: {len(df)} поз. | Объем: {total_vol:.2f} м3")
+            except Exception as e:
+                st.error(f"❌ Ошибка парсинга: {e}")
 
-        except Exception as e:
-            st.error(f"❌ Ошибка парсинга: {e}")
+    # ==========================================
+    # ВКЛАДКА 2: НОВЫЙ МЕТОД (СБОРКА ЧЕРЕЗ ТСД)
+    # ==========================================
+    with tab_tsd:
+        st.info("💡 Отсканируйте ячейку, чтобы увидеть товары на ней, и добавьте нужные в лист сборки.")
 
-    # Блок фото фактуры
+        # --- ШАГ А: Поиск товаров на полке ---
+        col_scan, col_btn = st.columns([3, 1])
+        # Когда вы подключите сканер штрихкодов, он будет автоматически вписывать текст сюда и нажимать Enter
+        scanned_cell = col_scan.text_input("📍 Отсканируйте штрихкод полки", placeholder="Например: ст-6-01-1", key="scan_input")
+
+        if scanned_cell:
+            # ТУТ НУЖНО СДЕЛАТЬ РЕАЛЬНЫЙ ЗАПРОС К БД (пока имитируем ответ базы)
+            # Пример реального кода: res = supabase.table('inventory').select('*').eq('cell_address', scanned_cell).execute()
+            
+            # Временная имитация того, что нашел сканер:
+            mock_items_on_shelf = [
+                {"item_name": "Масло моторное 5W40", "qty": 10},
+                {"item_name": "Фильтр масляный", "qty": 5}
+            ]
+
+            st.write(f"**Товары, найденные на ячейке `{scanned_cell}`:**")
+            
+            # Выводим товары с полки и кнопки добавления
+            for idx, item in enumerate(mock_items_on_shelf):
+                c1, c2, c3 = st.columns([3, 1, 1])
+                c1.write(f"📦 **{item['item_name']}** (Доступно: {item['qty']} шт)")
+                
+                # Поле для ввода нужного количества
+                pick_qty = c2.number_input("Берем шт.", min_value=1, max_value=item['qty'], value=1, key=f"pick_{idx}")
+                
+                if c3.button("➕ Добавить", key=f"add_btn_{idx}"):
+                    # Записываем товар в глобальную сессию
+                    st.session_state.tsd_cart.append({
+                        "Название товара": item['item_name'],
+                        "Количество": pick_qty,
+                        "Адрес": scanned_cell,
+                        "Статус": "🟢 В наличии"
+                    })
+                    st.rerun() # Перезагружаем интерфейс, чтобы обновить корзину ниже
+
+        st.divider()
+
+        # --- ШАГ Б: Лист сборки (Корзина) ---
+        st.markdown("#### 🛒 Ваш лист сборки")
+        if not st.session_state.tsd_cart:
+            st.caption("Лист сборки пуст. Отсканируйте ячейку выше.")
+        else:
+            df_cart = pd.DataFrame(st.session_state.tsd_cart)
+
+            # Профессиональная таблица, где можно менять статус и количество "на лету"
+            edited_cart = st.data_editor(
+                df_cart,
+                column_config={
+                    "Статус": st.column_config.SelectboxColumn(
+                        "Статус поиска",
+                        help="Укажите, удалось ли найти товар",
+                        width="medium",
+                        options=[
+                            "🟢 В наличии",
+                            "🟡 Есть в БД, но не найден",
+                            "🔴 Отсутствует на полке"
+                        ],
+                        required=True,
+                    ),
+                    "Количество": st.column_config.NumberColumn("Отгружаем шт.", min_value=1)
+                },
+                disabled=["Название товара", "Адрес"], # Блокируем изменение названия
+                use_container_width=True,
+                key="cart_editor"
+            )
+
+            # --- ШАГ В: Финализация сборки ---
+            if st.button("✅ ТОВАРЫ СОБРАНЫ!", use_container_width=True, type="primary"):
+                # 1. Отфильтровываем только те товары, которые кладовщик реально нашел (зеленые)
+                successful_items = edited_cart[edited_cart["Статус"] == "🟢 В наличии"].copy()
+                
+                # 2. Передаем их в основную переменную, с которой работает остальной код сохранения
+                parsed_items_df = successful_items
+                
+                # 3. Обновляем счетчики (Объем и сумму пока ставим 0, так как их нужно тянуть из БД справочника товаров)
+                total_qty = successful_items["Количество"].sum()
+                
+                st.success(f"🎉 Сборка завершена! Подготовлено позиций: {len(successful_items)}. Можете заполнять параметры логистики ниже.")
+
+    # Блок фото фактуры (оставляем твой старый код дальше)
     st.markdown("### 📎 Документальное подтверждение")
-    uploaded_invoice_photo = st.file_uploader("📸 Фото фактуры / ТТН (скан или фото)", type=['png', 'jpg', 'jpeg'], key="inv_photo")
 
     # --- 2. ФОРМА ВВОДА ДАННЫХ ---
     st.markdown("### 2️⃣ Параметры логистики")
