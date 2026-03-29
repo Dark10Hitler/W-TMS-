@@ -20,72 +20,6 @@ import pytz
 from datetime import datetime
 import json
 
-@st.dialog("📱 Режим сборки ТСД", width="large")
-def tsd_picking_dialog():
-    st.info("Отсканируйте ячейку ➡️ Выберите товар ➡️ Нажмите 'Добавить'")
-    
-    # Инициализация корзины, если её нет
-    if "tsd_cart" not in st.session_state:
-        st.session_state.tsd_cart = []
-
-    # --- ВЕРХНЯЯ ЧАСТЬ: СКАНЕР ---
-    col_scan, col_empty = st.columns([2, 1])
-    scanned_cell = col_scan.text_input("📍 Штрихкод полки", key="modal_scan_input", placeholder="Наведите сканер...")
-
-    if scanned_cell:
-        # Здесь будет твой реальный запрос к Supabase
-        # res = supabase.table('inventory').select('item_name, quantity').eq('cell_address', scanned_cell).execute()
-        # Пока имитируем:
-        items_found = [
-            {"name": "Шина Michelin 205/55 R16", "stock": 12, "price": 1500},
-            {"name": "Диск Skoda Octavia A7", "stock": 4, "price": 2800}
-        ]
-
-        for i, item in enumerate(items_found):
-            c1, c2, c3 = st.columns([3, 1, 1])
-            c1.markdown(f"**{item['name']}** \n\n (На полке: {item['stock']} шт)")
-            qty = c2.number_input("Кол-во", min_value=1, max_value=item['stock'], key=f"q_{i}")
-            if c3.button("➕", key=f"add_{i}"):
-                st.session_state.tsd_cart.append({
-                    "Название товара": item['name'],
-                    "Количество": qty,
-                    "Адрес": scanned_cell,
-                    "Цена": item['price'],
-                    "Статус": "🟢 В наличии"
-                })
-                st.toast(f"Добавлено: {item['name']}")
-                st.rerun()
-
-    st.divider()
-
-    # --- НИЖНЯЯ ЧАСТЬ: ТАБЛИЦА СБОРКИ ---
-    st.markdown("### 🛒 Собрано в тележку:")
-    if st.session_state.tsd_cart:
-        df_cart = pd.DataFrame(st.session_state.tsd_cart)
-        
-        # Редактируемая таблица (Светофор)
-        edited_df = st.data_editor(
-            df_cart,
-            column_config={
-                "Статус": st.column_config.SelectboxColumn(
-                    "Состояние",
-                    options=["🟢 В наличии", "🟡 Не найден", "🔴 Отсутствует"],
-                    width="medium"
-                )
-            },
-            use_container_width=True,
-            key="modal_cart_editor"
-        )
-
-        if st.button("🏁 ТОВАРЫ СОБРАНЫ И ГОТОВЫ К ОТГРУЗКЕ", use_container_width=True, type="primary"):
-            # Сохраняем результат в сессию, чтобы основное окно его подхватило
-            st.session_state.final_picked_df = edited_df[edited_df["Статус"] == "🟢 В наличии"]
-            st.success("Данные перенесены в заявку!")
-            time.sleep(1)
-            st.rerun()
-    else:
-        st.write("Пока ничего не добавлено...")
-
 def get_full_inventory_df():
     """Собирает все позиции из всех документов в одну таблицу для выбора"""
     all_items = []
@@ -116,50 +50,134 @@ def get_full_inventory_df():
 @st.dialog("📝 Создание новой заявки / документа", width="large")
 def create_modal(table_key):
     from database import supabase
-    
-    # 1. ПОДГОТОВКА КОЛОНОК И ПРОФИЛЯ
-    try:
-        # Пытаемся взять глобальную структуру, если нет - дефолт
-        columns = TABLE_STRUCT.get(table_key, ORDER_COLUMNS) 
-    except:
-        columns = []
+    import pandas as pd
+    import numpy as np
+    from datetime import datetime
+    import pytz
+    import uuid
+    import time
 
-    st.subheader(f"📦 Регистрация нового документа: {table_key.upper()}")
+    # --- 0. ИНИЦИАЛИЗАЦИЯ СОСТОЯНИЙ ---
+    if "picking_mode" not in st.session_state:
+        st.session_state.picking_mode = False
+    if "tsd_cart" not in st.session_state:
+        st.session_state.tsd_cart = []
+
+    # =========================================================
+    # ЭКРАН СБОРКИ (ТСД) - ПОКАЗЫВАЕТСЯ ПРИ НАЖАТИИ НА КНОПКУ
+    # =========================================================
+    if st.session_state.picking_mode:
+        st.subheader("📱 Режим сборки ТСД")
+        
+        # Верхняя панель: Поиск по ячейке
+        col_scan, col_back = st.columns([3, 1])
+        scanned_cell = col_scan.text_input("📍 Отсканируйте штрихкод полки", placeholder="Наведите сканер (Enter)...", key="tsd_scan_input")
+        
+        if col_back.button("⬅️ Отмена", use_container_width=True):
+            st.session_state.picking_mode = False
+            st.rerun()
+
+        if scanned_cell:
+            # Имитируем запрос к БД (в будущем здесь будет supabase.table('inventory')...)
+            # Для примера возьмем товары:
+            mock_data = [
+                {"Название товара": "Шина Michelin 205/55 R16", "Остаток": 10, "Цена": 1500, "Объем": 0.08},
+                {"Название товара": "Диск Skoda Octavia A7", "Остаток": 4, "Цена": 2500, "Объем": 0.05}
+            ]
+            
+            st.write(f"**Товары на ячейке `{scanned_cell}`:**")
+            for i, item in enumerate(mock_data):
+                c1, c2, c3 = st.columns([3, 1, 1])
+                c1.write(f"📦 {item['Название товара']} (Доступно: {item['Остаток']})")
+                pick_qty = c2.number_input("Кол-во", min_value=1, max_value=item['Остаток'], key=f"qty_{i}")
+                if c3.button("➕", key=f"add_{i}"):
+                    st.session_state.tsd_cart.append({
+                        "Название товара": item['Название товара'],
+                        "Количество": pick_qty,
+                        "Цена": item['Цена'],
+                        "Объем": item['Объем'],
+                        "Адрес": scanned_cell,
+                        "Статус": "🟢 В наличии"
+                    })
+                    st.toast(f"Добавлено: {item['Название товара']}")
+                    st.rerun()
+
+        st.divider()
+
+        # Нижняя панель: Таблица сборки
+        if st.session_state.tsd_cart:
+            st.markdown("### 🛒 Лист текущей сборки")
+            df_cart = pd.DataFrame(st.session_state.tsd_cart)
+            
+            edited_cart = st.data_editor(
+                df_cart,
+                column_config={
+                    "Статус": st.column_config.SelectboxColumn(
+                        "Статус товара",
+                        options=["🟢 В наличии", "🟡 Не нашли", "🔴 Отсутствует"],
+                        width="medium"
+                    ),
+                    "Количество": st.column_config.NumberColumn("Шт.", min_value=1)
+                },
+                disabled=["Название товара", "Адрес", "Цена", "Объем"],
+                use_container_width=True,
+                key="tsd_editor"
+            )
+
+            if st.button("🚀 ТОВАРЫ СОБРАНЫ!!!", use_container_width=True, type="primary"):
+                # Сохраняем в сессию финальный результат сборки
+                st.session_state.final_items_df = edited_cart[edited_cart["Статус"] == "🟢 В наличии"]
+                st.session_state.picking_mode = False
+                st.rerun()
+        return # Останавливаем выполнение, чтобы не рисовать основную форму
+
+    # =========================================================
+    # ОСНОВНОЙ ЭКРАН ЗАЯВКИ
+    # =========================================================
     
+    # 1. ПОДГОТОВКА ПРОФИЛЯ
     try:
         operator_name = st.session_state.profile_data.iloc[0]['Значение']
     except:
         operator_name = "Системный администратор"
-    
+
+    st.subheader(f"📦 Регистрация документа: {table_key.upper()}")
     st.info(f"👤 **Оператор:** {operator_name}")
 
-    # Инициализация "корзины сборки" в сессии (чтобы данные не пропадали при обновлении)
-    if "tsd_cart" not in st.session_state:
-        st.session_state.tsd_cart = []
+    # --- 1. ВЫБОР СПОСОБА СБОРКИ ---
+    st.markdown("### 1️⃣ Спецификация товаров")
+    c1, c2 = st.columns(2)
+    
+    if c1.button("📱 СОБРАТЬ С ПОМОЩЬЮ ТСД", use_container_width=True):
+        st.session_state.picking_mode = True
+        st.rerun()
 
-    # Глобальные переменные для итогов
+    uploaded_file = c2.file_uploader("📥 Или загрузите Excel", type=["xlsx", "xls", "csv"], label_visibility="collapsed")
+
+    # Переменные для данных
     parsed_items_df = pd.DataFrame()
     total_vol = 0.0
     total_sum = 0.0
 
-    # --- 1. ВЫБОР СПОСОБА СБОРКИ ---
-    st.markdown("### 1️⃣ Спецификация товаров")
-    
-    col_btn1, col_btn2 = st.columns(2)
-    
-    if col_btn1.button("📱 СОБРАТЬ С ПОМОЩЬЮ ТСД", use_container_width=True):
-        tsd_picking_dialog() # Вызываем наше новое модальное окно
-
-    # Оставляем Excel как запасной вариант
-    uploaded_file = col_btn2.file_uploader("📥 Или загрузите Excel", type=["xlsx", "xls", "csv"], label_visibility="collapsed")
-
-    # Логика подхвата данных из модального окна ТСД
-    parsed_items_df = pd.DataFrame()
-    if "final_picked_df" in st.session_state and not st.session_state.final_picked_df.empty:
-        parsed_items_df = st.session_state.final_picked_df
+    # Подхватываем данные из ТСД
+    if "final_items_df" in st.session_state and not st.session_state.final_items_df.empty:
+        parsed_items_df = st.session_state.final_items_df
         total_sum = (parsed_items_df['Количество'] * parsed_items_df.get('Цена', 0)).sum()
-        total_vol = (parsed_items_df['Количество'] * 0.05).sum() # Примерный расчет объема
-        st.success(f"✅ Включено из ТСД: {len(parsed_items_df)} поз.")
+        total_vol = (parsed_items_df['Количество'] * parsed_items_df.get('Объем', 0.05)).sum()
+        st.success(f"✅ Собрано через ТСД: {len(parsed_items_df)} поз.")
+
+    # Подхватываем данные из Excel (если ТСД не использовался)
+    elif uploaded_file:
+        try:
+            df = pd.read_excel(uploaded_file) if "xls" in uploaded_file.name else pd.read_csv(uploaded_file)
+            # (Тут твоя старая логика поиска колонок Excel...)
+            name_col = next((c for c in df.columns if any(x in c.lower() for x in ['назван', 'товар', 'наимен'])), None)
+            if name_col:
+                df = df.rename(columns={name_col: 'Название товара'})
+                parsed_items_df = df
+                st.success(f"✅ Загружено из файла: {len(df)} поз.")
+        except Exception as e:
+            st.error(f"Ошибка Excel: {e}")
 
 
     # --- 2. ФОРМА ВВОДА ДАННЫХ ---
